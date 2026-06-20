@@ -4,6 +4,12 @@
 //! `frame_width * (out_height / out_width)` so aspect never distorts. The
 //! center, frame width, and output resolution fully determine the mapping.
 //!
+//! **`dc` is computed straight from pixel geometry, never as `c - center`.** At
+//! deep zoom `c_f64 - center_f64` is catastrophic cancellation (garbage); the
+//! pixel offset `dc` is O(frame_width) and stays accurate in f64 down to
+//! ~1e-305. The absolute coordinate `c = center + dc` is formed only for the
+//! f64 backend, which is used solely at shallow depth where it is accurate.
+//!
 //! Antialiasing is mandatory: each output pixel is the box average of an
 //! `S×S` grid of subsamples, **averaged in linear light** and only then
 //! sRGB-encoded — this avoids the dark fringing of averaging gamma-encoded
@@ -16,6 +22,9 @@ use rayon::prelude::*;
 use crate::backend::FractalBackend;
 use crate::coloring::{self, ColorParams};
 use crate::palette::{linear_to_srgb, Palette};
+
+/// Linear-light sentinel for `--mark-glitches` (sRGB magenta).
+const GLITCH_LINEAR: [f64; 3] = [1.0, 0.0, 1.0];
 
 /// Everything needed to place pixels in the complex plane.
 #[derive(Clone, Copy, Debug)]
@@ -38,21 +47,25 @@ impl Frame {
     }
 }
 
-/// Render parameters bundled for the driver.
+/// Render parameters bundled for the driver. `maxiter`/`bailout` now live in the
+/// backend (constructed per frame), so they are absent here.
 pub struct RenderConfig {
     pub frame: Frame,
-    pub maxiter: u32,
-    pub bailout: f64,
     pub supersample: u32,
     pub color: ColorParams,
+    /// Paint per-pixel glitched (delta-underflow) subsamples magenta.
+    pub mark_glitches: bool,
+}
+
+/// Render result: the row-major 8-bit sRGB buffer plus a diagnostic count of
+/// output pixels that had at least one glitched (unreliable) subsample.
+pub struct RenderOutput {
+    pub pixels: Vec<u8>,
+    pub glitched_pixels: u64,
 }
 
 /// Render to a row-major buffer of 8-bit sRGB RGB triples.
-pub fn render(
-    backend: &dyn FractalBackend,
-    palette: &Palette,
-    cfg: &RenderConfig,
-) -> Vec<u8> {
+pub fn render(backend: &dyn FractalBackend, palette: &Palette, cfg: &RenderConfig) -> RenderOutput {
     let Frame {
         center,
         out_width: w,
@@ -63,38 +76,51 @@ pub fn render(
 
     let fw = cfg.frame.frame_width;
     let fh = cfg.frame.frame_height();
-    // Top-left corner of the frame in the complex plane. Image row 0 is the
-    // top, which maps to the *largest* imaginary value.
-    let left = center.re - 0.5 * fw;
-    let top = center.im + 0.5 * fh;
-
-    // Per-subsample step (square), and the half-step that centers the first
-    // subsample within its output pixel.
-    let step = fw / (w * s) as f64;
     let inv_samples = 1.0 / (s * s) as f64;
 
-    // Parallelize over output rows. flat_map over an ordered parallel iterator
-    // preserves row order, so the result is deterministic.
-    (0..h)
+    // Subsample grid dimensions and reciprocals (fractional pixel position).
+    let sub_w = (w * s) as f64;
+    let sub_h = (h * s) as f64;
+
+    // Parallelize over output rows. Each row yields its byte slice plus a glitch
+    // count; collecting an ordered Vec keeps the output deterministic.
+    let rows: Vec<(Vec<u8>, u64)> = (0..h)
         .into_par_iter()
-        .flat_map_iter(|row| {
+        .map(|row| {
             let mut out = Vec::with_capacity(w as usize * 3);
+            let mut glitched_in_row: u64 = 0;
             for col in 0..w {
                 let mut acc = [0.0f64; 3];
+                let mut pixel_glitched = false;
                 for sj in 0..s {
-                    let py = (row * s + sj) as f64;
-                    let im = top - (py + 0.5) * step;
+                    // Fractional vertical position in [0,1); row 0 (top) is the
+                    // largest imaginary value, hence (0.5 - py_frac).
+                    let py = (row * s + sj) as f64 + 0.5;
+                    let py_frac = py / sub_h;
+                    let dc_im = (0.5 - py_frac) * fh;
                     for si in 0..s {
-                        let px = (col * s + si) as f64;
-                        let re = left + (px + 0.5) * step;
-                        let c = Complex::new(re, im);
-                        let dc = c - center;
-                        let sample = backend.sample(c, dc, cfg.maxiter, cfg.bailout);
-                        let lin = coloring::shade(&sample, palette, &cfg.color);
+                        let px = (col * s + si) as f64 + 0.5;
+                        let px_frac = px / sub_w;
+                        let dc_re = (px_frac - 0.5) * fw;
+
+                        let dc = Complex::new(dc_re, dc_im);
+                        let c = center + dc; // only the f64 backend reads this
+                        let sample = backend.sample(c, dc);
+                        if sample.glitched {
+                            pixel_glitched = true;
+                        }
+                        let lin = if cfg.mark_glitches && sample.glitched {
+                            GLITCH_LINEAR
+                        } else {
+                            coloring::shade(&sample, palette, &cfg.color)
+                        };
                         acc[0] += lin[0];
                         acc[1] += lin[1];
                         acc[2] += lin[2];
                     }
+                }
+                if pixel_glitched {
+                    glitched_in_row += 1;
                 }
                 // Average in linear light, then encode sRGB.
                 for k in 0..3 {
@@ -102,7 +128,18 @@ pub fn render(
                     out.push((v * 255.0 + 0.5) as u8);
                 }
             }
-            out
+            (out, glitched_in_row)
         })
-        .collect()
+        .collect();
+
+    let mut pixels = Vec::with_capacity(w as usize * h as usize * 3);
+    let mut glitched_pixels = 0u64;
+    for (row_bytes, g) in rows {
+        pixels.extend_from_slice(&row_bytes);
+        glitched_pixels += g;
+    }
+    RenderOutput {
+        pixels,
+        glitched_pixels,
+    }
 }

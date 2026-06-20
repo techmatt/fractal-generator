@@ -1,0 +1,18 @@
+[package]
+name = "fractal-generator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+num-complex = "0.4"
+rayon = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Pure-Rust arbitrary-precision float for the perturbation reference orbit.
+# Only core arithmetic + decimal parsing is needed; drop random/serde.
+astro-float = { version = "0.9.5", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

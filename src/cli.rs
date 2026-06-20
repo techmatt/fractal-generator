@@ -1,18 +1,30 @@
 //! CLI parsing (clap derive) and resolution of aspect → output height.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
-/// Escape-time Mandelbrot renderer (f64 reference skeleton).
+/// Precision backend selection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum BackendChoice {
+    /// Plain f64 escape time (fast; accurate only at shallow depth).
+    F64,
+    /// Single-reference perturbation with rebasing (clean at deep zoom).
+    Perturb,
+    /// Pick automatically by pixel spacing.
+    Auto,
+}
+
+/// Escape-time Mandelbrot renderer (f64 + perturbation backends).
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Frame center, real part.
-    #[arg(long, default_value_t = -0.5, allow_negative_numbers = true)]
-    pub center_re: f64,
+    /// Frame center, real part — arbitrary-precision decimal string (an f64
+    /// center is meaningless at depth, so this is parsed at full precision).
+    #[arg(long, default_value = "-0.5", allow_negative_numbers = true)]
+    pub center_re: String,
 
-    /// Frame center, imaginary part.
-    #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
-    pub center_im: f64,
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.0", allow_negative_numbers = true)]
+    pub center_im: String,
 
     /// Width of the view in the complex plane.
     #[arg(long, default_value_t = 3.0)]
@@ -49,6 +61,14 @@ pub struct Cli {
     /// Gradient phase offset in [0,1).
     #[arg(long, default_value_t = 0.0)]
     pub offset: f64,
+
+    /// Precision backend: f64, perturb, or auto (default).
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    pub backend: BackendChoice,
+
+    /// Paint per-pixel glitched (delta-underflow) pixels magenta for diagnosis.
+    #[arg(long, default_value_t = false)]
+    pub mark_glitches: bool,
 
     /// Output PNG path.
     #[arg(long, default_value = "out.png")]
