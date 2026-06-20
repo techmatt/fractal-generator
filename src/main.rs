@@ -10,12 +10,12 @@ use std::time::Instant;
 use clap::Parser;
 use num_complex::Complex;
 
-use fractal_generator::backend::{F64Backend, FractalBackend, PerturbationBackend};
+use fractal_generator::backend::{F64Backend, FractalBackend, PerturbationBackend, Trap};
 use fractal_generator::cli::{BackendChoice, Cli};
 use fractal_generator::coloring::ColorParams;
 use fractal_generator::hp;
 use fractal_generator::palette::Palette;
-use fractal_generator::render::{self, Frame, RenderConfig};
+use fractal_generator::render::{self, Frame};
 
 /// Pixel spacing below which f64 enters its quantization regime (≈ eps·|c|).
 /// At or below this, auto-selection switches to perturbation.
@@ -62,6 +62,12 @@ fn run() -> Result<(), String> {
         out_height: height,
     };
 
+    let trap = Trap {
+        shape: args.trap,
+        center: args.resolved_trap_center()?,
+        radius: args.trap_radius,
+    };
+
     // Backend selection by pixel spacing, with --backend override.
     let spacing = frame.pixel_size();
     let use_perturb = match args.backend {
@@ -80,13 +86,14 @@ fn run() -> Result<(), String> {
         );
     }
 
-    let cfg = RenderConfig {
-        frame,
-        supersample: args.supersample,
-        color: ColorParams {
-            density: args.density,
-            offset: args.offset,
-        },
+    let color = ColorParams {
+        density: args.density,
+        offset: args.offset,
+        channel: args.color,
+        interior: args.interior,
+        trap_scale: args.trap_scale,
+        trap_phase_strength: args.trap_phase_strength,
+        de_shade: args.de_shade,
         mark_glitches: args.mark_glitches,
     };
 
@@ -100,12 +107,17 @@ fn run() -> Result<(), String> {
                 args.maxiter,
                 args.bailout,
                 prec_bits,
+                trap,
             );
             let ref_secs = t.elapsed().as_secs_f64();
             let len = pb.ref_len();
             (Box::new(pb), "perturbation", Some((ref_secs, len)))
         } else {
-            (Box::new(F64Backend::new(args.maxiter, args.bailout)), "f64", None)
+            (
+                Box::new(F64Backend::new(args.maxiter, args.bailout, trap)),
+                "f64",
+                None,
+            )
         };
 
     let palette = Palette::ultra_fractal();
@@ -126,9 +138,24 @@ fn run() -> Result<(), String> {
         eprintln!("reference orbit: {len} points in {ref_secs:.4}s");
     }
 
+    // Stage 1: iterate once into the cached supersampled buffer.
     let t0 = Instant::now();
-    let out = render::render(&*backend, &palette, &cfg);
-    let render_secs = t0.elapsed().as_secs_f64();
+    let buf = render::iterate_samples(&*backend, &frame, args.supersample);
+    let iter_secs = t0.elapsed().as_secs_f64();
+
+    // Stage 2: pure shading + downsample (re-runnable without re-iterating).
+    let t1 = Instant::now();
+    let img = render::shade_and_downsample(
+        &buf.samples,
+        frame.out_width,
+        frame.out_height,
+        buf.ss,
+        &palette,
+        &color,
+        frame.pixel_size(),
+    );
+    let shade_secs = t1.elapsed().as_secs_f64();
+    let render_secs = iter_secs + shade_secs;
 
     if let Some((ref_secs, _)) = ref_report {
         let pct = if render_secs > 0.0 {
@@ -139,20 +166,21 @@ fn run() -> Result<(), String> {
         eprintln!("reference orbit was {pct:.3}% of render time");
     }
 
-    if out.glitched_pixels > 0 {
+    if buf.glitched_pixels > 0 {
         eprintln!(
             "warning: {} pixel(s) glitched (f64 delta underflowed — too deep for this tier). \
              Re-run with --mark-glitches to locate them.",
-            out.glitched_pixels
+            buf.glitched_pixels
         );
     }
 
-    let img = image::RgbImage::from_raw(args.width, height, out.pixels)
-        .ok_or_else(|| "render buffer size mismatch".to_string())?;
     img.save(&args.output)
         .map_err(|e| format!("failed to write {}: {e}", args.output))?;
 
-    eprintln!("wrote {} in {:.2}s", args.output, render_secs);
+    eprintln!(
+        "wrote {} in {:.2}s (iterate {:.2}s + shade {:.3}s)",
+        args.output, render_secs, iter_secs, shade_secs
+    );
     Ok(())
 }
 

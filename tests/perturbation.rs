@@ -19,8 +19,17 @@
 
 use num_complex::Complex;
 
-use fractal_generator::backend::{F64Backend, FractalBackend, PerturbationBackend};
+use fractal_generator::backend::{F64Backend, FractalBackend, PerturbationBackend, Trap, TrapShape};
 use fractal_generator::hp;
+
+/// Trap config for the agreement test. Irrelevant to escape-time / DE
+/// comparison, but the backends require one; a point trap at the origin is the
+/// neutral default.
+const TRAP: Trap = Trap {
+    shape: TrapShape::Point,
+    center: Complex { re: 0.0, im: 0.0 },
+    radius: 1.0,
+};
 
 /// Shallow location and resolution for the agreement test.
 const CENTER_RE: &str = "-0.745";
@@ -34,34 +43,54 @@ const MAXITER: u32 = 300;
 
 #[test]
 fn shallow_backends_agree() {
-    let (median, max, disagreements, both_escaped, ref_len) = shallow_stats(MAXITER);
+    let s = shallow_stats(MAXITER);
 
     println!(
         "shallow match @ ({CENTER_RE}, {CENTER_IM}) fw={FRAME_WIDTH:e}, {OUT_W}x{OUT_H}, \
-         maxiter={MAXITER}, ref_len={ref_len}: both_escaped={both_escaped}, \
-         disagreements={disagreements}, median |Δsmooth|={median:.3e}, max |Δsmooth|={max:.3e}"
+         maxiter={MAXITER}, ref_len={}: both_escaped={}, disagreements={}, \
+         median |Δsmooth|={:.3e}, max |Δsmooth|={:.3e}, \
+         median |Δde|={:.3e}, max |Δde|={:.3e} (plane units)",
+        s.ref_len, s.both_escaped, s.disagreements, s.median_smooth, s.max_smooth, s.median_de,
+        s.max_de
     );
 
-    assert_eq!(disagreements, 0, "classification disagreements: {disagreements}");
-    assert!(both_escaped > 1000, "too few escaped pixels to be meaningful");
-    assert!(median < 1e-8, "median |Δsmooth| {median:.3e} >= 1e-8");
-    assert!(max < 1e-2, "max |Δsmooth| {max:.3e} >= 1e-2");
+    assert_eq!(s.disagreements, 0, "classification disagreements: {}", s.disagreements);
+    assert!(s.both_escaped > 1000, "too few escaped pixels to be meaningful");
+    assert!(s.median_smooth < 1e-8, "median |Δsmooth| {:.3e} >= 1e-8", s.median_smooth);
+    assert!(s.max_smooth < 1e-2, "max |Δsmooth| {:.3e} >= 1e-2", s.max_smooth);
+    // DE carries the f64 derivative through the same recurrence in both
+    // backends, so it must agree as tightly as the smooth channel.
+    assert!(s.median_de < 1e-9, "median |Δde| {:.3e} >= 1e-9", s.median_de);
+    assert!(s.max_de < 1e-4, "max |Δde| {:.3e} >= 1e-4", s.max_de);
 }
 
-/// Returns `(median, max, disagreements, both_escaped, ref_len)` for the
-/// f64-vs-perturbation comparison over the shallow frame at `maxiter`.
-fn shallow_stats(maxiter: u32) -> (f64, f64, u64, u64, usize) {
+/// Cross-backend agreement statistics over the shallow frame.
+struct Stats {
+    median_smooth: f64,
+    max_smooth: f64,
+    median_de: f64,
+    max_de: f64,
+    disagreements: u64,
+    both_escaped: u64,
+    ref_len: usize,
+}
+
+/// Compare the f64 and perturbation backends pixel-by-pixel at `maxiter`,
+/// reporting smooth-iteration and distance-estimate agreement over commonly
+/// escaped pixels.
+fn shallow_stats(maxiter: u32) -> Stats {
     let prec_bits = hp::prec_bits(OUT_W, FRAME_WIDTH);
     let cre = hp::parse_decimal(CENTER_RE, prec_bits).unwrap();
     let cim = hp::parse_decimal(CENTER_IM, prec_bits).unwrap();
     let center = Complex::new(hp::to_f64(&cre), hp::to_f64(&cim));
 
-    let f64b = F64Backend::new(maxiter, BAILOUT);
-    let pb = PerturbationBackend::new(&cre, &cim, maxiter, BAILOUT, prec_bits);
+    let f64b = F64Backend::new(maxiter, BAILOUT, TRAP);
+    let pb = PerturbationBackend::new(&cre, &cim, maxiter, BAILOUT, prec_bits, TRAP);
 
     let fh = FRAME_WIDTH * (OUT_H as f64 / OUT_W as f64);
 
-    let mut diffs: Vec<f64> = Vec::new();
+    let mut smooth_diffs: Vec<f64> = Vec::new();
+    let mut de_diffs: Vec<f64> = Vec::new();
     let mut disagreements: u64 = 0;
     let mut both_escaped: u64 = 0;
 
@@ -83,13 +112,29 @@ fn shallow_stats(maxiter: u32) -> (f64, f64, u64, u64, usize) {
             }
             if a.escaped && b.escaped {
                 both_escaped += 1;
-                diffs.push((a.smooth_iter - b.smooth_iter).abs());
+                smooth_diffs.push((a.smooth_iter - b.smooth_iter).abs());
+                de_diffs.push((a.de - b.de).abs());
             }
         }
     }
 
+    let (median_smooth, max_smooth) = median_max(&mut smooth_diffs);
+    let (median_de, max_de) = median_max(&mut de_diffs);
+    Stats {
+        median_smooth,
+        max_smooth,
+        median_de,
+        max_de,
+        disagreements,
+        both_escaped,
+        ref_len: pb.ref_len(),
+    }
+}
+
+/// Sorted median and max of an absolute-difference vector.
+fn median_max(diffs: &mut [f64]) -> (f64, f64) {
     diffs.sort_by(|x, y| x.partial_cmp(y).unwrap());
     let median = diffs.get(diffs.len() / 2).copied().unwrap_or(0.0);
     let max = diffs.iter().cloned().fold(0.0_f64, f64::max);
-    (median, max, disagreements, both_escaped, pb.ref_len())
+    (median, max)
 }

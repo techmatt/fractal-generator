@@ -1,6 +1,10 @@
 //! CLI parsing (clap derive) and resolution of aspect → output height.
 
 use clap::{Parser, ValueEnum};
+use num_complex::Complex;
+
+use crate::backend::TrapShape;
+use crate::coloring::{ColorChannel, InteriorMode};
 
 /// Precision backend selection.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -62,6 +66,39 @@ pub struct Cli {
     #[arg(long, default_value_t = 0.0)]
     pub offset: f64,
 
+    /// Primary exterior coloring channel.
+    #[arg(long, value_enum, default_value_t = ColorChannel::Smooth)]
+    pub color: ColorChannel,
+
+    /// Interior (non-escaping) pixel treatment.
+    #[arg(long, value_enum, default_value_t = InteriorMode::Black)]
+    pub interior: InteriorMode,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Multiplier applied to the trap minimum before mapping (trap channel).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_scale: f64,
+
+    /// Weight of trap phase added as a secondary hue offset (0 = unused).
+    #[arg(long, default_value_t = 0.0)]
+    pub trap_phase_strength: f64,
+
+    /// DE-shade: brighten thin boundary filaments. Bare flag uses strength 1.0;
+    /// pass a value to tune. Omit to disable.
+    #[arg(long, num_args = 0..=1, default_missing_value = "1.0")]
+    pub de_shade: Option<f64>,
+
     /// Precision backend: f64, perturb, or auto (default).
     #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
     pub backend: BackendChoice,
@@ -76,6 +113,26 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        let parts: Vec<&str> = self.trap_center.split(',').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "invalid --trap-center '{}', expected re,im",
+                self.trap_center
+            ));
+        }
+        let re: f64 = parts[0]
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid trap-center real part in '{}'", self.trap_center))?;
+        let im: f64 = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid trap-center imaginary part in '{}'", self.trap_center))?;
+        Ok(Complex::new(re, im))
+    }
+
     /// Resolve the output height from `--height` or `--aspect`.
     pub fn resolved_height(&self) -> Result<u32, String> {
         if let Some(h) = self.height {
