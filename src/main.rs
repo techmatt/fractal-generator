@@ -11,8 +11,11 @@ use std::time::Instant;
 use clap::Parser;
 use num_complex::Complex;
 
-use fractal_generator::backend::{F64Backend, FractalBackend, PerturbationBackend, Trap};
+use fractal_generator::backend::{
+    F64Backend, FractalBackend, JuliaBackend, PerturbationBackend, Trap,
+};
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
+use fractal_generator::descend;
 use fractal_generator::coloring::ColorParams;
 use fractal_generator::hp;
 use fractal_generator::palette::{builtin, Palette};
@@ -73,6 +76,28 @@ fn iterate_location(loc: &LocationArgs) -> Result<Iterated, String> {
         center: loc.resolved_trap_center()?,
         radius: loc.trap_radius,
     };
+
+    // Julia path: always f64 at base scale, parameter `c` is the f64 projection
+    // of the high-precision `--param-*`. Short-circuits the precision tiers — a
+    // base-scale Julia never needs perturbation.
+    if loc.julia {
+        let param_re = hp::parse_decimal(&loc.param_re, prec_bits)?;
+        let param_im = hp::parse_decimal(&loc.param_im, prec_bits)?;
+        let param = Complex::new(hp::to_f64(&param_re), hp::to_f64(&param_im));
+        let backend = JuliaBackend::new(param, loc.maxiter, loc.bailout, trap);
+        eprintln!(
+            "iterating Julia {}x{} (supersample {}), c = ({:.6}, {:.6}), maxiter {} ...",
+            loc.width, height, loc.supersample, param.re, param.im, loc.maxiter,
+        );
+        let t0 = Instant::now();
+        let buf = render::iterate_samples(&backend, &frame, loc.supersample);
+        let iter_secs = t0.elapsed().as_secs_f64();
+        return Ok(Iterated {
+            frame,
+            buf,
+            iter_secs,
+        });
+    }
 
     let spacing = frame.pixel_size();
     let use_perturb = match loc.backend {
@@ -256,6 +281,9 @@ fn run_sheet(args: &SheetArgs) -> Result<(), String> {
         trap_center: args.location.trap_center.clone(),
         trap_radius: args.location.trap_radius,
         backend: args.location.backend,
+        julia: false,
+        param_re: "0".into(),
+        param_im: "0".into(),
     };
 
     let it = iterate_location(&loc)?;
@@ -287,6 +315,7 @@ fn run() -> Result<(), String> {
     let cli = Cli::parse();
     match &cli.command {
         Some(Command::Sheet(args)) => run_sheet(args),
+        Some(Command::Descend(args)) => descend::run_descend(args),
         None => run_render(&cli),
     }
 }

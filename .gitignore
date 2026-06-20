@@ -27,3 +27,6 @@ target
 /renders
 /prompts
 /out
+/descend_strip_panels
+/descend_stderr.txt
+/descend_stdout.txt

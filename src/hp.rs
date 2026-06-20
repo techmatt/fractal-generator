@@ -12,6 +12,19 @@
 
 use astro_float::{BigFloat, Consts, Radix, RoundingMode, Sign};
 
+/// Format a `BigFloat` as a full-precision decimal string (scientific form,
+/// e.g. `-5.0e-1`). This is the inverse of [`parse_decimal`] — the string keeps
+/// every mantissa bit, so re-parsing it reproduces the value. Used for the
+/// descend JSON, where a level's center must survive a round-trip back into
+/// `render`/`render --julia` to re-render at wallpaper resolution. Unlike the
+/// hot [`to_f64`] path this calls the (slower) decimal formatter, which is fine
+/// at one call per level.
+pub fn to_decimal_string(x: &BigFloat) -> Result<String, String> {
+    let mut cc = Consts::new().map_err(|e| format!("astro-float init failed: {e:?}"))?;
+    x.format(Radix::Dec, RoundingMode::ToEven, &mut cc)
+        .map_err(|e| format!("could not format high-precision decimal: {e:?}"))
+}
+
 /// Rounding mode for parsing the center. Correct rounding of the *input* matters
 /// (it is the ground truth the whole orbit derives from); orbit arithmetic uses
 /// `RoundingMode::None` for speed since results are projected to `f64` anyway.

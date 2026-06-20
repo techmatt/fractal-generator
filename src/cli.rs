@@ -78,6 +78,23 @@ pub struct LocationArgs {
     /// Precision backend: f64, perturb, or auto (default).
     #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
     pub backend: BackendChoice,
+
+    /// Render a Julia set instead of the Mandelbrot: `z₀ = pixel`, fixed
+    /// parameter `c = (--param-re, --param-im)`. The frame (`--center-*`,
+    /// `--frame-width`) is the *view*; for the whole set use center `0` and
+    /// width ~3.5. This is the wallpaper re-render path for a descend target.
+    #[arg(long, default_value_t = false)]
+    pub julia: bool,
+
+    /// Julia parameter `c`, real part — arbitrary-precision decimal (projected
+    /// to f64). Ignored unless `--julia`.
+    #[arg(long, default_value = "0", allow_negative_numbers = true)]
+    pub param_re: String,
+
+    /// Julia parameter `c`, imaginary part — arbitrary-precision decimal.
+    /// Ignored unless `--julia`.
+    #[arg(long, default_value = "0", allow_negative_numbers = true)]
+    pub param_im: String,
 }
 
 /// Channel → gradient mapping. Shared by `render` and `sheet` (the sheet applies
@@ -163,6 +180,130 @@ pub struct Cli {
 pub enum Command {
     /// One location × N palettes → a single grid PNG (iterates once).
     Sheet(SheetArgs),
+    /// Greedy Mandelbrot→Julia descent filmstrip + JSON (depth-falloff probe).
+    Descend(DescendArgs),
+}
+
+/// `descend` subcommand: greedy quality-scored descent emitting a tall
+/// Mandelbrot|Julia filmstrip and a JSON log. A diagnostic for *where* deep-zoom
+/// quality falls off (and a prototype of the per-window interest score the real
+/// beam search will need) — deliberately the naive greedy baseline.
+#[derive(Args, Debug)]
+pub struct DescendArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Number of descent levels (each zooms in by `--zoom`).
+    #[arg(long, default_value_t = 20)]
+    pub levels: u32,
+
+    /// Per-level zoom factor (`width_{i+1} = width_i / zoom`).
+    #[arg(long, default_value_t = 6.0)]
+    pub zoom: f64,
+
+    /// Mandelbrot/Julia panel width in pixels (height follows 16:9).
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) for both panels.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Start frame center as `re,im` (arbitrary-precision decimals).
+    #[arg(long, default_value = "-0.5,0", allow_negative_numbers = true)]
+    pub start_center: String,
+
+    /// Start frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub start_width: f64,
+
+    /// RNG seed for sampling a target from each level's top-1% scored windows.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Score window size K (K×K window over the feature map).
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(mag))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of magnification).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow).
+    #[arg(long, default_value_t = 3000)]
+    pub julia_maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Precision backend: f64, perturb, or auto (default; switches per level).
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    pub backend: BackendChoice,
+
+    /// Output filmstrip PNG path. Per-level panels go in `<stem>_panels/`.
+    #[arg(long, default_value = "descend_strip.png")]
+    pub output: String,
+
+    /// Output JSON log path.
+    #[arg(long, default_value = "descend.json")]
+    pub json: String,
+}
+
+impl DescendArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--start-center` (`re,im`) into two decimal strings (kept as
+    /// strings for arbitrary-precision parsing downstream).
+    pub fn resolved_start_center(&self) -> Result<(String, String), String> {
+        let parts: Vec<&str> = self.start_center.split(',').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "invalid --start-center '{}', expected re,im",
+                self.start_center
+            ));
+        }
+        Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
+    }
+}
+
+/// Parse a `re,im` pair into a complex number.
+pub fn parse_complex(s: &str, what: &str) -> Result<Complex<f64>, String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 2 {
+        return Err(format!("invalid {what} '{s}', expected re,im"));
+    }
+    let re: f64 = parts[0]
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid {what} real part in '{s}'"))?;
+    let im: f64 = parts[1]
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid {what} imaginary part in '{s}'"))?;
+    Ok(Complex::new(re, im))
 }
 
 /// `sheet` subcommand: same location + shading, multiple palettes.

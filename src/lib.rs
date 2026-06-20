@@ -13,6 +13,8 @@
 pub mod backend;
 pub mod cli;
 pub mod coloring;
+pub mod descend;
+pub mod font;
 pub mod hp;
 pub mod palette;
 pub mod palette_io;

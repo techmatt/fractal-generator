@@ -200,6 +200,87 @@ impl FractalBackend for F64Backend {
     }
 }
 
+/// Plain `f64` Julia escape-time backend: `z₀ = pixel`, a **fixed** parameter
+/// `c`, iterating `z_{n+1} = z² + c`. Used only at base scale (whole-set view,
+/// center `0`, width ~3.5), so f64 is always accurate — no perturbation tier.
+///
+/// Smooth value and orbit trap are computed exactly as the Mandelbrot backends
+/// (full value `z`, trap skips `z₀`), so the same coloring stage applies. The
+/// distance estimate is **not** carried (`de = 0`): the descend probe never
+/// needs Julia DE, and the simple `dz` recurrence differs for Julia. `de = 0`
+/// reads as "infinitely thin filament", which DE-shade/`--color de` would
+/// misuse — the probe's default `--color smooth` sidesteps that.
+pub struct JuliaBackend {
+    /// Fixed Julia parameter `c` (the chosen Mandelbrot target, f64 projection).
+    param: Complex<f64>,
+    maxiter: u32,
+    bailout2: f64,
+    trap: Trap,
+}
+
+impl JuliaBackend {
+    pub fn new(param: Complex<f64>, maxiter: u32, bailout: f64, trap: Trap) -> Self {
+        JuliaBackend {
+            param,
+            maxiter,
+            bailout2: bailout * bailout,
+            trap,
+        }
+    }
+}
+
+impl FractalBackend for JuliaBackend {
+    #[inline]
+    fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
+        // z₀ is the pixel; the parameter is fixed. (Mandelbrot uses z₀ = 0 and
+        // the pixel as the parameter — that's the only structural difference.)
+        let mut zr = c.re;
+        let mut zi = c.im;
+        let cr = self.param.re;
+        let ci = self.param.im;
+        let mut n = 0u32;
+        let mut trap_min = f64::INFINITY;
+        let mut trap_phase = 0.0f64;
+
+        loop {
+            // z = z² + c
+            let nzr = zr * zr - zi * zi + cr;
+            let nzi = 2.0 * zr * zi + ci;
+            zr = nzr;
+            zi = nzi;
+            n += 1;
+
+            let zmag2 = zr * zr + zi * zi;
+            let (d, ph) = self.trap.eval(zr, zi);
+            if d < trap_min {
+                trap_min = d;
+                trap_phase = ph;
+            }
+
+            if n >= self.maxiter {
+                return PixelSample {
+                    escaped: false,
+                    smooth_iter: 0.0,
+                    de: 0.0,
+                    trap_min,
+                    trap_phase,
+                    glitched: false,
+                };
+            }
+            if zmag2 > self.bailout2 {
+                return PixelSample {
+                    escaped: true,
+                    smooth_iter: smooth(n, zmag2),
+                    de: 0.0, // Julia DE intentionally skipped.
+                    trap_min,
+                    trap_phase,
+                    glitched: false,
+                };
+            }
+        }
+    }
+}
+
 /// Single-reference perturbation backend with Zhuoran rebasing.
 ///
 /// Stores the reference orbit `Z[0..L]` (`Z[0] = 0`) as `f64` projections — the
