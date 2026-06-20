@@ -29,6 +29,30 @@ pub enum ColorChannel {
     De,
 }
 
+/// Curve applied to the raw `trap_min` before the `·density + offset` mapping.
+/// Trap minima cluster in a narrow low band; `sqrt`/`log` expand that band so
+/// trap coloring spans the gradient instead of a thin slice of hues.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum TrapCurve {
+    /// Identity — raw trap minimum.
+    Linear,
+    /// `sqrt(d)` — the default; gentle expansion of the low band.
+    Sqrt,
+    /// `ln(1+d)` — stronger compression of the high tail / expansion of the low band.
+    Log,
+}
+
+impl TrapCurve {
+    #[inline]
+    fn apply(self, d: f64) -> f64 {
+        match self {
+            TrapCurve::Linear => d,
+            TrapCurve::Sqrt => d.max(0.0).sqrt(),
+            TrapCurve::Log => d.max(0.0).ln_1p(),
+        }
+    }
+}
+
 /// Treatment of non-escaping (interior) pixels.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum InteriorMode {
@@ -50,8 +74,10 @@ pub struct ColorParams {
     pub channel: ColorChannel,
     /// Interior treatment.
     pub interior: InteriorMode,
-    /// Multiplier applied to `trap_min` before mapping (trap channel / interior).
+    /// Multiplier applied to the curved `trap_min` before mapping (trap channel / interior).
     pub trap_scale: f64,
+    /// Curve applied to `trap_min` before scaling (trap headroom).
+    pub trap_curve: TrapCurve,
     /// Weight of `trap_phase` added as a secondary hue offset (trap channel /
     /// interior). `0.0` = phase unused.
     pub trap_phase_strength: f64,
@@ -79,7 +105,7 @@ pub fn shade(
     let mut color = if sample.escaped {
         let value = match params.channel {
             ColorChannel::Smooth => sample.smooth_iter,
-            ColorChannel::Trap => sample.trap_min * params.trap_scale,
+            ColorChannel::Trap => params.trap_curve.apply(sample.trap_min) * params.trap_scale,
             // Filament index: normalized DE, log-compressed so the wide exterior
             // range folds into a usable gradient sweep.
             ColorChannel::De => (sample.de / pixel_spacing).ln_1p(),
@@ -93,7 +119,7 @@ pub fn shade(
         match params.interior {
             InteriorMode::Black => [0.0, 0.0, 0.0],
             InteriorMode::Trap => {
-                let t = sample.trap_min * params.trap_scale * params.density
+                let t = params.trap_curve.apply(sample.trap_min) * params.trap_scale * params.density
                     + params.offset
                     + sample.trap_phase * params.trap_phase_strength;
                 palette.lookup_linear(t.rem_euclid(1.0))

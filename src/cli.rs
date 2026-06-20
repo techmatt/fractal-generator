@@ -1,10 +1,15 @@
 //! CLI parsing (clap derive) and resolution of aspect → output height.
+//!
+//! The default (subcommand-less) invocation is **render** — a single PNG, exactly
+//! as before. The optional `sheet` subcommand renders one location across many
+//! palettes. Location + shading flags are shared via flattened arg groups so the
+//! two paths stay in sync.
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use num_complex::Complex;
 
 use crate::backend::TrapShape;
-use crate::coloring::{ColorChannel, InteriorMode};
+use crate::coloring::{ColorChannel, InteriorMode, TrapCurve};
 
 /// Precision backend selection.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -17,10 +22,10 @@ pub enum BackendChoice {
     Auto,
 }
 
-/// Escape-time Mandelbrot renderer (f64 + perturbation backends).
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-pub struct Cli {
+/// Frame geometry, precision, and orbit-trap *shape* — everything that feeds
+/// iteration. Shared by `render` and `sheet` (one iteration, identical setup).
+#[derive(Args, Debug)]
+pub struct LocationArgs {
     /// Frame center, real part — arbitrary-precision decimal string (an f64
     /// center is meaningless at depth, so this is parsed at full precision).
     #[arg(long, default_value = "-0.5", allow_negative_numbers = true)]
@@ -58,22 +63,6 @@ pub struct Cli {
     #[arg(long, default_value_t = 1e6)]
     pub bailout: f64,
 
-    /// Gradient cycles per unit smooth-iteration count.
-    #[arg(long, default_value_t = 0.025)]
-    pub density: f64,
-
-    /// Gradient phase offset in [0,1).
-    #[arg(long, default_value_t = 0.0)]
-    pub offset: f64,
-
-    /// Primary exterior coloring channel.
-    #[arg(long, value_enum, default_value_t = ColorChannel::Smooth)]
-    pub color: ColorChannel,
-
-    /// Interior (non-escaping) pixel treatment.
-    #[arg(long, value_enum, default_value_t = InteriorMode::Black)]
-    pub interior: InteriorMode,
-
     /// Orbit-trap shape.
     #[arg(long, value_enum, default_value_t = TrapShape::Point)]
     pub trap: TrapShape,
@@ -86,9 +75,38 @@ pub struct Cli {
     #[arg(long, default_value_t = 1.0)]
     pub trap_radius: f64,
 
-    /// Multiplier applied to the trap minimum before mapping (trap channel).
+    /// Precision backend: f64, perturb, or auto (default).
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    pub backend: BackendChoice,
+}
+
+/// Channel → gradient mapping. Shared by `render` and `sheet` (the sheet applies
+/// the same shading to every tile, varying only the palette).
+#[derive(Args, Debug)]
+pub struct ShadeArgs {
+    /// Gradient cycles per unit of the mapped channel value.
+    #[arg(long, default_value_t = 0.025)]
+    pub density: f64,
+
+    /// Gradient phase offset / rotation in [0,1).
+    #[arg(long, default_value_t = 0.0)]
+    pub offset: f64,
+
+    /// Primary exterior coloring channel.
+    #[arg(long, value_enum, default_value_t = ColorChannel::Smooth)]
+    pub color: ColorChannel,
+
+    /// Interior (non-escaping) pixel treatment.
+    #[arg(long, value_enum, default_value_t = InteriorMode::Black)]
+    pub interior: InteriorMode,
+
+    /// Multiplier applied to the curved trap minimum before mapping (trap channel).
     #[arg(long, default_value_t = 1.0)]
     pub trap_scale: f64,
+
+    /// Curve applied to trap_min before scaling (trap headroom).
+    #[arg(long, value_enum, default_value_t = TrapCurve::Sqrt)]
+    pub trap_curve: TrapCurve,
 
     /// Weight of trap phase added as a secondary hue offset (0 = unused).
     #[arg(long, default_value_t = 0.0)]
@@ -99,20 +117,90 @@ pub struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "1.0")]
     pub de_shade: Option<f64>,
 
-    /// Precision backend: f64, perturb, or auto (default).
-    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
-    pub backend: BackendChoice,
-
     /// Paint per-pixel glitched (delta-underflow) pixels magenta for diagnosis.
     #[arg(long, default_value_t = false)]
     pub mark_glitches: bool,
+}
+
+/// Palette selection shared shape (reverse applies in both modes).
+#[derive(Args, Debug)]
+pub struct PaletteSelectArgs {
+    /// Built-in name (`default`, `cubehelix`, `viridis`) or a path to `.ugr`/`.map`.
+    #[arg(long, default_value = "default")]
+    pub palette: String,
+
+    /// For a multi-block `.ugr`, the block to use (default: first).
+    #[arg(long)]
+    pub palette_entry: Option<String>,
+
+    /// Reverse the gradient direction.
+    #[arg(long, default_value_t = false)]
+    pub palette_reverse: bool,
+}
+
+/// Top-level CLI. No subcommand → render (existing behavior).
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    #[command(flatten)]
+    pub location: LocationArgs,
+
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
 
     /// Output PNG path.
     #[arg(long, default_value = "out.png")]
     pub output: String,
 }
 
-impl Cli {
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// One location × N palettes → a single grid PNG (iterates once).
+    Sheet(SheetArgs),
+}
+
+/// `sheet` subcommand: same location + shading, multiple palettes.
+#[derive(Args, Debug)]
+pub struct SheetArgs {
+    #[command(flatten)]
+    pub location: LocationArgs,
+
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    /// Palette file paths (`.ugr`/`.map`). For multi-block `.ugr`, every block
+    /// is included as its own tile.
+    #[arg(long, num_args = 0.., value_delimiter = ' ')]
+    pub palettes: Vec<String>,
+
+    /// Built-in palette names (`default`, `cubehelix`, `viridis`).
+    #[arg(long, num_args = 0.., value_delimiter = ' ')]
+    pub builtins: Vec<String>,
+
+    /// Grid columns (default: ≈ √N).
+    #[arg(long)]
+    pub cols: Option<usize>,
+
+    /// Per-tile width in pixels (height follows aspect). Modest, e.g. 320–512.
+    #[arg(long, default_value_t = 384)]
+    pub tile_width: u32,
+
+    /// Reverse every palette's gradient direction.
+    #[arg(long, default_value_t = false)]
+    pub palette_reverse: bool,
+
+    /// Output PNG path.
+    #[arg(long, default_value = "sheet.png")]
+    pub output: String,
+}
+
+impl LocationArgs {
     /// Parse `--trap-center` (`re,im`) into a complex number.
     pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
         let parts: Vec<&str> = self.trap_center.split(',').collect();

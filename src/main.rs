@@ -1,8 +1,9 @@
 //! CLI wrapper over the render core.
 //!
-//! Parses parameters, picks the precision backend by depth (with a `--backend`
-//! override), refuses frames past the v1 magnification cap, builds the backend
-//! (computing the perturbation reference orbit when needed), renders, and saves.
+//! Default invocation renders one PNG (parse params, pick the precision backend
+//! by depth with a `--backend` override, build the backend, iterate, shade,
+//! save). The `sheet` subcommand iterates one location once and re-shades it
+//! across many palettes into a single grid PNG.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -11,11 +12,13 @@ use clap::Parser;
 use num_complex::Complex;
 
 use fractal_generator::backend::{F64Backend, FractalBackend, PerturbationBackend, Trap};
-use fractal_generator::cli::{BackendChoice, Cli};
+use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
 use fractal_generator::coloring::ColorParams;
 use fractal_generator::hp;
-use fractal_generator::palette::Palette;
+use fractal_generator::palette::{builtin, Palette};
+use fractal_generator::palette_io::{load_palette, load_palette_file};
 use fractal_generator::render::{self, Frame};
+use fractal_generator::sheet;
 
 /// Pixel spacing below which f64 enters its quantization regime (≈ eps·|c|).
 /// At or below this, auto-selection switches to perturbation.
@@ -25,59 +28,58 @@ const PERTURB_SPACING: f64 = 1e-13;
 /// (~1e300 magnification). Refuse rather than render garbage.
 const MIN_FRAME_WIDTH: f64 = 1e-300;
 
-fn run() -> Result<(), String> {
-    let args = Cli::parse();
+/// A location iterated once: frame, cached samples, and diagnostics.
+struct Iterated {
+    frame: Frame,
+    buf: render::SampleBuffer,
+    iter_secs: f64,
+}
 
-    let height = args.resolved_height()?;
-    if args.width == 0 {
+/// Build the frame + backend for a location and iterate the supersampled grid
+/// once. Shared by render and sheet so both set up identically.
+fn iterate_location(loc: &LocationArgs) -> Result<Iterated, String> {
+    let height = loc.resolved_height()?;
+    if loc.width == 0 {
         return Err("--width must be > 0".into());
     }
-    if args.supersample == 0 {
+    if loc.supersample == 0 {
         return Err("--supersample must be > 0".into());
     }
-
-    // Too-deep refusal (frame-level): below this, f64 deltas underflow.
-    if args.frame_width <= 0.0 {
+    if loc.frame_width <= 0.0 {
         return Err("--frame-width must be > 0".into());
     }
-    if args.frame_width < MIN_FRAME_WIDTH {
+    if loc.frame_width < MIN_FRAME_WIDTH {
         return Err(format!(
             "frame width {:.3e} is past the v1 magnification cap (~1e300): f64 deltas \
              would underflow to denormals. Deeper zoom needs floatexp (deferred).",
-            args.frame_width
+            loc.frame_width
         ));
     }
 
-    // High-precision center: parse to bignum, keep an f64 projection for geometry
-    // and the f64 backend.
-    let prec_bits = hp::prec_bits(args.width, args.frame_width);
-    let center_re_hp = hp::parse_decimal(&args.center_re, prec_bits)?;
-    let center_im_hp = hp::parse_decimal(&args.center_im, prec_bits)?;
+    let prec_bits = hp::prec_bits(loc.width, loc.frame_width);
+    let center_re_hp = hp::parse_decimal(&loc.center_re, prec_bits)?;
+    let center_im_hp = hp::parse_decimal(&loc.center_im, prec_bits)?;
     let center = Complex::new(hp::to_f64(&center_re_hp), hp::to_f64(&center_im_hp));
 
     let frame = Frame {
         center,
-        frame_width: args.frame_width,
-        out_width: args.width,
+        frame_width: loc.frame_width,
+        out_width: loc.width,
         out_height: height,
     };
 
     let trap = Trap {
-        shape: args.trap,
-        center: args.resolved_trap_center()?,
-        radius: args.trap_radius,
+        shape: loc.trap,
+        center: loc.resolved_trap_center()?,
+        radius: loc.trap_radius,
     };
 
-    // Backend selection by pixel spacing, with --backend override.
     let spacing = frame.pixel_size();
-    let use_perturb = match args.backend {
+    let use_perturb = match loc.backend {
         BackendChoice::Auto => spacing <= PERTURB_SPACING,
         BackendChoice::Perturb => true,
         BackendChoice::F64 => false,
     };
-
-    // Quantization warning ONLY when f64 is (force-)selected past its clean
-    // limit; auto-selected perturbation is silent.
     if !use_perturb && spacing < PERTURB_SPACING {
         eprintln!(
             "warning: pixel spacing {spacing:.3e} is inside f64's quantization regime and \
@@ -86,26 +88,14 @@ fn run() -> Result<(), String> {
         );
     }
 
-    let color = ColorParams {
-        density: args.density,
-        offset: args.offset,
-        channel: args.color,
-        interior: args.interior,
-        trap_scale: args.trap_scale,
-        trap_phase_strength: args.trap_phase_strength,
-        de_shade: args.de_shade,
-        mark_glitches: args.mark_glitches,
-    };
-
-    // Build the backend; time the reference-orbit construction for perturbation.
     let (backend, backend_name, ref_report): (Box<dyn FractalBackend>, &str, Option<(f64, usize)>) =
         if use_perturb {
             let t = Instant::now();
             let pb = PerturbationBackend::new(
                 &center_re_hp,
                 &center_im_hp,
-                args.maxiter,
-                args.bailout,
+                loc.maxiter,
+                loc.bailout,
                 prec_bits,
                 trap,
             );
@@ -114,22 +104,20 @@ fn run() -> Result<(), String> {
             (Box::new(pb), "perturbation", Some((ref_secs, len)))
         } else {
             (
-                Box::new(F64Backend::new(args.maxiter, args.bailout, trap)),
+                Box::new(F64Backend::new(loc.maxiter, loc.bailout, trap)),
                 "f64",
                 None,
             )
         };
 
-    let palette = Palette::ultra_fractal();
-
     eprintln!(
-        "rendering {}x{} (supersample {}, {} subsamples/pixel), maxiter {}, backend {} \
+        "iterating {}x{} (supersample {}, {} subsamples/pixel), maxiter {}, backend {} \
          (spacing {:.3e}, prec {} bits) ...",
-        args.width,
+        loc.width,
         height,
-        args.supersample,
-        args.supersample * args.supersample,
-        args.maxiter,
+        loc.supersample,
+        loc.supersample * loc.supersample,
+        loc.maxiter,
         backend_name,
         spacing,
         prec_bits,
@@ -138,33 +126,9 @@ fn run() -> Result<(), String> {
         eprintln!("reference orbit: {len} points in {ref_secs:.4}s");
     }
 
-    // Stage 1: iterate once into the cached supersampled buffer.
     let t0 = Instant::now();
-    let buf = render::iterate_samples(&*backend, &frame, args.supersample);
+    let buf = render::iterate_samples(&*backend, &frame, loc.supersample);
     let iter_secs = t0.elapsed().as_secs_f64();
-
-    // Stage 2: pure shading + downsample (re-runnable without re-iterating).
-    let t1 = Instant::now();
-    let img = render::shade_and_downsample(
-        &buf.samples,
-        frame.out_width,
-        frame.out_height,
-        buf.ss,
-        &palette,
-        &color,
-        frame.pixel_size(),
-    );
-    let shade_secs = t1.elapsed().as_secs_f64();
-    let render_secs = iter_secs + shade_secs;
-
-    if let Some((ref_secs, _)) = ref_report {
-        let pct = if render_secs > 0.0 {
-            100.0 * ref_secs / render_secs
-        } else {
-            0.0
-        };
-        eprintln!("reference orbit was {pct:.3}% of render time");
-    }
 
     if buf.glitched_pixels > 0 {
         eprintln!(
@@ -174,14 +138,157 @@ fn run() -> Result<(), String> {
         );
     }
 
-    img.save(&args.output)
-        .map_err(|e| format!("failed to write {}: {e}", args.output))?;
+    Ok(Iterated {
+        frame,
+        buf,
+        iter_secs,
+    })
+}
 
+/// Map shading CLI args to coloring parameters.
+fn color_params(shade: &ShadeArgs) -> ColorParams {
+    ColorParams {
+        density: shade.density,
+        offset: shade.offset,
+        channel: shade.color,
+        interior: shade.interior,
+        trap_scale: shade.trap_scale,
+        trap_curve: shade.trap_curve,
+        trap_phase_strength: shade.trap_phase_strength,
+        de_shade: shade.de_shade,
+        mark_glitches: shade.mark_glitches,
+    }
+}
+
+fn run_render(cli: &Cli) -> Result<(), String> {
+    let it = iterate_location(&cli.location)?;
+    let palette = load_palette(
+        &cli.palette.palette,
+        cli.palette.palette_entry.as_deref(),
+        cli.palette.palette_reverse,
+    )?;
+    let params = color_params(&cli.shade);
+
+    let t1 = Instant::now();
+    let img = render::shade_and_downsample(
+        &it.buf.samples,
+        it.frame.out_width,
+        it.frame.out_height,
+        it.buf.ss,
+        &palette,
+        &params,
+        it.frame.pixel_size(),
+    );
+    let shade_secs = t1.elapsed().as_secs_f64();
+
+    img.save(&cli.output)
+        .map_err(|e| format!("failed to write {}: {e}", cli.output))?;
     eprintln!(
-        "wrote {} in {:.2}s (iterate {:.2}s + shade {:.3}s)",
-        args.output, render_secs, iter_secs, shade_secs
+        "wrote {} (palette '{}') in {:.2}s (iterate {:.2}s + shade {:.3}s)",
+        cli.output,
+        palette.name(),
+        it.iter_secs + shade_secs,
+        it.iter_secs,
+        shade_secs
     );
     Ok(())
+}
+
+/// Resolve the sheet's palette set: every `--builtins` name, then every block of
+/// every `--palettes` file (a multi-block `.ugr` contributes one tile per block).
+fn resolve_sheet_palettes(args: &SheetArgs) -> Result<Vec<Palette>, String> {
+    let mut palettes = Vec::new();
+    for name in &args.builtins {
+        let p = builtin(name, args.palette_reverse)
+            .ok_or_else(|| format!("unknown built-in palette '{name}'"))?;
+        palettes.push(p);
+    }
+    for spec in &args.palettes {
+        let path = std::path::Path::new(spec);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if ext == "ugr" {
+            // Expand every block into its own tile.
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("failed to read palette '{}': {e}", path.display()))?;
+            let grads = fractal_generator::palette_io::parse_ugr(&text)
+                .map_err(|e| format!("parsing '{}': {e}", path.display()))?;
+            if grads.is_empty() {
+                return Err(format!("no gradient blocks in '{}'", path.display()));
+            }
+            for g in grads {
+                palettes.push(Palette::from_srgb8_stops(
+                    g.name,
+                    &g.stops,
+                    args.palette_reverse,
+                ));
+            }
+        } else {
+            palettes.push(load_palette_file(path, None, args.palette_reverse)?);
+        }
+    }
+    if palettes.is_empty() {
+        return Err("contact sheet needs at least one palette (--palettes / --builtins)".into());
+    }
+    Ok(palettes)
+}
+
+fn run_sheet(args: &SheetArgs) -> Result<(), String> {
+    let palettes = resolve_sheet_palettes(args)?;
+    eprintln!("contact sheet: {} palettes", palettes.len());
+
+    // The location iterates at the tile resolution: override width with
+    // --tile-width (height still follows --aspect).
+    let loc = LocationArgs {
+        center_re: args.location.center_re.clone(),
+        center_im: args.location.center_im.clone(),
+        frame_width: args.location.frame_width,
+        maxiter: args.location.maxiter,
+        width: args.tile_width.max(1),
+        height: None,
+        aspect: args.location.aspect.clone(),
+        supersample: args.location.supersample,
+        bailout: args.location.bailout,
+        trap: args.location.trap,
+        trap_center: args.location.trap_center.clone(),
+        trap_radius: args.location.trap_radius,
+        backend: args.location.backend,
+    };
+
+    let it = iterate_location(&loc)?;
+    let params = color_params(&args.shade);
+
+    let t1 = Instant::now();
+    let (grid, legend) =
+        sheet::render_contact_sheet(&it.buf, &palettes, &params, it.frame.pixel_size(), args.cols);
+    let shade_secs = t1.elapsed().as_secs_f64();
+
+    grid.save(&args.output)
+        .map_err(|e| format!("failed to write {}: {e}", args.output))?;
+
+    for line in &legend {
+        println!("{line}");
+    }
+    eprintln!(
+        "wrote {} ({} tiles) in iterate {:.2}s + {} shadings {:.3}s",
+        args.output,
+        palettes.len(),
+        it.iter_secs,
+        palettes.len(),
+        shade_secs
+    );
+    Ok(())
+}
+
+fn run() -> Result<(), String> {
+    let cli = Cli::parse();
+    match &cli.command {
+        Some(Command::Sheet(args)) => run_sheet(args),
+        None => run_render(&cli),
+    }
 }
 
 fn main() -> ExitCode {

@@ -15,4 +15,6 @@ pub mod cli;
 pub mod coloring;
 pub mod hp;
 pub mod palette;
+pub mod palette_io;
 pub mod render;
+pub mod sheet;

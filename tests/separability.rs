@@ -15,7 +15,7 @@ use num_complex::Complex;
 use fractal_generator::backend::{
     F64Backend, FractalBackend, PixelSample, Trap, TrapShape,
 };
-use fractal_generator::coloring::{ColorChannel, ColorParams, InteriorMode};
+use fractal_generator::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use fractal_generator::palette::Palette;
 use fractal_generator::render::{self, Frame};
 
@@ -75,6 +75,7 @@ fn shade_is_pure_iteration_runs_once() {
                 channel: ColorChannel::Smooth,
                 interior: InteriorMode::Black,
                 trap_scale: 1.0,
+                trap_curve: TrapCurve::Sqrt,
                 trap_phase_strength: 0.0,
                 de_shade: None,
                 mark_glitches: false,
@@ -88,6 +89,7 @@ fn shade_is_pure_iteration_runs_once() {
                 channel: ColorChannel::Trap,
                 interior: InteriorMode::Trap,
                 trap_scale: 1.0,
+                trap_curve: TrapCurve::Sqrt,
                 trap_phase_strength: 0.0,
                 de_shade: None,
                 mark_glitches: false,
@@ -101,6 +103,7 @@ fn shade_is_pure_iteration_runs_once() {
                 channel: ColorChannel::De,
                 interior: InteriorMode::Black,
                 trap_scale: 1.0,
+                trap_curve: TrapCurve::Sqrt,
                 trap_phase_strength: 0.0,
                 de_shade: Some(2.0),
                 mark_glitches: false,
