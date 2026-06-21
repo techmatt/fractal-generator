@@ -198,6 +198,11 @@ pub enum Command {
     /// JSON log. Tests whether the corpus busyness band's upper bound rejects
     /// high-noise regions.
     Wallpaper(WallpaperArgs),
+    /// DE-coherence gate isolation probe: render one frame (f64) and report the
+    /// `subpixel_frac` speckle indicator (escaped pixels with `de_px < θ`),
+    /// `esc_frac`, and median `de_px`, with `de_px` pinned to the target
+    /// wallpaper spacing. Validates the missing selection statistic in isolation.
+    Cohere(CohereArgs),
 }
 
 /// `wallpaper` subcommand: see the module docs in `wallpaper.rs`. Everything here
@@ -289,6 +294,69 @@ pub struct WallpaperArgs {
     /// JSON log path.
     #[arg(long, default_value = "out/wallpaper/wallpaper.json")]
     pub json: String,
+}
+
+/// `cohere` subcommand: isolation validation of the DE-coherence gate. Renders
+/// one frame at a modest probe resolution (f64, asserted) and reports the
+/// per-frame coherence statistic — `subpixel_frac` (escaped pixels with
+/// `de_px < θ`, the speckle indicator), `esc_frac`, and the median `de_px`,
+/// all with `de_px` pinned to the target wallpaper spacing so a cheap probe
+/// predicts the full-resolution gate. Pure over the cached buffer; never
+/// re-iterates. Does not modify any scoring (the wiring is the follow-up).
+#[derive(Args, Debug)]
+pub struct CohereArgs {
+    /// Frame center, real part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "-0.5", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.0", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Probe render width in pixels (height follows 16:9). Cheap — only the
+    /// sampled set changes with this; `de_px` is taken against `--target-width`.
+    #[arg(long, default_value_t = 640)]
+    pub probe_width: u32,
+
+    /// Target wallpaper width in pixels — `de_px = de / (frame_width /
+    /// target_width)`. Pins the gate to the final render's spacing (default the
+    /// 2560-wide wallpaper) so the cheap probe is predictive.
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Sub-pixel threshold θ: an escaped pixel with `de_px < θ` is speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub theta: f64,
+
+    /// Linear supersampling factor (S×S) for the probe render.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Window size K (K×K) for the windowed-max busyness diagnostic (mirrors the
+    /// selector's `--window`, so `busy_win` matches `wallpaper.json`'s
+    /// `max_available_busyness`).
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Label for the printed data row / JSON (e.g. `noise`, `flat_L8`, `control`).
+    #[arg(long, default_value = "frame")]
+    pub label: String,
+
+    /// Optional JSON sidecar path (one frame per file).
+    #[arg(long)]
+    pub json: Option<String>,
 }
 
 impl WallpaperArgs {

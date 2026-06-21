@@ -15,6 +15,7 @@ use fractal_generator::backend::{
     F64Backend, FractalBackend, JuliaBackend, PerturbationBackend, Trap,
 };
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
+use fractal_generator::coherence;
 use fractal_generator::corpus;
 use fractal_generator::descend;
 use fractal_generator::navigate;
@@ -326,6 +327,7 @@ fn run() -> Result<(), String> {
         Some(Command::Search(args)) => search::run_search(args),
         Some(Command::Corpus(args)) => corpus::run_corpus(args),
         Some(Command::Wallpaper(args)) => wallpaper::run_wallpaper(args),
+        Some(Command::Cohere(args)) => coherence::run_cohere(args),
         None => run_render(&cli),
     }
 }
