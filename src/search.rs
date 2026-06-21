@@ -516,8 +516,13 @@ struct Cfg<'a> {
     band: crate::coherence::BandParams,
 }
 
-/// Entry point for the `search` subcommand.
+/// Entry point for the `search` subcommand. `--coverage` routes to the
+/// scale-optimizing coverage-dominance harvest (Prompt coverage-dominance); the
+/// default is the best-first frontier descent below.
 pub fn run_search(args: &SearchArgs) -> Result<(), String> {
+    if args.coverage {
+        return run_coverage_harvest(args);
+    }
     if args.panel_width == 0 {
         return Err("--panel-width must be > 0".into());
     }
@@ -1653,4 +1658,604 @@ fn build_json(
 /// happen) format error so a single bad node can't abort the whole log.
 fn dec(x: &BigFloat) -> String {
     hp::to_decimal_string(x).unwrap_or_default()
+}
+
+// ===========================================================================
+// Coverage-dominance harvest (Prompt coverage-dominance) — Phases 3 & 5
+//
+// A hard turn away from the boundary. The frontier descent above climbs *toward*
+// nuclei (boundary points) and ranks by busyness / summed band reward, so every
+// survivor pins against the speckle gate. This drive instead:
+//   1. broad-spatial-seeds the base frame (rich-location markers, not a descent);
+//   2. **scale-optimizes** each seed — sweeps the frame multiple and keeps the zoom
+//      that maximizes `coverage` (the fraction of the frame at the magical
+//      few-pixels boundary spacing), subject to the speckle/interior/coverage gates;
+//   3. drifts the center onto the densest in-coverage lobe;
+//   4. ranks survivors by `coverage` and farthest-point-samples the top-N.
+// Scale is the dominant lever (a rich spot is speckle one zoom in, magical one zoom
+// out), so there is no descent chain — staying shallow is the point (deep = sub-pixel
+// by construction). f64 throughout (the cheap regime).
+// ===========================================================================
+
+/// One swept scale's coverage row (kept for the per-candidate JSON / sensitivity).
+struct ScaleRow {
+    frame_multiple: f64,
+    width: f64,
+    magnification: f64,
+    coverage: f64,
+    subpixel_frac: f64,
+    interior_frac: f64,
+    busy_win: f64,
+    rejected: bool,
+    reason: Option<&'static str>,
+}
+
+/// A scale-optimized, drifted seed — one harvest candidate.
+struct CovCand {
+    seed_id: usize,
+    period: u32,
+    nucleus_re: BigFloat,
+    nucleus_im: BigFloat,
+    /// Surfaced frame center (drifted onto the coverage peak, else the nucleus).
+    center_re: BigFloat,
+    center_im: BigFloat,
+    width: f64,
+    frame_multiple: f64,
+    magnification: f64,
+    maxiter: u32,
+    size_mag: f64,
+    coverage: f64,
+    subpixel_frac: f64,
+    interior_frac: f64,
+    busy_win: f64,
+    de_px_median: f64,
+    drifted: bool,
+    drift_frac: f64,
+    c_f64: Complex<f64>,
+    feat: Feature,
+    panel: RgbImage,
+    panel_path: String,
+    sweep: Vec<ScaleRow>,
+}
+
+/// The coverage-dominance harvest entry point (`search --coverage`).
+fn run_coverage_harvest(args: &SearchArgs) -> Result<(), String> {
+    if args.panel_width == 0 {
+        return Err("--panel-width must be > 0".into());
+    }
+    if args.seed_count == 0 {
+        return Err("--coverage requires --seed-count > 0 (broad spatial seeds)".into());
+    }
+    if args.scale_steps < 1 {
+        return Err("--scale-steps must be >= 1".into());
+    }
+    if !(args.scale_min > 0.0 && args.scale_max >= args.scale_min) {
+        return Err("require 0 < --scale-min <= --scale-max".into());
+    }
+    if args.time_budget <= 0.0 {
+        return Err("--time-budget must be > 0".into());
+    }
+
+    let panel_w = args.panel_width;
+    let panel_h = ((panel_w as f64) * 9.0 / 16.0).round().max(1.0) as u32;
+    let ss = args.supersample.max(1);
+
+    let palette = load_palette(
+        &args.palette.palette,
+        args.palette.palette_entry.as_deref(),
+        args.palette.palette_reverse,
+    )?;
+    let params = probe::color_params(&args.shade);
+    let trap = Trap {
+        shape: args.trap,
+        center: args.resolved_trap_center()?,
+        radius: args.trap_radius,
+    };
+    let cp = args.coverage_params();
+    let cov_band = crate::coherence::coverage_band_params(&cp);
+
+    let (start_re_s, start_im_s) = args.resolved_start_center()?;
+    let base_prec = hp::prec_bits(panel_w, args.start_width) + 96;
+    let start_re = hp::parse_decimal(&start_re_s, base_prec)?;
+    let start_im = hp::parse_decimal(&start_im_s, base_prec)?;
+    let start_f64 = Complex::new(hp::to_f64(&start_re), hp::to_f64(&start_im));
+
+    let strip_path = Path::new(&args.strip);
+    let panels_dir = probe::panels_dir_for(strip_path);
+    fs::create_dir_all(&panels_dir)
+        .map_err(|e| format!("failed to create {}: {e}", panels_dir.display()))?;
+
+    eprintln!(
+        "coverage-dominance harvest: seeds≤{}, cell {}px, scales {} in [{:.0},{:.0}]×|size|; \
+         band=[{:.2},{:.2}] caps spx<{:.3} int<{:.2} cover>{:.2} busy>{:.3}; target {}, budget {:.0}s",
+        args.seed_count, args.seed_cell_px, args.scale_steps, args.scale_min, args.scale_max,
+        cp.cover_lo, cp.cover_hi, cp.spx_cap, cp.int_cap, cp.cover_min, cp.busy_floor,
+        args.target_width, args.time_budget,
+    );
+
+    // --- broad spatial seed scan over the base frame (rich-location markers) ---
+    let base_maxiter = args.maxiter_base.round().max(1.0) as u32; // mag 1 → log10(1)=0
+    let base_render_prec = hp::prec_bits(panel_w, args.start_width) + 32;
+    let base_panel = probe::render_mandel_panel(
+        &start_re, &start_im, start_f64, args.start_width, panel_w, panel_h, ss, base_maxiter,
+        args.bailout, base_render_prec, trap, crate::cli::BackendChoice::F64,
+    );
+    let mut seeds = atom_candidates_spatial(
+        &base_panel.buf, panel_w, panel_h, args.start_width, base_maxiter, args.seed_cell_px,
+    );
+    seeds.retain(|c| c.period >= 2 && c.period <= args.period_cap);
+    // Deterministic order, richest first: busyness desc, then grid position.
+    seeds.sort_by(|a, b| {
+        b.busyness
+            .partial_cmp(&a.busyness)
+            .unwrap_or(Ordering::Equal)
+            .then(a.col.cmp(&b.col))
+            .then(a.row.cmp(&b.row))
+    });
+    seeds.truncate(args.seed_count);
+    eprintln!("broad seed scan: {} distinct seeds across the base frame", seeds.len());
+
+    print_cov_header();
+
+    let half_w_base = args.start_width * 0.5;
+    let half_h_base = args.start_width * (panel_h as f64 / panel_w as f64) * 0.5;
+
+    let mut cands: Vec<CovCand> = Vec::new();
+    let clock = Instant::now();
+    let mut processed = 0usize;
+    let mut budget_hit = false;
+    let mut rejected = 0usize;
+
+    for (si, seed) in seeds.iter().enumerate() {
+        if clock.elapsed().as_secs_f64() >= args.time_budget {
+            budget_hit = true;
+            break;
+        }
+        processed += 1;
+
+        // Newton-refine the seed to its nucleus (the scale-sweep anchor).
+        let guess_re = start_re.add(&BigFloat::from_f64(seed.dc_re, base_prec), base_prec, RM);
+        let guess_im = start_im.add(&BigFloat::from_f64(seed.dc_im, base_prec), base_prec, RM);
+        let Some(nuc) = newton_nucleus(&guess_re, &guess_im, seed.period, args.start_width, base_prec)
+        else {
+            print_cov_skip(si, seed.period, "newton-fail");
+            continue;
+        };
+        let nuc_f64 = Complex::new(hp::to_f64(&nuc.re), hp::to_f64(&nuc.im));
+        let size = size_estimate(nuc_f64, seed.period);
+        if size.overflow || !(size.mag > 0.0) {
+            print_cov_skip(si, seed.period, "size-bad");
+            continue;
+        }
+        let nx = hp::to_f64(&nuc.re.sub(&start_re, base_prec, RM)) / half_w_base;
+        let ny = hp::to_f64(&nuc.im.sub(&start_im, base_prec, RM)) / half_h_base;
+
+        // --- scale sweep: keep the zoom that maximizes coverage past the gates ---
+        let mut sweep: Vec<ScaleRow> = Vec::with_capacity(args.scale_steps);
+        // Cache the best-passing panel so the surfacing pass needs no re-render.
+        let mut best: Option<(usize, crate::probe::MandelPanel, crate::coherence::CoverageStats, f64, u32)> = None;
+        for i in 0..args.scale_steps {
+            let t = if args.scale_steps == 1 {
+                0.0
+            } else {
+                i as f64 / (args.scale_steps - 1) as f64
+            };
+            let fm = args.scale_min * (args.scale_max / args.scale_min).powf(t);
+            let width = size.mag * fm;
+            let mag = args.start_width / width;
+            let maxiter = (args.maxiter_base + args.per_decade * mag.log10()).round().max(1.0) as u32;
+            if !width.is_finite() || width < MIN_WIDTH || maxiter > args.maxiter_ceiling {
+                sweep.push(ScaleRow {
+                    frame_multiple: fm, width, magnification: mag, coverage: f64::NAN,
+                    subpixel_frac: f64::NAN, interior_frac: f64::NAN, busy_win: f64::NAN,
+                    rejected: true, reason: Some("width/maxiter cap"),
+                });
+                continue;
+            }
+            let prec = hp::prec_bits(panel_w, width) + 32;
+            let cf = Complex::new(hp::to_f64(&nuc.re), hp::to_f64(&nuc.im));
+            let panel = probe::render_mandel_panel(
+                &nuc.re, &nuc.im, cf, width, panel_w, panel_h, ss, maxiter, args.bailout, prec, trap,
+                crate::cli::BackendChoice::F64,
+            );
+            let stats = crate::coherence::coverage_stats(
+                &panel.buf, width, args.target_width, args.coherence_theta, cp.cover_lo, cp.cover_hi,
+            );
+            let busy_win =
+                crate::coherence::windowed_busyness_max(&panel.buf, panel_w, panel_h, COHERENCE_WINDOW, maxiter);
+            let gate = crate::coherence::coverage_gate(&stats, busy_win, &cp);
+            sweep.push(ScaleRow {
+                frame_multiple: fm, width, magnification: mag, coverage: stats.coverage,
+                subpixel_frac: stats.subpixel_frac, interior_frac: stats.interior_frac, busy_win,
+                rejected: gate.reject, reason: gate.reason,
+            });
+            if !gate.reject {
+                let better = best.as_ref().map(|(_, _, s, _, _)| stats.coverage > s.coverage).unwrap_or(true);
+                if better {
+                    best = Some((i, panel, stats, busy_win, maxiter));
+                }
+            }
+        }
+
+        let Some((best_i, panel, mut stats, mut busy_win, maxiter)) = best else {
+            rejected += 1;
+            print_cov_rejected(si, seed.period, &sweep);
+            continue;
+        };
+        let width = sweep[best_i].width;
+        let mag = sweep[best_i].magnification;
+        let fm = sweep[best_i].frame_multiple;
+        let prec = hp::prec_bits(panel_w, width) + 32;
+
+        let mut shaded = crate::render::shade_and_downsample(
+            &panel.buf.samples, panel_w, panel_h, ss, &palette, &params, panel.spacing,
+        );
+        let mut center_re = nuc.re.clone();
+        let mut center_im = nuc.im.clone();
+        let mut drifted = false;
+        let mut drift_frac = 0.0f64;
+
+        // --- drift the center onto the densest in-coverage lobe ---
+        let map = crate::coherence::cell_reward_map(
+            &panel.buf, panel_w, panel_h, COHERENCE_WINDOW, maxiter, width, args.target_width, &cov_band,
+        );
+        if let Some((px, py, _)) = crate::coherence::best_inband_peak(&map) {
+            let frame_h = width * (panel_h as f64 / panel_w as f64);
+            let mut dre = (px / panel_w as f64 - 0.5) * width;
+            let mut dim = (0.5 - py / panel_h as f64) * frame_h;
+            let half_w = width * 0.5;
+            let half_h = frame_h * 0.5;
+            let m = (dre / half_w).abs().max((dim / half_h).abs());
+            if m > crate::coherence::DRIFT_MAX {
+                let s = crate::coherence::DRIFT_MAX / m;
+                dre *= s;
+                dim *= s;
+            }
+            if dre != 0.0 || dim != 0.0 {
+                let dcre = nuc.re.add(&BigFloat::from_f64(dre, prec), prec, RM);
+                let dcim = nuc.im.add(&BigFloat::from_f64(dim, prec), prec, RM);
+                let dcf = Complex::new(hp::to_f64(&dcre), hp::to_f64(&dcim));
+                let dpanel = probe::render_mandel_panel(
+                    &dcre, &dcim, dcf, width, panel_w, panel_h, ss, maxiter, args.bailout, prec, trap,
+                    crate::cli::BackendChoice::F64,
+                );
+                let dstats = crate::coherence::coverage_stats(
+                    &dpanel.buf, width, args.target_width, args.coherence_theta, cp.cover_lo, cp.cover_hi,
+                );
+                let dbusy = crate::coherence::windowed_busyness_max(
+                    &dpanel.buf, panel_w, panel_h, COHERENCE_WINDOW, maxiter,
+                );
+                let dgate = crate::coherence::coverage_gate(&dstats, dbusy, &cp);
+                // Keep the drift only if it improved coverage and still clears the gate.
+                if !dgate.reject && dstats.coverage > stats.coverage {
+                    shaded = crate::render::shade_and_downsample(
+                        &dpanel.buf.samples, panel_w, panel_h, ss, &palette, &params, dpanel.spacing,
+                    );
+                    stats = dstats;
+                    busy_win = dbusy;
+                    center_re = dcre;
+                    center_im = dcim;
+                    drifted = true;
+                    drift_frac = (dre / half_w).hypot(dim / half_h);
+                }
+            }
+        }
+
+        // Save a labeled per-seed panel; keep the clean panel for the sheet/strip.
+        let label = format!(
+            "S{si} P={} M={:.1e} COV={:.3}{}",
+            seed.period, mag, stats.coverage, if drifted { " D" } else { "" }
+        )
+        .to_uppercase();
+        let mut labeled = shaded.clone();
+        font::draw_text(&mut labeled, &label, 2, 2, 2, Rgb([240, 240, 240]), true);
+        let panel_file = panels_dir.join(format!("seed_{si:04}.png"));
+        labeled
+            .save(&panel_file)
+            .map_err(|e| format!("failed to write {}: {e}", panel_file.display()))?;
+
+        let feat = Feature::new(seed.period, busy_win, nx, ny);
+        let cand = CovCand {
+            seed_id: si,
+            period: seed.period,
+            nucleus_re: nuc.re.clone(),
+            nucleus_im: nuc.im.clone(),
+            center_re,
+            center_im,
+            width,
+            frame_multiple: fm,
+            magnification: mag,
+            maxiter,
+            size_mag: size.mag,
+            coverage: stats.coverage,
+            subpixel_frac: stats.subpixel_frac,
+            interior_frac: stats.interior_frac,
+            busy_win,
+            de_px_median: stats.de_px_median,
+            drifted,
+            drift_frac,
+            c_f64: nuc_f64,
+            feat,
+            panel: shaded,
+            panel_path: probe::path_str(&panel_file),
+            sweep,
+        };
+        print_cov_row(&cand);
+        cands.push(cand);
+    }
+
+    let elapsed = clock.elapsed().as_secs_f64();
+    let best_cov = cands.iter().map(|c| c.coverage).fold(0.0f64, f64::max);
+    eprintln!(
+        "\ncoverage harvest done: {} seeds processed ({} survived, {} rejected by gates), \
+         best coverage {:.4}, {:.1}s / {:.0}s{}",
+        processed,
+        cands.len(),
+        rejected,
+        best_cov,
+        elapsed,
+        args.time_budget,
+        if budget_hit { " (budget reached)" } else { " (all seeds processed)" },
+    );
+
+    // --- rank by coverage, farthest-point-sample the top-N ---
+    cands.sort_by(|a, b| b.coverage.partial_cmp(&a.coverage).unwrap_or(Ordering::Equal));
+    let top_ids = fps_top_n(&cands, args.top_n);
+
+    write_cov_sheet(&cands, &top_ids, args)?;
+    write_cov_strip(&cands, &top_ids, panel_w, panel_h, strip_path)?;
+
+    let json = build_cov_json(args, &cp, &cands, &top_ids, processed, rejected, elapsed, budget_hit, strip_path);
+    crate::ensure_parent_dir(&args.json)?;
+    fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
+
+    eprintln!(
+        "wrote {} (top-{} coverage strip), {} (top-{} sheet), seed panels in {}/, log {}",
+        args.strip,
+        top_ids.len(),
+        args.sheet,
+        top_ids.len(),
+        panels_dir.display(),
+        args.json,
+    );
+    Ok(())
+}
+
+/// Farthest-point sample up to `n` candidates over the feature vectors, seeded with
+/// the highest-coverage candidate (index 0, since `cands` is coverage-sorted).
+fn fps_top_n(cands: &[CovCand], n: usize) -> Vec<usize> {
+    if cands.is_empty() || n == 0 {
+        return Vec::new();
+    }
+    let mut chosen = vec![0usize];
+    while chosen.len() < n && chosen.len() < cands.len() {
+        let mut best: Option<usize> = None;
+        let mut best_d = -1.0f64;
+        for p in 0..cands.len() {
+            if chosen.contains(&p) {
+                continue;
+            }
+            let mind = chosen
+                .iter()
+                .map(|&c| cands[p].feat.dist2(&cands[c].feat))
+                .fold(f64::INFINITY, f64::min);
+            if mind > best_d {
+                best_d = mind;
+                best = Some(p);
+            }
+        }
+        match best {
+            Some(b) => chosen.push(b),
+            None => break,
+        }
+    }
+    chosen
+}
+
+fn print_cov_header() {
+    println!(
+        "{:>4}  {:>7}  {:>9}  {:>6}  {:>8}  {:>8}  {:>8}  {:>8}  {:>7}  {:>5}",
+        "seed", "period", "mag", "fmult", "coverage", "spx", "interior", "busy_win", "de_med", "drift",
+    );
+}
+
+fn print_cov_row(c: &CovCand) {
+    println!(
+        "{:>4}  {:>7}  {:>9.2e}  {:>6.1}  {:>8.4}  {:>8.4}  {:>8.4}  {:>8.4}  {:>7.3}  {:>5}",
+        c.seed_id, c.period, c.magnification, c.frame_multiple, c.coverage, c.subpixel_frac,
+        c.interior_frac, c.busy_win, c.de_px_median, if c.drifted { "yes" } else { "-" },
+    );
+}
+
+fn print_cov_skip(si: usize, period: u32, why: &str) {
+    println!("{:>4}  {:>7}  skip ({})", si, period, why);
+}
+
+/// A seed whose every swept scale was gated out: report the best (least-rejected)
+/// coverage seen so the rejection is legible.
+fn print_cov_rejected(si: usize, period: u32, sweep: &[ScaleRow]) {
+    let best = sweep
+        .iter()
+        .filter(|r| r.coverage.is_finite())
+        .max_by(|a, b| a.coverage.partial_cmp(&b.coverage).unwrap_or(Ordering::Equal));
+    match best {
+        Some(r) => println!(
+            "{:>4}  {:>7}  REJECT (best cov {:.4} @ fmult {:.1}: {})",
+            si, period, r.coverage, r.frame_multiple, r.reason.unwrap_or("?"),
+        ),
+        None => println!("{:>4}  {:>7}  REJECT (no scale rendered)", si, period),
+    }
+}
+
+/// Top-N coverage contact sheet from cached panels (labeled clones).
+fn write_cov_sheet(cands: &[CovCand], top_ids: &[usize], args: &SearchArgs) -> Result<(), String> {
+    if top_ids.is_empty() {
+        eprintln!("warning: no surviving candidates — no coverage sheet written");
+        return Ok(());
+    }
+    let tiles: Vec<RgbImage> = top_ids
+        .iter()
+        .map(|&id| {
+            let c = &cands[id];
+            let mut t = c.panel.clone();
+            let l1 = format!(
+                "S{} P={} M={:.1e} COV={:.3}{}",
+                c.seed_id, c.period, c.magnification, c.coverage, if c.drifted { " D" } else { "" }
+            )
+            .to_uppercase();
+            font::draw_text(&mut t, &l1, 2, 2, 2, Rgb([240, 240, 240]), true);
+            let l2 = format!(
+                "SPX={:.3} INT={:.3} BW={:.3} DEM={:.2}",
+                c.subpixel_frac, c.interior_frac, c.busy_win, c.de_px_median
+            )
+            .to_uppercase();
+            font::draw_text(&mut t, &l2, 2, 22, 2, Rgb([180, 220, 180]), true);
+            t
+        })
+        .collect();
+    let grid = sheet::compose_grid(&tiles, None);
+    crate::ensure_parent_dir(&args.sheet)?;
+    grid.save(&args.sheet)
+        .map_err(|e| format!("failed to write {}: {e}", args.sheet))?;
+    Ok(())
+}
+
+/// Single-column strip of the top-N surfaced panels (highest coverage first).
+fn write_cov_strip(
+    cands: &[CovCand],
+    top_ids: &[usize],
+    panel_w: u32,
+    panel_h: u32,
+    strip_path: &Path,
+) -> Result<(), String> {
+    if top_ids.is_empty() {
+        return Ok(());
+    }
+    let mandel: Vec<RgbImage> = top_ids
+        .iter()
+        .map(|&id| {
+            let c = &cands[id];
+            let mut m = c.panel.clone();
+            let label = format!("S{} P={} COV={:.3}", c.seed_id, c.period, c.coverage).to_uppercase();
+            font::draw_text(&mut m, &label, 2, 2, 2, Rgb([240, 240, 240]), true);
+            m
+        })
+        .collect();
+    let _ = (panel_w, panel_h);
+    let strip = probe::compose_strip_single(&mandel, panel_w, panel_h);
+    crate::ensure_parent_dir(strip_path)?;
+    strip
+        .save(strip_path)
+        .map_err(|e| format!("failed to write {}: {e}", strip_path.display()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_cov_json(
+    args: &SearchArgs,
+    cp: &crate::coherence::CoverageParams,
+    cands: &[CovCand],
+    top_ids: &[usize],
+    processed: usize,
+    rejected: usize,
+    elapsed: f64,
+    budget_hit: bool,
+    strip_path: &Path,
+) -> String {
+    use probe::{jf, js};
+    let mut s = String::from("{\n");
+
+    s.push_str("  \"mode\": \"coverage\",\n");
+    s.push_str("  \"params\": {\n");
+    s.push_str(&format!("    \"start_center\": {},\n", js(&args.start_center)));
+    s.push_str(&format!("    \"start_width\": {},\n", jf(args.start_width)));
+    s.push_str(&format!("    \"time_budget\": {},\n", jf(args.time_budget)));
+    s.push_str(&format!("    \"seed_count\": {},\n", args.seed_count));
+    s.push_str(&format!("    \"seed_cell_px\": {},\n", args.seed_cell_px));
+    s.push_str(&format!("    \"scale_min\": {},\n", jf(args.scale_min)));
+    s.push_str(&format!("    \"scale_max\": {},\n", jf(args.scale_max)));
+    s.push_str(&format!("    \"scale_steps\": {},\n", args.scale_steps));
+    s.push_str(&format!("    \"period_cap\": {},\n", args.period_cap));
+    s.push_str(&format!("    \"panel_width\": {},\n", args.panel_width));
+    s.push_str(&format!("    \"target_width\": {},\n", args.target_width));
+    s.push_str(&format!("    \"cover_lo\": {},\n", jf(cp.cover_lo)));
+    s.push_str(&format!("    \"cover_hi\": {},\n", jf(cp.cover_hi)));
+    s.push_str(&format!("    \"spx_cap\": {},\n", jf(cp.spx_cap)));
+    s.push_str(&format!("    \"int_cap\": {},\n", jf(cp.int_cap)));
+    s.push_str(&format!("    \"cover_min\": {},\n", jf(cp.cover_min)));
+    s.push_str(&format!("    \"busy_floor\": {}\n", jf(cp.busy_floor)));
+    s.push_str("  },\n");
+
+    s.push_str("  \"summary\": {\n");
+    s.push_str(&format!("    \"seeds_processed\": {},\n", processed));
+    s.push_str(&format!("    \"survived\": {},\n", cands.len()));
+    s.push_str(&format!("    \"rejected\": {},\n", rejected));
+    s.push_str(&format!(
+        "    \"best_coverage\": {},\n",
+        jf(cands.iter().map(|c| c.coverage).fold(0.0f64, f64::max))
+    ));
+    s.push_str(&format!("    \"elapsed_secs\": {},\n", jf(elapsed)));
+    s.push_str(&format!("    \"budget_hit\": {}\n", budget_hit));
+    s.push_str("  },\n");
+
+    s.push_str(&format!(
+        "  \"top_n\": [{}],\n",
+        top_ids.iter().map(|i| cands[*i].seed_id.to_string()).collect::<Vec<_>>().join(", ")
+    ));
+    s.push_str(&format!("  \"strip\": {},\n", js(&probe::path_str(strip_path))));
+    s.push_str(&format!("  \"sheet\": {},\n", js(&args.sheet)));
+
+    // Candidates ranked by coverage (the array order is the ranking).
+    s.push_str("  \"candidates\": [\n");
+    for (i, c) in cands.iter().enumerate() {
+        s.push_str("    {\n");
+        s.push_str(&format!("      \"seed_id\": {},\n", c.seed_id));
+        s.push_str(&format!("      \"period\": {},\n", c.period));
+        s.push_str(&format!(
+            "      \"nucleus\": {{ \"re\": {}, \"im\": {} }},\n",
+            js(&dec(&c.nucleus_re)), js(&dec(&c.nucleus_im))
+        ));
+        s.push_str(&format!(
+            "      \"center\": {{ \"re\": {}, \"im\": {} }},\n",
+            js(&dec(&c.center_re)), js(&dec(&c.center_im))
+        ));
+        s.push_str(&format!("      \"width\": {},\n", jf(c.width)));
+        s.push_str(&format!("      \"frame_multiple\": {},\n", jf(c.frame_multiple)));
+        s.push_str(&format!("      \"magnification\": {},\n", jf(c.magnification)));
+        s.push_str(&format!("      \"maxiter\": {},\n", c.maxiter));
+        s.push_str(&format!("      \"size_mag\": {},\n", jf(c.size_mag)));
+        s.push_str(&format!("      \"coverage\": {},\n", jf(c.coverage)));
+        s.push_str(&format!("      \"subpixel_frac\": {},\n", jf(c.subpixel_frac)));
+        s.push_str(&format!("      \"interior_frac\": {},\n", jf(c.interior_frac)));
+        s.push_str(&format!("      \"busy_win\": {},\n", jf(c.busy_win)));
+        s.push_str(&format!("      \"de_px_median\": {},\n", jf(c.de_px_median)));
+        s.push_str(&format!("      \"drifted\": {},\n", c.drifted));
+        s.push_str(&format!("      \"drift_frac\": {},\n", jf(c.drift_frac)));
+        s.push_str(&format!(
+            "      \"c_f64\": {{ \"re\": {}, \"im\": {} }},\n",
+            jf(c.c_f64.re), jf(c.c_f64.im)
+        ));
+        s.push_str(&format!("      \"rank\": {},\n", i));
+        // Per-scale sweep (the scale-optimization trace).
+        s.push_str("      \"scale_sweep\": [");
+        for (j, r) in c.sweep.iter().enumerate() {
+            s.push_str(&format!(
+                "{{ \"frame_multiple\": {}, \"magnification\": {}, \"coverage\": {}, \
+\"subpixel_frac\": {}, \"interior_frac\": {}, \"busy_win\": {}, \"rejected\": {}, \"reason\": {} }}{}",
+                jf(r.frame_multiple), jf(r.magnification), jf(r.coverage), jf(r.subpixel_frac),
+                jf(r.interior_frac), jf(r.busy_win), r.rejected,
+                r.reason.map(js).unwrap_or_else(|| "null".into()),
+                if j + 1 < c.sweep.len() { ", " } else { "" },
+            ));
+        }
+        s.push_str("],\n");
+        s.push_str(&format!("      \"panel_path\": {}\n", js(&c.panel_path)));
+        s.push_str("    }");
+        if i + 1 < cands.len() {
+            s.push(',');
+        }
+        s.push('\n');
+    }
+    s.push_str("  ]\n");
+    s.push_str("}\n");
+    s
 }

@@ -208,6 +208,500 @@ pub enum Command {
     /// mask overlay + a three-way `de_px` split (nucleus/decoration/flat). Gates
     /// the objective on the eye test before the drive spends budget.
     Deband(DebandArgs),
+    /// Coverage-dominance scorer: render one frame f64 and report `coverage` (the
+    /// fraction of the escaped frame at the magical few-pixels boundary spacing) plus
+    /// the speckle/interior/busy gates; a band-sensitivity table and optional
+    /// scale-sweep make it the discrimination + retune tool for the harvest.
+    Cover(CoverArgs),
+    /// Corpus energy-histogram metric calibration + eye-check (Prompt
+    /// corpus-energy-calibration). Computes a multi-scale OKLab edge-energy
+    /// histogram for every corpus wallpaper, freezes equal-count bins per scale,
+    /// stores each image's signature, and runs two eye-checks (corpus-internal NN
+    /// pairs + buffet source-B DEEP ranking) plus a k-means archetype sheet. No
+    /// descent, no search, no candidate scoring beyond the buffet eye-check.
+    Calibrate(CalibrateArgs),
+    /// Visual buffet: sample three sources (main-boundary neighborhoods,
+    /// off-cusp signature-filtered frames, minibrot control), render each across
+    /// an off-boundary-offset × scale grid, label every tile with its metrics,
+    /// and compose one sheet per source. No objective / ranking / drift — sample,
+    /// render, label, so a human can point at what reads "magical".
+    Buffet(BuffetArgs),
+    /// Throwaway diagnostic: re-score the buffet source-B DEEP tiles against the
+    /// persisted corpus calibration under five candidate scoring rules (nearest-k,
+    /// nearest-archetype, global-centroid, tail-pruned nearest-k, two-sided density
+    /// band) and print a PASS/FAIL table per rule. Loads everything from disk
+    /// (persisted artifact + buffet histogram cache); the only render is a
+    /// deterministic re-render of the fixed buffet set if its histograms aren't
+    /// cached. No search, no descent, no new-location rendering, no winner picked.
+    Rescore(RescoreArgs),
+    /// Diagnosis-only: add non-sparse-but-bad over-busy/speckle controls to the
+    /// known-answer set, quarantine the degenerate reference cluster (C4) from the
+    /// typicality statistics, and re-score the survivor rules (R3 global-centroid,
+    /// R5 density band, raw s16-bin0 scalar) against okay + sparse + the controls.
+    /// Renders only the fixed control set (a known-answer set, same category as the
+    /// buffet re-render). No search, no descent, no winner picked.
+    Overbusy(OverbusyArgs),
+    /// Diagnosis-only: score the 22-tile known-answer set under nearest-good-archetype
+    /// (min EMD to the k centroids of the C4-quarantined corpus), swept over cluster
+    /// granularity k ∈ {5,8,12,16}. Loads everything from disk (artifact + both
+    /// histogram caches); renders nothing. Prints a per-k ranking + PASS/FAIL plus the
+    /// control-match / straddle / sparse-survivor diagnostics. No winner picked.
+    Archetype(ArchetypeArgs),
+}
+
+/// `calibrate` subcommand: see the module docs in `energy.rs`. Calibration +
+/// eye-check only — it freezes the metric (bins) and produces the visual gates
+/// (NN pairs, buffet ranking, cluster sheet). It proposes no objective and runs
+/// no search.
+#[derive(Args, Debug)]
+pub struct CalibrateArgs {
+    /// Corpus folder of reference wallpapers (top level only — no recursion).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub dir: String,
+
+    /// Output directory for the calibration artifact + eye-check sheets.
+    #[arg(long, default_value = "out/calibrate")]
+    pub out_dir: String,
+
+    /// Buffet metrics JSON whose source-B DEEP tiles are the candidate eye-check.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal).
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Number of corpus images sampled for the NN-pair eye-check sheet.
+    #[arg(long, default_value_t = 16)]
+    pub nn_samples: usize,
+
+    /// k for the buffet EMD-to-nearest-k score.
+    #[arg(long, default_value_t = 5)]
+    pub knn: usize,
+
+    /// k-means archetype count for the corpus-structure sheet (`<2` disables).
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// Exemplars per cluster in the archetype sheet (one row each).
+    #[arg(long, default_value_t = 6)]
+    pub exemplars: usize,
+
+    /// Thumbnail width (px) for the eye-check sheets (height follows 16:9).
+    #[arg(long, default_value_t = 384)]
+    pub thumb_width: u32,
+
+    /// Render width (px) for each buffet candidate tile (height follows 16:9).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for candidate renders.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// RNG seed for k-means seeding.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+}
+
+impl CalibrateArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `rescore` subcommand: diagnosis-only re-scoring of the buffet source-B DEEP
+/// tiles under several candidate scoring rules, using only what is already on
+/// disk (the persisted calibration artifact + a buffet-histogram cache). See
+/// `energy::run_rescore`.
+#[derive(Args, Debug)]
+pub struct RescoreArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    /// Default mirrors `energy::ARTIFACT_PATH`.
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Buffet metrics JSON whose source-B DEEP tiles are the candidates.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Cached buffet DEEP-tile histograms (written on first run, reused after).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Full per-tile per-rule score dump.
+    #[arg(long, default_value = "data/calibration/rescore_buffet.json")]
+    pub out_json: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// k for the nearest-k rules (R1, R4).
+    #[arg(long, default_value_t = 5)]
+    pub knn: usize,
+
+    /// k-means archetype count (R2). Recomputed here — not stored in the artifact.
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// RNG seed for the k-means recompute (matches calibrate's default).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Render width (px) for a buffet candidate tile, only used on a cache miss.
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for candidate renders (cache miss only).
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+}
+
+impl RescoreArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `overbusy` subcommand: see `energy::run_overbusy`. Adds over-busy/speckle
+/// controls to the known-answer set, quarantines the degenerate reference cluster,
+/// and re-scores the surviving typicality rules. Diagnosis-only; no winner picked.
+#[derive(Args, Debug)]
+pub struct OverbusyArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Buffet metrics JSON whose source-B DEEP tiles are the okay/sparse anchors.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Cached buffet DEEP-tile histograms (reused; rendered once on a cache miss).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Cached over-busy/speckle control histograms (written first run, reused).
+    #[arg(long, default_value = "data/calibration/control_histograms.json")]
+    pub control_hist: String,
+
+    /// Full per-tile per-rule score dump.
+    #[arg(long, default_value = "data/calibration/rescore_controls.json")]
+    pub out_json: String,
+
+    /// Output dir for the eyeballable control sheet (regenerable view).
+    #[arg(long, default_value = "out/controls")]
+    pub out_dir: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// k-means archetype count (must match calibrate/rescore for stable clusters).
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// Cluster index to quarantine from the typicality statistics (the degenerate
+    /// reference-render cluster; C4 under seed 0 / k=6).
+    #[arg(long, default_value_t = 4)]
+    pub quarantine: usize,
+
+    /// RNG seed for the k-means recompute (matches calibrate's default).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Render width (px) for each control + buffet tile (height follows 16:9).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for control / buffet candidate renders.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Thumbnail width (px) for the control sheet (height follows 16:9).
+    #[arg(long, default_value_t = 480)]
+    pub thumb_width: u32,
+
+    /// Force re-render of the control tiles even if a cache exists.
+    #[arg(long, default_value_t = false)]
+    pub refresh_controls: bool,
+}
+
+impl OverbusyArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `archetype` subcommand: see `energy::run_archetype`. Scores the 22-tile
+/// known-answer set under nearest-good-archetype (min EMD to the k centroids of
+/// the C4-quarantined survivor corpus), swept over `--ks`. Diagnosis-only:
+/// reuses the cached histograms, frozen bins, EMD, and k-means unchanged;
+/// renders nothing.
+#[derive(Args, Debug)]
+pub struct ArchetypeArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Cached buffet DEEP-tile histograms (okay/sparse anchors).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Cached over-busy/speckle control histograms.
+    #[arg(long, default_value = "data/calibration/control_histograms.json")]
+    pub control_hist: String,
+
+    /// Full per-tile per-k score dump.
+    #[arg(long, default_value = "data/calibration/rescore_archetype.json")]
+    pub out_json: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Cluster granularities to sweep (the re-cluster k values over survivors).
+    #[arg(long, default_value = "5,8,12,16")]
+    pub ks: String,
+
+    /// k-means archetype count used to FIND the quarantine cluster (must match the
+    /// overbusy/calibrate clustering so C4 is the same n=93 degenerate cluster).
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// Cluster index to quarantine before re-clustering (the degenerate reference
+    /// cluster; C4 under seed 0 / k=6).
+    #[arg(long, default_value_t = 4)]
+    pub quarantine: usize,
+
+    /// RNG seed for both the quarantine clustering and the per-k re-clustering.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+}
+
+impl ArchetypeArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+
+    /// Parse `--ks` (comma-separated) into the granularity sweep.
+    pub fn resolved_ks(&self) -> Result<Vec<usize>, String> {
+        let mut out = Vec::new();
+        for s in self.ks.split(',') {
+            let t = s.trim();
+            if t.is_empty() {
+                continue;
+            }
+            out.push(t.parse::<usize>().map_err(|_| format!("invalid --ks component '{t}'"))?);
+        }
+        if out.is_empty() {
+            return Err("--ks parsed to no values".into());
+        }
+        Ok(out)
+    }
+}
+
+/// `buffet` subcommand: deliberately un-engineered, visual-first sampling of what
+/// "scale-uniform decoration away from a cusp" looks like (Prompt visual-buffet-v2).
+/// Reuses `coherence::coverage_stats` purely to **label** tiles (coverage,
+/// `subpixel_frac`, `interior_frac`, de_px median + IQR spread); none of it feeds
+/// any selection. Three sources — (A) main-set boundary neighborhoods, (B) off-cusp
+/// signature-filtered frames (a light two-threshold filter on trial, not a scorer),
+/// (C) a small minibrot control block — each rendered over rows = off-boundary
+/// offset × columns = scale. f64 cheap-regime throughout (asserted).
+#[derive(Args, Debug)]
+pub struct BuffetArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Source-A (main-boundary neighborhood) location count.
+    #[arg(long, default_value_t = 6)]
+    pub a_count: usize,
+
+    /// Source-B (off-cusp signature-filtered) location count.
+    #[arg(long, default_value_t = 6)]
+    pub b_count: usize,
+
+    /// Source-C (minibrot control) location count.
+    #[arg(long, default_value_t = 4)]
+    pub c_count: usize,
+
+    /// Per-tile panel width in px (height follows 16:9).
+    #[arg(long, default_value_t = 240)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) for every tile.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Target wallpaper width `de_px` is pinned to (resolution-invariant `de`), so
+    /// the cheap tiles' labels predict the final render's spacing.
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Sub-pixel threshold θ: an escaped pixel with `de_px < θ` is speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub theta: f64,
+
+    /// Window size K (K×K) for the windowed-max busyness label.
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Base frame width for source-A boundary neighborhoods (the `BASE` scale).
+    #[arg(long, default_value_t = 0.08)]
+    pub base_width_a: f64,
+
+    /// Base frame width for the source-B signature scan and its tiles.
+    #[arg(long, default_value_t = 0.05)]
+    pub base_width_b: f64,
+
+    /// Source-C minibrot framing: base width = `|size| · frame_multiple`.
+    #[arg(long, default_value_t = 8.0)]
+    pub frame_multiple: f64,
+
+    /// Source-B filter (on trial): keep only frames with `interior_frac` below this.
+    #[arg(long, default_value_t = 0.15)]
+    pub b_interior_max: f64,
+
+    /// Source-B filter (on trial): keep only frames whose in-band `[2,14]` de_px
+    /// fraction (`coverage`) is above this (tight de_px spread). Default set
+    /// relative to the achievable ceiling — the harvest's best whole-frame coverage
+    /// was 0.339, so 0.35+ selects nothing; 0.15 picks meaningfully-covered frames.
+    #[arg(long, default_value_t = 0.15)]
+    pub b_coverage_min: f64,
+
+    /// Light pre-filter: drop a candidate base frame whose `interior_frac` exceeds
+    /// this (pure interior). Applied to A/B selection; C is kept regardless (the
+    /// minibrot body is the control's whole point).
+    #[arg(long, default_value_t = 0.60)]
+    pub interior_max: f64,
+
+    /// Coarse-scan candidate budget for the source-B random sample.
+    #[arg(long, default_value_t = 800)]
+    pub scan_tries: usize,
+
+    /// Broad scan region `re_lo,re_hi,im_lo,im_hi` (the main-set neighborhood the
+    /// B sample draws from).
+    #[arg(long, default_value = "-1.8,0.45,-1.15,1.15", allow_hyphen_values = true)]
+    pub scan_region: String,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(3/width))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of zoom past width 3).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// RNG seed for the source-B random scan (deterministic for a fixed seed).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Output directory for the per-source sheets.
+    #[arg(long, default_value = "out/buffet")]
+    pub out_dir: String,
+
+    /// Flat per-tile metrics table (JSON) path.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub json: String,
+}
+
+impl BuffetArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--scan-region` (`re_lo,re_hi,im_lo,im_hi`) into bounds.
+    pub fn resolved_scan_region(&self) -> Result<(f64, f64, f64, f64), String> {
+        let p: Vec<&str> = self.scan_region.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!(
+                "invalid --scan-region '{}', expected re_lo,re_hi,im_lo,im_hi",
+                self.scan_region
+            ));
+        }
+        let parse = |s: &str, what: &str| -> Result<f64, String> {
+            s.trim()
+                .parse()
+                .map_err(|_| format!("invalid --scan-region {what} in '{}'", self.scan_region))
+        };
+        let re_lo = parse(p[0], "re_lo")?;
+        let re_hi = parse(p[1], "re_hi")?;
+        let im_lo = parse(p[2], "im_lo")?;
+        let im_hi = parse(p[3], "im_hi")?;
+        if re_hi <= re_lo || im_hi <= im_lo {
+            return Err(format!("--scan-region bounds must be lo < hi in '{}'", self.scan_region));
+        }
+        Ok((re_lo, re_hi, im_lo, im_hi))
+    }
 }
 
 /// `deband` subcommand: Phase-3 calibration of the off-nucleus de_px-band
@@ -491,6 +985,134 @@ pub struct CohereArgs {
     pub json: Option<String>,
 }
 
+/// `cover` subcommand: single-frame **coverage-dominance** scorer (Prompt
+/// coverage-dominance). Renders one frame f64 and reports `coverage` (the fraction
+/// of the escaped frame whose boundary is a few pixels wide at the target spacing),
+/// the speckle / interior / busy gates, and the gate verdict. Always emits a
+/// band-sensitivity table (re-scoring the same buffer over several `[lo,hi]` bands);
+/// with `--scale-sweep n` it re-renders the same center at `n` log-spaced widths to
+/// check whether a different zoom lifts a boundary-packed frame into the band.
+#[derive(Args, Debug)]
+pub struct CoverArgs {
+    /// Frame center, real part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "-0.5", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.0", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Probe render width in pixels (height follows 16:9). `de_px` is taken against
+    /// `--target-width`, not this.
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S) for the probe render.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Target wallpaper width `de_px` is pinned to (resolution-invariant `de`).
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Sub-pixel threshold θ: an escaped pixel with `de_px < θ` is speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub theta: f64,
+
+    /// Window size K (K×K) for the windowed-max busyness richness floor.
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape (matches the harvest default).
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Override the coverage band low edge `de_px` (default: the module const 2.0).
+    #[arg(long)]
+    pub cover_lo: Option<f64>,
+
+    /// Override the coverage band high edge `de_px` (default: the const 14.0).
+    #[arg(long)]
+    pub cover_hi: Option<f64>,
+
+    /// Override the speckle reject cap `subpixel_frac` (default: 0.12).
+    #[arg(long)]
+    pub spx_cap: Option<f64>,
+
+    /// Override the interior reject cap `interior_frac` (default: 0.30).
+    #[arg(long)]
+    pub int_cap: Option<f64>,
+
+    /// Override the coverage floor reject `coverage` (default: 0.45).
+    #[arg(long)]
+    pub cover_min: Option<f64>,
+
+    /// Override the windowed-busyness richness floor (default: 0.02).
+    #[arg(long)]
+    pub busy_floor: Option<f64>,
+
+    /// Scale-sweep step count: re-render the same center at `n` log-spaced widths in
+    /// `[frame_width·scale_lo, frame_width·scale_hi]`. `0` (default) → no sweep.
+    #[arg(long, default_value_t = 0)]
+    pub scale_sweep: usize,
+
+    /// Low multiplier of `frame_width` for the scale sweep (zoom *in*; <1).
+    #[arg(long, default_value_t = 0.25)]
+    pub scale_lo: f64,
+
+    /// High multiplier of `frame_width` for the scale sweep (zoom *out*; >1).
+    #[arg(long, default_value_t = 16.0)]
+    pub scale_hi: f64,
+
+    /// Label for the printed `COVER` row / JSON.
+    #[arg(long, default_value = "frame")]
+    pub label: String,
+
+    /// Optional JSON sidecar path.
+    #[arg(long)]
+    pub json: Option<String>,
+}
+
+impl CoverArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Effective coverage params: each field overridden by its flag if present.
+    pub fn coverage_params(&self) -> crate::coherence::CoverageParams {
+        let d = crate::coherence::CoverageParams::default();
+        crate::coherence::CoverageParams {
+            cover_lo: self.cover_lo.unwrap_or(d.cover_lo),
+            cover_hi: self.cover_hi.unwrap_or(d.cover_hi),
+            spx_cap: self.spx_cap.unwrap_or(d.spx_cap),
+            int_cap: self.int_cap.unwrap_or(d.int_cap),
+            cover_min: self.cover_min.unwrap_or(d.cover_min),
+            busy_floor: self.busy_floor.unwrap_or(d.busy_floor),
+        }
+    }
+}
+
 impl WallpaperArgs {
     /// Parse `--trap-center` (`re,im`) into a complex number.
     pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
@@ -762,6 +1384,71 @@ pub struct SearchArgs {
     /// (per-band, only where provenance ≠ "default"); absent → current constants.
     #[arg(long, default_value = "out/corpus/targets.json")]
     pub targets: String,
+
+    /// **Coverage-dominance harvest** (Prompt coverage-dominance). When set, the
+    /// whole drive turns away from the boundary: instead of the deep child-nucleus
+    /// frontier descent, it broad-spatial-seeds the base frame, **scale-optimizes**
+    /// each seed (sweeps `frame_multiple ∈ [scale_min, scale_max]` and keeps the zoom
+    /// that maximizes `coverage` — the fraction of the frame at the magical
+    /// few-pixels boundary spacing — subject to the speckle/interior/coverage gates),
+    /// drifts the center onto the coverage peak, and ranks survivors by `coverage`.
+    /// No descent chain; staying shallow is the point. Off → the existing
+    /// busyness/band frontier search is unchanged.
+    #[arg(long, default_value_t = false)]
+    pub coverage: bool,
+
+    /// Coverage band low edge `de_px` (default: module const 2.0). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_lo: Option<f64>,
+
+    /// Coverage band high edge `de_px` (default: 14.0). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_hi: Option<f64>,
+
+    /// Speckle reject cap `subpixel_frac` (default: 0.12). Only in `--coverage`.
+    #[arg(long)]
+    pub spx_cap: Option<f64>,
+
+    /// Interior reject cap `interior_frac` (default: 0.30). Only in `--coverage`.
+    #[arg(long)]
+    pub int_cap: Option<f64>,
+
+    /// Coverage floor reject `coverage` (default: 0.45). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_min: Option<f64>,
+
+    /// Windowed-busyness richness floor (default: 0.02). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_busy_floor: Option<f64>,
+
+    /// Scale-sweep low multiple of the minibrot `|size|` (zoom in; smaller frame).
+    /// Only in `--coverage`.
+    #[arg(long, default_value_t = 4.0)]
+    pub scale_min: f64,
+
+    /// Scale-sweep high multiple of the minibrot `|size|` (zoom out; wider frame).
+    /// Only in `--coverage`.
+    #[arg(long, default_value_t = 64.0)]
+    pub scale_max: f64,
+
+    /// Number of log-spaced scales swept per seed. Only in `--coverage`.
+    #[arg(long, default_value_t = 8)]
+    pub scale_steps: usize,
+}
+
+impl SearchArgs {
+    /// Effective coverage params: each field overridden by its flag if present.
+    pub fn coverage_params(&self) -> crate::coherence::CoverageParams {
+        let d = crate::coherence::CoverageParams::default();
+        crate::coherence::CoverageParams {
+            cover_lo: self.cover_lo.unwrap_or(d.cover_lo),
+            cover_hi: self.cover_hi.unwrap_or(d.cover_hi),
+            spx_cap: self.spx_cap.unwrap_or(d.spx_cap),
+            int_cap: self.int_cap.unwrap_or(d.int_cap),
+            cover_min: self.cover_min.unwrap_or(d.cover_min),
+            busy_floor: self.cover_busy_floor.unwrap_or(d.busy_floor),
+        }
+    }
 }
 
 impl SearchArgs {

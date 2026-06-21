@@ -14,11 +14,13 @@ use num_complex::Complex;
 use fractal_generator::backend::{
     F64Backend, FractalBackend, JuliaBackend, PerturbationBackend, Trap,
 };
+use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
 use fractal_generator::coherence;
 use fractal_generator::corpus;
 use fractal_generator::deband;
 use fractal_generator::descend;
+use fractal_generator::energy;
 use fractal_generator::navigate;
 use fractal_generator::search;
 use fractal_generator::wallpaper;
@@ -330,6 +332,12 @@ fn run() -> Result<(), String> {
         Some(Command::Wallpaper(args)) => wallpaper::run_wallpaper(args),
         Some(Command::Cohere(args)) => coherence::run_cohere(args),
         Some(Command::Deband(args)) => deband::run_deband(args),
+        Some(Command::Cover(args)) => coherence::run_cover(args),
+        Some(Command::Buffet(args)) => buffet::run_buffet(args),
+        Some(Command::Calibrate(args)) => energy::run_calibrate(args),
+        Some(Command::Rescore(args)) => energy::run_rescore(args),
+        Some(Command::Overbusy(args)) => energy::run_overbusy(args),
+        Some(Command::Archetype(args)) => energy::run_archetype(args),
         None => run_render(&cli),
     }
 }

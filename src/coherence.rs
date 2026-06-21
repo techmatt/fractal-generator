@@ -617,6 +617,211 @@ pub fn best_inband_peak(map: &CellMap) -> Option<(f64, f64, f64)> {
     best
 }
 
+// ===========================================================================
+// Coverage-dominance objective (Prompt coverage-dominance)
+//
+// The band objective above (`cell_reward_map` / drift drive) still climbs toward
+// the boundary in three ways the harvest exposed: its frame score is a *sum* of
+// per-cell band reward (rewarding boundary-packed frames), its candidate centers
+// are nuclei, and the speckle reject sits at 0.5 (every survivor pinned 0.42–0.48).
+// This objective measures **dominance** instead of total structure: the fraction
+// of the *escaped* frame whose boundary sits a few-pixels-wide ("magical density")
+// at the target resolution. A frame stuffed with sub-pixel speckle scores low even
+// though its summed band reward is high, because the *fraction* in the magical band
+// is small. The hard gates (tight spx cap, interior cap, coverage floor) finish the
+// turn off the boundary: survivors are frames *mostly* covered by resolved filaments
+// spaced several pixels apart — never sub-pixel-dense, never flat.
+//
+// Like every objective in this module it is a **pure** map over an already-iterated
+// supersampled buffer + frame geometry (no nucleus/period/atom context), so the same
+// scorer applies to a future Julia dive.
+// ===========================================================================
+
+/// Lower edge of the magical-density coverage band (`de_px`, target-resolution
+/// pixels). Over-corrected off the boundary: filaments at least ~2px apart.
+pub const COVER_LO: f64 = 2.0;
+
+/// Upper edge of the coverage band (`de_px`). Above this the boundary is too far
+/// (flat exterior). Provisional — swept in the report so Matt can retune.
+pub const COVER_HI: f64 = 14.0;
+
+/// Hard reject: an escaped-pixel sub-pixel-boundary fraction above this is still
+/// speckle-dominated. Far below the old [`COHERENCE_REJECT`] (0.5) — the whole
+/// point of the turn is that the old survivors (spx 0.42–0.48) are now rejected.
+pub const SPX_CAP: f64 = 0.12;
+
+/// Hard reject: an interior (non-escaped) fraction above this is a big black-disk
+/// frame (minibrot body / cardioid). Kills the dead-interior tiles.
+pub const INT_CAP: f64 = 0.30;
+
+/// Hard reject: a frame whose `coverage` is below this is not *dominated* by the
+/// magical band — it may carry a magical region but is mostly speckle or flat.
+pub const COVER_MIN: f64 = 0.45;
+
+/// Richness floor on the windowed-max busyness: resolved filaments are still busy.
+/// Floor gate only (never folded into the score) — the tight [`SPX_CAP`] removes
+/// the *sub-pixel* kind of busy, so this just drops the dead-flat frame.
+pub const COVERAGE_BUSY_FLOOR: f64 = 0.02;
+
+/// The tunable knobs of the coverage-dominance objective. [`Default`] is the
+/// module consts; the `cover` CLI and the `search --coverage` harvest override
+/// them per-run so the band / caps can be swept without recompiling.
+#[derive(Clone, Copy, Debug)]
+pub struct CoverageParams {
+    pub cover_lo: f64,
+    pub cover_hi: f64,
+    pub spx_cap: f64,
+    pub int_cap: f64,
+    pub cover_min: f64,
+    pub busy_floor: f64,
+}
+
+impl Default for CoverageParams {
+    fn default() -> Self {
+        CoverageParams {
+            cover_lo: COVER_LO,
+            cover_hi: COVER_HI,
+            spx_cap: SPX_CAP,
+            int_cap: INT_CAP,
+            cover_min: COVER_MIN,
+            busy_floor: COVERAGE_BUSY_FLOOR,
+        }
+    }
+}
+
+/// A [`BandParams`] tracking a [`CoverageParams`] band, for reusing the drift
+/// machinery (`cell_reward_map` → [`best_inband_peak`]) over the **coverage** band:
+/// the densest in-coverage lobe is the drift target. Center is the band midpoint;
+/// the busy floor is shared.
+pub fn coverage_band_params(cp: &CoverageParams) -> BandParams {
+    BandParams {
+        band_center: 0.5 * (cp.cover_lo + cp.cover_hi),
+        reject_lo: cp.cover_lo,
+        reject_hi: cp.cover_hi,
+        busy_floor: cp.busy_floor,
+    }
+}
+
+/// Per-frame coverage-dominance statistic over a cached supersampled buffer. All
+/// fractions are over **subsamples** (`de` resolution-invariant, so granularity is
+/// unbiased). `coverage`/`de_px_median` are `0`/`NaN` when nothing escaped.
+#[derive(Clone, Copy, Debug)]
+pub struct CoverageStats {
+    pub total: usize,
+    pub escaped: usize,
+    /// `(total − escaped) / total` — the black-disk reject input.
+    pub interior_frac: f64,
+    /// Escaped subsamples with `de_px < θ` (the sub-pixel speckle set; θ=1).
+    pub subpixel_frac: f64,
+    /// Escaped subsamples with `de_px ∈ [cover_lo, cover_hi]`.
+    pub in_cover: usize,
+    /// **The objective:** `in_cover / escaped` — fraction of the exterior at the
+    /// magical few-pixels spacing. A *fraction*, not a sum: rewards dominance.
+    pub coverage: f64,
+    /// Median `de_px` among escaped subsamples (diagnostic).
+    pub de_px_median: f64,
+    pub cover_lo: f64,
+    pub cover_hi: f64,
+    /// `frame_width / target_render_width` — the spacing `de_px` is taken against.
+    pub target_spacing: f64,
+}
+
+/// Compute [`CoverageStats`] over a cached supersampled buffer. Pure: one pass,
+/// plus a sort for the median. `de_px` is pinned to the *target wallpaper* spacing
+/// (the same resolution-invariant normalization the gate uses), so a cheap probe
+/// predicts the final render's coverage.
+pub fn coverage_stats(
+    buf: &SampleBuffer,
+    frame_width: f64,
+    target_render_width: u32,
+    theta: f64,
+    cover_lo: f64,
+    cover_hi: f64,
+) -> CoverageStats {
+    let target_spacing = frame_width / target_render_width.max(1) as f64;
+    let inv_spacing = 1.0 / target_spacing;
+
+    let total = buf.samples.len();
+    let mut de_px: Vec<f64> = Vec::new();
+    let mut subpixel = 0usize;
+    let mut in_cover = 0usize;
+    for s in &buf.samples {
+        if s.escaped {
+            let v = s.de * inv_spacing;
+            if v < theta {
+                subpixel += 1;
+            }
+            if v >= cover_lo && v <= cover_hi {
+                in_cover += 1;
+            }
+            de_px.push(v);
+        }
+    }
+    let escaped = de_px.len();
+    let interior_frac = (total - escaped) as f64 / total.max(1) as f64;
+
+    let (coverage, subpixel_frac, de_px_median) = if escaped == 0 {
+        (0.0, 0.0, f64::NAN)
+    } else {
+        de_px.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median = if escaped % 2 == 1 {
+            de_px[escaped / 2]
+        } else {
+            0.5 * (de_px[escaped / 2 - 1] + de_px[escaped / 2])
+        };
+        (
+            in_cover as f64 / escaped as f64,
+            subpixel as f64 / escaped as f64,
+            median,
+        )
+    };
+
+    CoverageStats {
+        total,
+        escaped,
+        interior_frac,
+        subpixel_frac,
+        in_cover,
+        coverage,
+        de_px_median,
+        cover_lo,
+        cover_hi,
+        target_spacing,
+    }
+}
+
+/// The coverage-dominance gate's verdict for one frame: kept or rejected, plus the
+/// rule that fired. There is no soft penalty — coverage *is* the surfacing score,
+/// so a borderline frame simply ranks lower; the gates wall off the regimes the
+/// turn rejects outright.
+#[derive(Clone, Copy, Debug)]
+pub struct CoverageGate {
+    pub reject: bool,
+    pub reason: Option<&'static str>,
+}
+
+/// Map a frame's [`CoverageStats`] (+ its windowed-max busyness) to the gate
+/// verdict under `cp`. Hard reject when **any** of: `subpixel_frac > spx_cap`
+/// (still speckle-dominated), `interior_frac > int_cap` (black-disk frame),
+/// `coverage < cover_min` (not magical-dominated), or `busy_win < busy_floor`
+/// (dead-flat). A fully-interior frame trips the interior cap (or the coverage
+/// floor), so the NaN median never reaches a comparison.
+pub fn coverage_gate(stats: &CoverageStats, busy_win: f64, cp: &CoverageParams) -> CoverageGate {
+    if stats.subpixel_frac > cp.spx_cap {
+        return CoverageGate { reject: true, reason: Some("subpixel_frac>spx_cap") };
+    }
+    if stats.interior_frac > cp.int_cap {
+        return CoverageGate { reject: true, reason: Some("interior_frac>int_cap") };
+    }
+    if busy_win < cp.busy_floor {
+        return CoverageGate { reject: true, reason: Some("busy_win<busy_floor") };
+    }
+    if stats.coverage < cp.cover_min {
+        return CoverageGate { reject: true, reason: Some("coverage<cover_min") };
+    }
+    CoverageGate { reject: false, reason: None }
+}
+
 /// `cohere` subcommand — isolation validation of the coherence statistic.
 ///
 /// Renders **one** frame at a modest probe resolution with the f64 backend
@@ -730,6 +935,252 @@ fn build_json(
     s.push_str(&format!("  \"windowed_busyness_max\": {},\n", jf(busyness_win)));
     s.push_str(&format!("  \"window\": {},\n", args.window));
     s.push_str(&format!("  \"iterate_secs\": {}\n", jf(secs)));
+    s.push_str("}\n");
+    s
+}
+
+// ===========================================================================
+// `cover` subcommand — single-frame coverage-dominance scorer + sweeps
+// ===========================================================================
+
+/// One rendered frame's coverage row (a scale-sweep step or the primary frame).
+struct CoverRow {
+    width: f64,
+    /// `frame_width / this_width` — relative zoom vs. the input frame (1.0 at the
+    /// primary frame; >1 zoomed in, <1 zoomed out).
+    rel_zoom: f64,
+    maxiter: u32,
+    stats: CoverageStats,
+    busy_win: f64,
+    gate: CoverageGate,
+    secs: f64,
+}
+
+/// Render one f64 frame at `(center, width)` and score it under the coverage
+/// objective. Shared by the primary frame and every scale-sweep step.
+#[allow(clippy::too_many_arguments)]
+fn cover_render_score(
+    center_re: &astro_float::BigFloat,
+    center_im: &astro_float::BigFloat,
+    width: f64,
+    panel_w: u32,
+    panel_h: u32,
+    ss: u32,
+    maxiter: u32,
+    bailout: f64,
+    trap: Trap,
+    target_width: u32,
+    theta: f64,
+    window: u32,
+    cp: &CoverageParams,
+) -> CoverRow {
+    let prec = hp::prec_bits(panel_w, width);
+    let center_f64 = Complex::new(hp::to_f64(center_re), hp::to_f64(center_im));
+    let t0 = std::time::Instant::now();
+    let panel = probe::render_mandel_panel(
+        center_re, center_im, center_f64, width, panel_w, panel_h, ss, maxiter, bailout, prec,
+        trap, BackendChoice::F64,
+    );
+    let secs = t0.elapsed().as_secs_f64();
+    let stats = coverage_stats(&panel.buf, width, target_width, theta, cp.cover_lo, cp.cover_hi);
+    let busy_win = windowed_busyness_max(&panel.buf, panel_w, panel_h, window as i32, maxiter);
+    let gate = coverage_gate(&stats, busy_win, cp);
+    CoverRow { width, rel_zoom: 1.0, maxiter, stats, busy_win, gate, secs }
+}
+
+/// maxiter for a swept width, matching the search schedule shape but anchored at the
+/// input frame so the sweep stays in the same iteration regime.
+fn swept_maxiter(base_maxiter: u32, base_width: f64, width: f64) -> u32 {
+    // +1500 iters/decade of extra zoom (the search `per_decade`), floored at a few
+    // hundred so a zoomed-out step still resolves smooth coloring.
+    let decades = (base_width / width).log10();
+    ((base_maxiter as f64 + 1500.0 * decades).round().max(300.0)) as u32
+}
+
+/// `cover` subcommand — single-frame coverage-dominance scorer.
+///
+/// Renders one frame f64 (asserted cheap-regime) and reports the coverage objective
+/// (`coverage`, `subpixel_frac`, `interior_frac`, `busy_win`) and the gate verdict.
+/// Two optional sweeps make it the Phase-4 / report tool:
+///  - a **band-sensitivity table** (always): `coverage` recomputed over a handful of
+///    `[lo,hi]` bands from the *same cached buffer* (no re-render) so `COVER_LO/HI`
+///    can be retuned from data.
+///  - a **scale sweep** (`--scale-sweep n > 0`): re-render the same center at `n`
+///    log-spaced widths spanning `[frame_width·scale_lo, frame_width·scale_hi]` and
+///    report `coverage` at each — the "rich spot is speckle at one zoom, magical one
+///    zoom out" check (does a different scale lift a boundary-packed frame into the
+///    band).
+pub fn run_cover(args: &crate::cli::CoverArgs) -> Result<(), String> {
+    if args.frame_width <= 0.0 {
+        return Err("--frame-width must be > 0".into());
+    }
+    if args.panel_width == 0 || args.target_width == 0 {
+        return Err("--panel-width and --target-width must be > 0".into());
+    }
+    if args.supersample == 0 {
+        return Err("--supersample must be > 0".into());
+    }
+
+    let panel_w = args.panel_width;
+    let panel_h = ((panel_w as f64) * 9.0 / 16.0).round().max(1.0) as u32;
+    let ss = args.supersample;
+    let cp = args.coverage_params();
+    let trap = Trap {
+        shape: args.trap,
+        center: args.resolved_trap_center()?,
+        radius: args.trap_radius,
+    };
+
+    let prec = hp::prec_bits(panel_w, args.frame_width);
+    let center_re = hp::parse_decimal(&args.center_re, prec)?;
+    let center_im = hp::parse_decimal(&args.center_im, prec)?;
+
+    eprintln!(
+        "[{}] f64 cover probe {panel_w}x{panel_h} ss{ss}, width={:.3e}, maxiter={}; \
+         band=[{:.2},{:.2}] caps: spx<{:.3} int<{:.2} cover>{:.2} busy>{:.3}; target={}",
+        args.label, args.frame_width, args.maxiter, cp.cover_lo, cp.cover_hi, cp.spx_cap,
+        cp.int_cap, cp.cover_min, cp.busy_floor, args.target_width,
+    );
+
+    // --- primary frame ---
+    let primary = cover_render_score(
+        &center_re, &center_im, args.frame_width, panel_w, panel_h, ss, args.maxiter, args.bailout,
+        trap, args.target_width, args.theta, args.window, &cp,
+    );
+    print_cover_row(&args.label, &primary);
+
+    // --- band-sensitivity table (no re-render: re-score the same buffer is cheap
+    //     enough that we just re-render once more per band? No — re-render is the
+    //     cost; recompute over a fresh stats pass instead). We re-render once and
+    //     re-pass with each band via coverage_stats on a cached buffer would need the
+    //     buffer; cover_render_score drops it. Render the buffer here for the table.
+    let band_table: Vec<(f64, f64, f64)> = {
+        let prec_b = hp::prec_bits(panel_w, args.frame_width);
+        let cf = Complex::new(hp::to_f64(&center_re), hp::to_f64(&center_im));
+        let panel = probe::render_mandel_panel(
+            &center_re, &center_im, cf, args.frame_width, panel_w, panel_h, ss, args.maxiter,
+            args.bailout, prec_b, trap, BackendChoice::F64,
+        );
+        let bands = [
+            (1.0, 8.0), (2.0, 8.0), (2.0, 14.0), (2.0, 20.0),
+            (3.0, 14.0), (4.0, 16.0), (1.0, 14.0), (cp.cover_lo, cp.cover_hi),
+        ];
+        eprintln!("  band-sensitivity (same buffer, vary [lo,hi]):");
+        let mut rows = Vec::new();
+        for (lo, hi) in bands {
+            let st = coverage_stats(&panel.buf, args.frame_width, args.target_width, args.theta, lo, hi);
+            eprintln!("    band=[{lo:>5.1},{hi:>5.1}]  coverage={:.4}", st.coverage);
+            rows.push((lo, hi, st.coverage));
+        }
+        rows
+    };
+
+    // --- optional scale sweep ---
+    let mut sweep: Vec<CoverRow> = Vec::new();
+    if args.scale_sweep > 0 {
+        let n = args.scale_sweep.max(2);
+        let w_lo = args.frame_width * args.scale_lo;
+        let w_hi = args.frame_width * args.scale_hi;
+        eprintln!(
+            "  scale sweep: {n} widths in [{:.3e}, {:.3e}] (= frame_width × [{:.3},{:.3}])",
+            w_lo, w_hi, args.scale_lo, args.scale_hi,
+        );
+        for i in 0..n {
+            let t = i as f64 / (n - 1) as f64;
+            let width = w_lo * (w_hi / w_lo).powf(t);
+            let mi = swept_maxiter(args.maxiter, args.frame_width, width);
+            let mut row = cover_render_score(
+                &center_re, &center_im, width, panel_w, panel_h, ss, mi, args.bailout, trap,
+                args.target_width, args.theta, args.window, &cp,
+            );
+            row.rel_zoom = args.frame_width / width;
+            print_cover_row(&format!("{}/s{i}", args.label), &row);
+            sweep.push(row);
+        }
+        let best = sweep
+            .iter()
+            .filter(|r| !r.gate.reject)
+            .max_by(|a, b| a.stats.coverage.partial_cmp(&b.stats.coverage).unwrap_or(std::cmp::Ordering::Equal));
+        match best {
+            Some(r) => eprintln!(
+                "  scale-sweep best (gated): width={:.3e} rel_zoom={:.3} coverage={:.4} spx={:.4}",
+                r.width, r.rel_zoom, r.stats.coverage, r.stats.subpixel_frac,
+            ),
+            None => eprintln!("  scale-sweep: no width passed the gates"),
+        }
+    }
+
+    if let Some(path) = &args.json {
+        let json = build_cover_json(args, &cp, &primary, &band_table, &sweep);
+        crate::ensure_parent_dir(path)?;
+        fs::write(path, json).map_err(|e| format!("failed to write {path}: {e}"))?;
+        eprintln!("  wrote {}", probe::path_str(Path::new(path)));
+    }
+    Ok(())
+}
+
+/// One parseable `COVER` data row.
+fn print_cover_row(label: &str, r: &CoverRow) {
+    let gate = match r.gate.reason {
+        Some(why) => format!("REJ:{why}"),
+        None => "ok".into(),
+    };
+    println!(
+        "COVER  label={:<16}  width={:.3e}  rel_zoom={:.3}  coverage={:.4}  spx={:.4}  \
+         interior={:.4}  busy_win={:.4}  de_med={:.3}  gate={}  maxiter={}",
+        label, r.width, r.rel_zoom, r.stats.coverage, r.stats.subpixel_frac, r.stats.interior_frac,
+        r.busy_win, r.stats.de_px_median, gate, r.maxiter,
+    );
+    let _ = r.secs;
+}
+
+fn build_cover_json(
+    args: &crate::cli::CoverArgs,
+    cp: &CoverageParams,
+    primary: &CoverRow,
+    band_table: &[(f64, f64, f64)],
+    sweep: &[CoverRow],
+) -> String {
+    use probe::{jf, js};
+    let row_obj = |r: &CoverRow| -> String {
+        format!(
+            "{{ \"width\": {}, \"rel_zoom\": {}, \"maxiter\": {}, \"coverage\": {}, \
+\"subpixel_frac\": {}, \"interior_frac\": {}, \"busy_win\": {}, \"de_px_median\": {}, \
+\"in_cover\": {}, \"escaped\": {}, \"reject\": {}, \"reason\": {} }}",
+            jf(r.width), jf(r.rel_zoom), r.maxiter, jf(r.stats.coverage), jf(r.stats.subpixel_frac),
+            jf(r.stats.interior_frac), jf(r.busy_win), jf(r.stats.de_px_median), r.stats.in_cover,
+            r.stats.escaped, r.gate.reject,
+            r.gate.reason.map(|s| js(s)).unwrap_or_else(|| "null".into()),
+        )
+    };
+    let mut s = String::from("{\n");
+    s.push_str(&format!("  \"label\": {},\n", js(&args.label)));
+    s.push_str(&format!(
+        "  \"center\": {{ \"re\": {}, \"im\": {} }},\n",
+        js(&args.center_re), js(&args.center_im)
+    ));
+    s.push_str(&format!("  \"frame_width\": {},\n", jf(args.frame_width)));
+    s.push_str(&format!("  \"target_render_width\": {},\n", args.target_width));
+    s.push_str(&format!(
+        "  \"params\": {{ \"cover_lo\": {}, \"cover_hi\": {}, \"spx_cap\": {}, \"int_cap\": {}, \
+\"cover_min\": {}, \"busy_floor\": {}, \"theta\": {} }},\n",
+        jf(cp.cover_lo), jf(cp.cover_hi), jf(cp.spx_cap), jf(cp.int_cap), jf(cp.cover_min),
+        jf(cp.busy_floor), jf(args.theta),
+    ));
+    s.push_str(&format!("  \"primary\": {},\n", row_obj(primary)));
+    s.push_str("  \"band_sensitivity\": [\n");
+    for (i, (lo, hi, cov)) in band_table.iter().enumerate() {
+        s.push_str(&format!(
+            "    {{ \"lo\": {}, \"hi\": {}, \"coverage\": {} }}{}\n",
+            jf(*lo), jf(*hi), jf(*cov), if i + 1 < band_table.len() { "," } else { "" },
+        ));
+    }
+    s.push_str("  ],\n");
+    s.push_str("  \"scale_sweep\": [\n");
+    for (i, r) in sweep.iter().enumerate() {
+        s.push_str(&format!("    {}{}\n", row_obj(r), if i + 1 < sweep.len() { "," } else { "" }));
+    }
+    s.push_str("  ]\n");
     s.push_str("}\n");
     s
 }
@@ -1032,5 +1483,65 @@ mod tests {
         // The gate is a no-op on an interior frame (emptiness is another gate's job).
         let g = coherence_gate(&s);
         assert!(!g.reject && (g.penalty - 1.0).abs() < 1e-12 && g.reason.is_none());
+    }
+
+    // ---- coverage-dominance objective ----
+
+    /// `coverage` is the *fraction* of escaped subsamples in `[lo,hi]`, with `de_px`
+    /// pinned to the target spacing; `interior_frac` over the whole buffer.
+    #[test]
+    fn coverage_counts_fraction_in_band() {
+        // frame_width=1, target=10 → de_px = de*10.
+        let samples = vec![
+            px(true, 0.05),  // de_px 0.5  — speckle, below band
+            px(true, 0.30),  // de_px 3.0  — in [2,14]
+            px(true, 0.80),  // de_px 8.0  — in [2,14]
+            px(true, 5.00),  // de_px 50   — above band (flat)
+            px(false, 0.0),  // interior
+        ];
+        let s = coverage_stats(&buf(samples, 5, 1), 1.0, 10, 1.0, 2.0, 14.0);
+        assert_eq!(s.escaped, 4);
+        assert_eq!(s.in_cover, 2);
+        assert!((s.coverage - 0.5).abs() < 1e-12, "2 of 4 escaped in band");
+        assert!((s.interior_frac - 0.2).abs() < 1e-12, "1 of 5 interior");
+        assert!((s.subpixel_frac - 0.25).abs() < 1e-12, "1 of 4 below θ=1");
+    }
+
+    /// Each hard gate fires independently; a clean frame passes.
+    #[test]
+    fn coverage_gate_rules() {
+        let cp = CoverageParams::default();
+        let mk = |coverage, subpixel_frac, interior_frac| CoverageStats {
+            total: 1, escaped: 1, interior_frac, subpixel_frac, in_cover: 0, coverage,
+            de_px_median: 5.0, cover_lo: cp.cover_lo, cover_hi: cp.cover_hi, target_spacing: 1.0,
+        };
+        // Speckle-dominated → reject on spx (old survivors sat at 0.42–0.48 ≫ 0.12).
+        let speckle = coverage_gate(&mk(0.6, 0.46, 0.05), 0.1, &cp);
+        assert!(speckle.reject && speckle.reason == Some("subpixel_frac>spx_cap"));
+        // Black-disk frame → reject on interior.
+        let disk = coverage_gate(&mk(0.6, 0.01, 0.5), 0.1, &cp);
+        assert!(disk.reject && disk.reason == Some("interior_frac>int_cap"));
+        // Dead-flat → reject on busy floor.
+        let flat = coverage_gate(&mk(0.6, 0.01, 0.05), 0.0, &cp);
+        assert!(flat.reject && flat.reason == Some("busy_win<busy_floor"));
+        // Not magical-dominated → reject on coverage floor.
+        let thin = coverage_gate(&mk(0.30, 0.01, 0.05), 0.1, &cp);
+        assert!(thin.reject && thin.reason == Some("coverage<cover_min"));
+        // Mostly-magical, resolved, busy → pass.
+        let good = coverage_gate(&mk(0.7, 0.05, 0.10), 0.1, &cp);
+        assert!(!good.reject && good.reason.is_none());
+    }
+
+    /// The coverage band drift-params track the coverage band (midpoint center,
+    /// shared busy floor) so `cell_reward_map`/`best_inband_peak` find the densest
+    /// in-coverage lobe.
+    #[test]
+    fn coverage_band_params_track_band() {
+        let cp = CoverageParams::default();
+        let bp = coverage_band_params(&cp);
+        assert!((bp.reject_lo - cp.cover_lo).abs() < 1e-12);
+        assert!((bp.reject_hi - cp.cover_hi).abs() < 1e-12);
+        assert!((bp.band_center - 0.5 * (cp.cover_lo + cp.cover_hi)).abs() < 1e-12);
+        assert!((bp.busy_floor - cp.busy_floor).abs() < 1e-12);
     }
 }
