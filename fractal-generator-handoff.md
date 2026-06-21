@@ -1,142 +1,131 @@
-# Fractal Generator — Project Handoff
+# Fractal Generator — Handoff
 
-**Purpose of this document.** This is the consolidated context for a fractal-background generation project. It is written to start a fresh chat. **Your first task in that chat is to write the first Claude Code prompt** (see "Prompt sequencing" → Prompt 1 at the end), deliver it as a `.md` file, then stop and wait for results. Do not write ahead. The rest of this document is the reasoning and decisions behind that prompt so you can write it well and answer follow-ups.
-
----
-
-## 1. What we're building and why
-
-An engine that **automatically generates new, strong fractal images with beautiful palettes**, en masse, under strict quality gates — most candidates are expected to fail aesthetic muster, and the human (Matt) manually selects favorites from the survivors. Mentally this is **rejection sampling with hard quality gates plus human final selection**.
-
-Two things to keep in proportion:
-
-- **Palettes are the thing Matt cares about most.** The color treatment is first-class, not an afterthought.
-- **The corpus is a minor assist.** Matt has ~700 existing fractal backgrounds (some "raw" Mandelbrots — a good location with a good palette; some more complex compositions). They serve as a light soft-prior for a few target ranges, *not* as the centerpiece. The generation engine is the spine; the corpus bolts on later.
-
-**Fractal scope:** focus on **orbit-trap fractals** in the Mandelbrot / Julia family. Structure the code so other fractal types (Burning Ship, Newton, etc.) can be added later, but don't build them now.
-
-**Two compositional modes** were observed in reference images and both are targets:
-- **Anchored-black:** a near-boundary view where the black set sits in a corner as deliberate negative space (~20–30% of frame).
-- **No-black deep zoom:** a structure-dense region (e.g. an embedded-Julia spiral) where the interior is essentially absent from the frame (~0%).
-
-The interior ("black region") is therefore a **compositional variable with a target distribution**, not something to minimize globally.
+A from-scratch Rust engine that searches the Mandelbrot set for wallpaper-grade deep-zoom locations, renders them (Mandelbrot + matching Julia), and colors them through a first-class palette system. Goal: an automated pipeline that surfaces *many* strong candidates a human selects from. Repo: `C:\Code\fractal-generator`. This doc is the single source of truth for a fresh session — it reflects what is **actually built** (Prompts 1–9), the findings that cost real effort to discover, and the current open problem.
 
 ---
 
-## 2. Language & architecture decisions
+## Environment & working conventions
 
-- **Rust** for rendering and for pixels→features (rayon for parallelism, SIMD inner loop). **Python** for statistics, modeling, clustering, plotting, and selection tooling.
-- **Shared feature extractor in Rust** so the *identical* code measures the corpus (Phase 1) and freshly rendered candidates (Phase 2). No risk of two implementations drifting.
-- **Pure-Rust bignum** (`astro-float` or `dashu`) for the high-precision reference orbit — **no C dependency.** Rationale is empirical: the high-precision work is a single reference orbit costing well under 0.5% of render time (measured 0.13–0.24 s even at 200 digits / 30k iterations, vs. tens of seconds for the pixel pass). GMP/`rug` would buy essentially nothing. "Easiest, no C dep" wins because the speed delta lives in a negligible part of the runtime.
-- **Precision behind a backend trait** so a deeper tier (floatexp / rescaled iterations, plus BLA) can slot in later without touching the search or coloring code.
-- Repo: **`C:\Code\fractal-generator`** (Claude Code is launched inside this git repo).
+- **OS:** Windows, PowerShell. Long renders run in the **background** (`Start-Job`, or redirect to a log + poll). Always give a runtime estimate for multi-minute steps.
+- **Stack:** pure-Rust, dependency-light by deliberate ethos. `astro-float 0.9.5` (arbitrary-precision float; `default-features=false`, `features=["std"]`), `num-complex`, `rayon`, `clap`, `image` (png+jpeg+webp enabled). **Hand-rolled JSON** and a **SplitMix64** RNG — no `serde`, no `rand`. (astro-float has no public `to_f64`; it's reconstructed from the raw mantissa/exponent.)
+- **Prompt discipline (how this project is driven):** one `.md` Claude Code prompt at a time, written to `/mnt/user-data/outputs/`, never inline. Wait for results before writing the next. Diagnosis-first; read the actual current code before editing. **Validate primitives in isolation before any expensive run.** Matt commits/pushes constantly — assume everything is committed.
+- **Collaboration style:** terse, iterative, precise technical detail. Matt judges all visual quality — the agent presents artifacts and data, makes **no** quality claims.
 
----
+## Subcommands & modules
 
-## 3. Precision — findings and the v1 cap
-
-This was tested empirically (Python + mpmath prototype) and the conclusions are firm.
-
-**f64's clean limit is resolution-dependent.** It's governed by pixel spacing (`width / output_width`) versus `eps · |c|` ≈ 1.7e-16, *not* a fixed zoom depth. So higher output resolution breaks earlier:
-
-| output width | f64 clean to ~magnification | breaks below frame width |
-|---|---|---|
-| 360 px | 1.7e13 | 6.0e-14 |
-| 1024 px | 5.8e12 | 1.7e-13 |
-| 1920 px | 3.1e12 | 3.2e-13 |
-| 3840 px | 1.6e12 | 6.4e-13 |
-
-So at production resolution, **f64 is trustworthy only to ~1e12 magnification.** Past that it produces stair-step coordinate quantization (verified visually).
-
-**Perturbation theory** is the next tier and was validated correct (median difference 2e-13 iterations vs. an mpmath ground-truth orbit, with exact interior/exterior classification):
-- Compute **one high-precision reference orbit** at the frame center. The center coordinate needs many digits, but the orbit *values* stay O(1) until escape, so they're stored as `f64`/`complex128`. Every other pixel is computed as a low-precision **delta** relative to that reference, in plain f64.
-- **Rebasing (Zhuoran's method)** for glitch-free single-reference rendering: when `|Z_m + z| < |z|`, replace `z := Z_m + z` and reset the reference index `m := 0`. This *avoids* glitches rather than detecting/correcting them (skip Pauldelbrot-style detection entirely). The per-pixel iteration count is unaffected by rebasing; `m` is just the reference alignment.
-
-**v1 cap: ~1e300 magnification.** That's where plain f64 deltas underflow (deltas stay normal down to frame width ~1e-305). This is ~250 orders past f64 and far beyond what backgrounds need. **We detect "too deep"** via (a) a width-threshold guard and (b) a per-pixel underflow flag (`|z|` collapses to 0 while the pixel's `|dc|` > 0). When tripped, refuse or flag rather than render garbage.
-
-**Deferred (not v1):** floatexp / rescaled iterations to extend *range* past 1e300; BLA (bivariate linear approximation) to *skip* iterations for speed (the modern replacement for series approximation — simpler, parallelizable, generalizes to other formulas). Reference implementation and theory: Claude Heiland-Allen's **Fraktaler 3** and his mathr blog "Deep zoom theory and practice (again)."
+Subcommands: `render` (+ `--julia`), `descend`, `navigate`, `search`, `corpus`, `wallpaper`.
+Modules: `backend`, `render`, `coloring`, `palette`, `palette_io`, `sheet` (`compose_grid`), `probe` (shared filmstrip/Julia/hp-accum/JSON/label/RNG/circle), `descend`, `navigate`, `search`, `corpus`, `wallpaper`, `font` (5×7 ASCII bitmap), `cli`, `main`, `lib`.
 
 ---
 
-## 4. Coloring decisions
+## Architecture as built
 
-The structural decision that matters most: **separate iteration from coloring.** The per-pixel iteration emits a small record — smooth escape value, distance estimate, orbit-trap minimum (and where on the trap it was hit). A **separable coloring stage** then maps any combination of those channels through a palette. This makes re-coloring cheap (crucial, since palettes are the priority) and keeps escape-time / DE / orbit-trap blends as configuration rather than code.
+### Render core (Prompts 1–4)
 
-- **Smooth (normalized) iteration count** is the default and eliminates level-set banding (verified). Formula: `nu = n + 1 − log₂(log|z|)`, with a large bailout (≈1e6) for accuracy.
-- **Distance estimation** works and is useful three ways — crisp boundary filaments, an antialiasing aid, and a search signal. `DE = |z|·ln|z| / |dz|`, with the derivative updated `dz := 2·z·dz + 1`.
-- **Orbit traps are the primary coloring focus.** Color by the minimum distance the orbit approaches a geometric trap (point / cross / circle to start, extensible). Three distinct aesthetics were demonstrated (pearled beads / thorny organic / overlapping scales). Critically, **orbit traps also color the interior** (a non-escaping orbit still has a trap minimum), so they solve the "dead black" problem.
-- **Antialiasing is mandatory, not optional.** Busy fractal regions produce heavy sub-pixel salt-and-pepper aliasing; supersampling (or DE-based AA) must be present from the start, not bolted on.
+**Precision backends behind a trait.** f64 is clean while pixel spacing `frame_width/render_width > ~1e-13`; below that, perturbation engages (auto-selected by spacing; `--backend f64|perturb|auto`). Hard width guard refuses `frame_width < 1e-300` (the v1 cap, ~1e300 magnification).
 
-**Interior ("black region") treatment** — support all three and sample per render for style diversity (Matt's call: ~1/3 each):
-1. Keep black, used as a deliberate anchor, with controlled area fraction.
-2. Orbit-trap-filled interior (no dead black).
-3. Deep frame with ~0% interior.
+```rust
+pub trait FractalBackend: Sync { fn sample(&self, c: Complex<f64>, dc: Complex<f64>) -> PixelSample; }
+F64Backend::new(maxiter, bailout)
+PerturbationBackend::new(center_re,center_im: &BigFloat, maxiter, bailout, prec_bits)  // builds+stores ref orbit
+JuliaBackend                                                                            // f64, z0=pixel, fixed c
+```
 
----
+- **`dc` is computed straight from pixel geometry** (`(px_frac−0.5)·fw`, …), never `c−center` (that's catastrophic cancellation at depth). `c = center+dc` is formed only for the f64 backend.
+- **Perturbation:** single high-precision reference orbit at frame center (bignum, stored as `Vec<Complex<f64>>` — values stay O(1)). Per-pixel delta `δ = (2·Z[m]+δ)·δ + dc`; **Zhuoran rebasing** (`if |z|²<|δ|² or m≥L−1 { δ=z; m=0 }`). Full value `z = Z[m]+δ` drives escape/coloring. Reference orbit is <0.5% of render time. `prec_bits = ceil(log2(render_width/frame_width)) + 64`. Center passed as **arbitrary-precision decimal strings**. `glitched` flag on per-pixel underflow.
+- **Smooth iteration:** `nu = (n+1) − ln(ln|z|)/ln2` at **bailout 1e6**.
+- **Separable coloring** (the spine): iteration produces a cached **supersampled `PixelSample` buffer**; `shade_and_downsample(...)` is a **pure** function over it — re-coloring never re-iterates. AA correctness: shade each subpixel, **then** average in **linear light**, then encode sRGB.
 
-## 5. Palette system (first-class)
+**Current `PixelSample` contract:**
+```rust
+pub struct PixelSample {
+    pub escaped: bool,
+    pub smooth_iter: f64,  // exterior only
+    pub de: f64,           // exterior only; raw distance estimate (plane units); 0 interior; clamped 0 if dz non-finite
+    pub trap_min: f64,     // ALL pixels incl. interior
+    pub trap_phase: f64,   // normalized angle [0,1) at the trap minimum
+    pub glitched: bool,    // perturbation underflow
+    pub atom_period: u32,  // navigation: argmin_n |z_n|, absolute n, rebase-invariant
+    pub atom_min: f64,     // navigation: min |z_n|
+}
+```
+`de_px = de / pixel_spacing` (distance-to-boundary in pixels) is the key derived quantity — see the open problem.
 
-- **Representation:** a continuous, cyclic gradient — control points interpolated in **OKLab** (perceptually even spacing, which matters for mapping smooth escape values). Render-time parameters: cycle period/density, offset/rotation, direction.
-- **Mapping:** smooth value (or DE / trap value) → `(value · density + offset) mod 1` → gradient lookup.
-- **Sources to harvest** (forward task, not v1): UltraFractal public formula database (full pack), the classic `Maps01–11.ugr` set, DeviantArt gradient packs (e.g. Velvet--Glove), jwfsanctuary.club, Apophysis (`.ugr`-compatible). Plus zero-restriction generators: **cubehelix** and the scientific/perceptual colormaps.
-- **File formats** (both trivially parseable; a working `.ugr` parser already exists in the prototype):
-  - `.ugr` (UltraFractal) — plain text, named blocks of `index=N color=INT` pairs, index range 0–400, color is COLORREF-style `0x00BBGGRR` (R = low byte).
-  - `.map` (Fractint) — even simpler, 256 lines of `R G B`.
-- **Licensing (not legal advice):** UF public-DB files are copyright their respective authors; the norm is *free to use and to modify for your own use, but not to redistribute without permission*. DeviantArt packs match (e.g. "free to use in your art, no credit required, don't redistribute or claim"). Matt's workflow — parse → render his own fractals → hand-pick backgrounds — is squarely the intended "use," and a gradient is a thin-copyright list of colors regardless. The thing to avoid is **redistributing the `.ugr`/`.map` collections themselves**. For any output that must be clean of all restriction (publishing/selling), prefer cubehelix / scientific maps / corpus-extracted palettes, which carry none.
-- **Key review artifact:** decouple location from palette. Find a strong location once (expensive), then render it as a **contact sheet of N palettes** (cheap). Given palettes are the priority, this one-location-×-many-palettes sheet is likely the main thing Matt selects from.
+**Channels:** distance estimation `DE = |z|·ln|z|/|dz|`, `dz=2·z·dz+1` (`dz_0=0`); in perturbation `dz` is carried on the **full value** `z` (continuous across rebasing). **Orbit traps** point/cross/circle, tracked from `n=1` on the full value, recording `trap_min`+`trap_phase`, interior pixels included.
 
----
+**Coloring CLI:** `--color smooth|trap|de`, `--interior black|trap`, `--de-shade`, `--trap point|cross|circle`, `--trap-center`, `--trap-radius`, `--trap-curve linear|sqrt|log` (default `sqrt`). The "~0% interior" treatment is a *framing* property, not a coloring branch.
 
-## 6. The descent search (generation) — design, not yet built
+**Palette system:** continuous **cyclic OKLab gradient** (Ottosson matrices) baked to a **4096-entry linear-RGB LUT** (hot path is O(1)). Loaders: `.ugr` (named blocks, `index∈0..400 → pos=index/400`, `color` = COLORREF `0x00BBGGRR`, R=low byte) and `.map` (`R G B` lines, `pos=i/N`). Built-ins: `default`, `cubehelix` (generated), `viridis` (CC0), and `corpus` (`Palette::from_oklab_colors`, built from `targets.json`). `--palette name|path`, `--palette-entry`, `--palette-reverse`. **Contact sheet** = one location × N palettes: iterate once, shade N times (`compose_grid`, gradient swatch + 5×7 index, stdout legend). Sample assets in `assets/palettes/` (`sample.ugr` = Ember/Ocean/Viol; `sample.map`).
 
-Parameter selection is **iterative-deepening best-first descent**, not a single boundary sample: render at fixed resolution, score sub-windows for "interestingness," recurse into the best, repeat to target depth.
+### Navigation (Prompts 5–7)
 
-- **Beam + backtracking, not greedy.** Greedy single-path descent dead-ends into pure black or self-similar tedium. Keep a frontier of top-k windows across the tree; backtrack when a branch collapses.
-- **Navigate toward features, not just "the boundary."** The prettiest deep spots are **embedded Julia sets** and the neighborhoods of **minibrots**. Find these deterministically: **Newton's method for nucleus finding** (locate the period-n minibrot center) plus **atom-domain** size estimates to know where periodic structure lives and how deep to frame it. This is far higher-yield than biasing toward small distance-estimate pixels at random.
-- **Per-window interest score (to be designed; will iterate):** a blend of escape-time entropy/range (reject all-fast and all-interior), boundary length via DE, and a **black-fraction-in-target-band** term (target a band, don't minimize). The corpus contributes only the target bands and a busyness range.
-- **Mandelbrot → Julia for free:** sampling `c` near the Mandelbrot boundary yields good (connected) Julia sets by construction. Julias sometimes at the base symmetric level, sometimes zoomed.
+**`descend`** — greedy pixel descent, Mandelbrot|Julia filmstrip + JSON, hp center accumulation (`center += dc` in BigFloat), maxiter schedule `base + per_decade·log10(mag)` (1000, 1500). **Known bad** (see findings).
 
-**This is the main open design question still to resolve** (the interest-score details). It is *not* needed for the first few Claude Code prompts and can be deferred.
+**Navigation primitives** (validated in isolation first):
+- **Atom-domain** period = `argmin_{n≥1} |z_n|`; candidates = local minima of `atom_min` grouped by `atom_period` (free from the render loop; both backends, rebase-invariant absolute `n`).
+- **Newton nucleus** = solve `z_p(c)=0` for the period-`p` minibrot center: iterate `z,dz` (`dz=2z·dz+1`) to `p`, `c −= z_p/dz_p`, in **BigFloat**; quadratic. (period-3 nucleus ≈ `−1.754877666…`.)
+- **Size estimate** = **`1/(b·l²)`** (Munafo/Heiland-Allen), seed `b=1`, update `l` before `b`. ⚠️ The naive `1/(b·l)` is **8× too large** — this was caught only by empirically framing a known minibrot; verified against the period-2 disk (0.5 = diameter). Use `|size|` only (axis-aligned framing); `l` overflows f64 at high period.
 
----
+**`navigate`** — single-path feature navigation: atom→Newton→size, adaptive zoom `width = |size|·multiple`, **normalized** busyness (÷maxiter). Beats greedy (targets real nuclei at natural scale) but **single-path converges into a period-doubling cascade** — re-selects the nucleus it came from, `c` pins.
 
-## 7. Quality gates, selection, corpus role (later phases)
+**`search`** — **global best-first frontier** (max-heap by diversity-adjusted score) over a tree; best-first = **implicit backtracking** (a collapsed branch sinks; next pop is the best sibling). **Re-selection filter** (drop a child whose nucleus is within ~k·width of an **ancestor's** — the cascade fix) + diversity penalty `adjusted = score − λ·similarity` (do **not** penalize off-center / high-roff candidates — they're the branch diversity). Outputs: best-path strip + top-N **farthest-point-sampled** contact sheet + node-tree JSON. Wall-clock budget. Validated: explores high-roff siblings, kills the cascade (distinct periods), and **decouples depth from quality** (best spine sat mid-depth at mag 3.5e7 while the tree reached 6.5e20 cleanly).
 
-- **Cascade cheap→expensive:** render a small thumbnail → apply cheap hard gates (intensity-variance floor, near-black/near-white fraction, boundary-structure fraction) → only render full-res for survivors. Most feature extraction also happens on thumbnails.
-- **Don't maximize corpus likelihood** — that regresses to the bland center of the distribution. Treat corpus-fit as a *gate* ("is this in the plausible region at all?") and sample across the support including tails; the human eye does the final aesthetic cut.
-- **Diversity-aware final selection:** cluster survivors and sample across clusters (or farthest-point sampling) so review isn't 50 variants of one swirl.
-- **Log manual selections from day one.** They're labeled data; eventually a small learned scorer (logistic regression on the feature vector, or a tiny CNN — same shape as the still_extractor face classifier) can replace hand-tuned gates. Not v1, but build the harness so selections are recorded.
-- **Corpus feature extractor (Rust, shared):** emits a per-image feature sidecar (JSON); Python does the stats. Features: palette (k-means in OKLab, hue circular statistics), busyness (FFT power-spectrum slope ~1/f^α, compressed-file-size proxy, edge density / local entropy), composition (radial detail distribution, symmetry), and black fraction. Expect the "raw" vs "complex" images to form two clusters — model separately or just as soft target bands.
+### Corpus (Prompt 8)
 
----
+**`corpus --dir C:\Users\techm\Desktop\Wallpapers\`** (top-level only, no recursion). "Looks fractal" heuristic on `edge_density`, `edge_spread` (CoV across 8×8 tiles), `flat_fraction`, and a **chroma-weighted OKLab a×b histogram** for color richness (dark-invariant — the key fix). 746→728 kept, 18 rejected (2.4%).
 
-## 8. Output, validation, and working conventions
+- **Color targets are EXACT and the real win:** corpus palette (blue/purple darks `#28232f`/`#040307`/`#353f74`, muted greens, amber accents), hue ≈240°, chroma `[0.028,0.117]`, contrast `[0.242,0.636]`, luminance `[0.249,0.638]`. Ready for the (unbuilt) palette-matching step.
+- **Structural bands are weak image proxies** (native units via a fitted proxy→native scale): busyness `[0.061,0.318]`, interior_frac `[0,0.431]`, boundary `[0.099,0.224]`. **period** is labels-only (`[3,20000]` default — not recoverable from pixels).
+- **Label transition:** `α = n_labels/(n_labels+k)` (k≈20) blends bootstrap→labeled native bands from `search.json` keep/discard. ⚠️ **interior_frac & boundary stay pinned at α=0** because `search.json` emits no native channel for them — labels can only correct busyness & period until that's fixed.
+- `targets.json` written; `search` consumes it (`--targets`, default `./targets.json`) and **falls back to built-in constants** when absent or provenance is `default`.
 
-- **Output is fully resolution/aspect parametric** with high-res defaults — no canonical size baked in. (Reference corpus spans 2:1 up to 10240×5120 and 3:2 around 3300×2300.)
-- **Validation pattern:** the f64 renderer is the ground-truth reference for perturbation. Shallow renders from both must match; at depth, perturbation must stay clean where f64 quantizes. (This is exactly how perturbation was validated in the prototype.)
-- **Performance note / don't be misled:** the prototype timings are slow single-threaded Python with a Python-level iteration loop (~51 s for 320²/15k iters). Rust with rayon + SIMD should be ~50–200× faster, putting deep production-res renders in seconds. Don't anchor expectations on the Python numbers.
-- **Matt's working conventions (apply to every Claude Code interaction):**
-  - Claude Code prompts are delivered as `.md` files (in the outputs folder), never printed inline.
-  - **Write one prompt, wait for results, then write the next.** Never write ahead.
-  - Long-running steps must include a runtime estimate and a background-run instruction.
-  - Debug with diagnosis-first prompts that read the actual current code before proposing changes.
-  - Matt is expert (Stanford PhD, Adobe Research, ML + graphics). Be terse, precise, iterative; skip basics.
+### Cheap wallpaper probe (Prompt 9)
 
----
-
-## 9. Prompt sequencing for Claude Code
-
-Build the **render core** first and lock it before any search/aesthetic/corpus work. Everything downstream sits on this core.
-
-1. **Minimal runnable f64 skeleton.** Escape-time Mandelbrot + smooth (normalized) coloring + supersampling AA + PNG output + a CLI taking center, frame width, maxiter, resolution, and aspect. One simple built-in palette is fine. This is the validation reference for everything after it. *(This is the prompt to write first.)*
-2. **Perturbation + rebasing**, behind a precision backend trait; pure-Rust bignum reference orbit; the too-deep detection (width guard + underflow flag). Validate against Prompt 1 (shallow match) and show a clean deep render where f64 quantizes.
-3. **Coloring channels:** distance estimation + orbit traps (point / cross / circle), the separable coloring stage, and the interior-treatment switch (the three modes).
-4. **Palette system:** `.ugr` / `.map` loader, OKLab gradient representation, cyclic density/offset parameters, and the one-location-×-N-palettes contact-sheet output.
-
-*Later, beyond this initial sequence:* the descent search (with Newton nucleus-finding); the corpus feature extractor + stats; quality gates + selection UI + selection logging; and floatexp/BLA if deeper zoom is ever wanted.
+**`wallpaper`** — cheap **f64-only** descent (asserted; no perturbation), ranked by **corpus-band proximity** (rejects too-flat **and** too-noisy), hard-stopped at the f64 floor for the wallpaper width: `floor = wallpaper_width·1e-13·margin` (margin 4 → ~1e-9). Renders the **deepest** level once at 2560×1440 and reshades it into a coloring×palette matrix. Produces a low-res descent strip + JSON (hp strings for re-render).
 
 ---
 
-## 10. Immediate task for the new chat
+## Validated findings (do not rediscover)
 
-Write **Claude Code Prompt 1** (the f64 skeleton above) as a `.md` file for `C:\Code\fractal-generator`. Keep it scoped to a runnable, validatable skeleton — clean module boundaries that anticipate the precision backend trait and the separable coloring stage, but no perturbation, no orbit traps, no palette files yet. Then stop and wait for results before writing Prompt 2.
+1. **Size estimate is `1/(b·l²)`**, not `1/(b·l)` (8× error). Always validate a navigation primitive by framing a *known* minibrot before trusting it.
+2. **Perturbation `dz`/`δ` are carried on the full value `z` and are rebase-invariant** (like the iteration count `n`). `dc` from pixel geometry, never `c−center`.
+3. **Deep-zoom trap degeneracy:** origin point/cross traps go flat at deep zoom (every pixel shares the early reference orbit; the trap min lands in the shared trajectory) **and** at any off-origin frame (the orbit never approaches origin). Circle / off-center traps resolve it. (This is why the Prompt 9 `trap` wallpapers were pure black — center ≈ (−0.029, 0.764).)
+4. **Crude image metrics cannot separate dark-vivid fractals from non-fractals.** A dark Julia on black is metrically identical to a solid. Luminance-based entropy tossed the *most* fractal images at 17% reject; a chroma-weighted OKLab gate fixed it to 2.4%. Photos mostly pass — not separable without ML; documented, not chased.
+5. **The score never distinguished intricacy from noise** — the root cause of the open problem below.
+6. **Greedy pixel-descent is the wrong navigator** (dead-ends into self-similar / near-Misiurewicz tedium, c-saturates). Minibrot-targeted framing reaches coherent structure by construction.
+7. **Depth ≠ quality.** Best-first search keeps strong locations at modest depth; chasing magnification chases noise.
+8. **Throughput is render-bound** (~12 search expansions / 10 min). Mass generation will need a cheap→expensive thumbnail gate (deferred).
+
+---
+
+## ⭐ THE CENTRAL OPEN PROBLEM — high-zoom noise
+
+The first full wallpaper (`wallpaper_smooth_corpus.png`, deepest cheap level, mag 1.07e9) was **unusable — a grey speckle field**. Resolved this session:
+
+- **It is a SELECTION/LOCATION failure, not a coloring one.** No coloring saves it; trap/DE reshades would just re-color the same noise.
+- **Mechanism: sub-pixel escape banding.** Across the frame `de_px ≪ 1` — the boundary is finer than one pixel — so escape times fluctuate chaotically pixel-to-pixel and smooth coloring renders pure grain. Corroborated by the **328 s** f64 render at only 14.5k maxiter: most pixels ran to `maxiter`, i.e. a near-interior chaotic field.
+- **Root bug:** **busyness (std-dev of `smooth_iter`) measures value-spread, not spatial coherence.** Incoherent speckle scores "busy" identically to a beautiful smooth gradient. Every prior "rich region" claim lacked a metric that tells intricacy from noise.
+- **The good structure WAS in frame** (a clean minibrot + dendrite bottom-right, decoration blobs left) — greedy framed the noise field *between* the good parts.
+- **The fix (cheap, uses an existing channel):** a **coherence gate at selection time** = fraction of escaped pixels with `de_px < ~1`. A high fraction ⇒ sub-pixel boundary ⇒ guaranteed speckle ⇒ reject. DE is already computed; this is nearly free. This is the missing score term.
+
+---
+
+## Forward path
+
+**NEXT (agreed): cheap-regime, minibrot-targeted framing with the DE-coherence gate built in.** Stay in f64 (cheap floor as in `wallpaper`). Use the Newton/atom-domain primitives to *frame coherent structure* (center the minibrot/embedded-Julia field) instead of greedy-busyness pointing at noise between features. Add the `de_px<1` coherence gate to candidate scoring; as a sanity check, report that the gate rejects the Prompt 9 noise frame and the flat strip levels. Drive toward one human-approved 2560×1440 wallpaper. **No quality claims — Matt judges the output.**
+
+**Then, in roughly this order:**
+- **Native `interior_frac` & `boundary` channels into `search.json`** (per-node aggregates the search already computes) — unlocks `α>0` for those corpus bands so labels can correct them.
+- **Labeling harness** — a generated **static HTML review page** (grid of cached thumbnails, keep/discard toggles, exports `labels.json`) to produce labels at scale. *Deferred by Matt until candidates are good enough to be worth sorting* — do not build it to triage clear rejects.
+- **Palette-matching step** — use the exact corpus color targets to pick palettes whose rendered output matches the folder aesthetic.
+- **Cheap→expensive thumbnail generation gate** for mass-generation throughput.
+
+**Deferred (not v1):** floatexp/rescaled iterations (range past ~1e300; also fixes `dz`/`l` overflow at high period), BLA / series approximation (iteration skipping for interactive deep zoom), rotated framing (size estimate gives orientation; render core is axis-aligned), top-N sheet undershoot (budget for ≥N+1 expansions).
+
+## References
+
+Heiland-Allen, *"Deep zoom theory and practice (again)"* (mathr blog) & **Fraktaler 3**; Munafo mu-ency *"Size Estimate"*; **Zhuoran** rebasing; **Ottosson** OKLab.
+
+## Key paths / artifacts
+
+`C:\Code\fractal-generator` · corpus `C:\Users\techm\Desktop\Wallpapers\` (top-level) · `targets.json` · `corpus_features.json` · `search.json` (no native interior/boundary yet) · `wallpaper.json` · `assets/palettes/{sample.ugr,sample.map}`. Deepest Prompt-9 frame for reference: center ≈ `(−0.029, 0.764)`, width `2.794e-9`, mag `1.07e9`, maxiter `14546` (its `wallpaper.json` hp strings re-render any treatment).
