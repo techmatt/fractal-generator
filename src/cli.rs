@@ -250,6 +250,12 @@ pub struct WallpaperArgs {
     #[arg(long, default_value_t = 5)]
     pub window: u32,
 
+    /// DE-coherence sub-pixel threshold θ: an escaped pixel with `de_px < θ` (at
+    /// the wallpaper spacing) is sub-pixel-boundary speckle. The descent rejects
+    /// windows over the speckle fraction and soft-penalizes borderline ones.
+    #[arg(long, default_value_t = 1.0)]
+    pub coherence_theta: f64,
+
     /// RNG seed for sampling a target from each level's top in-band windows.
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
@@ -520,6 +526,18 @@ pub struct SearchArgs {
     /// anti-cascade fix). Distinct off-position sub-minibrots are preserved.
     #[arg(long, default_value_t = 2.0)]
     pub reselect_k: f64,
+
+    /// Target wallpaper width in pixels the DE-coherence gate is pinned to:
+    /// `de_px = de / (frame_width / target_width)`. The panels are cheap
+    /// thumbnails, but `de` is resolution-invariant, so a thumbnail predicts the
+    /// final render's speckle gate. Keep at the eventual wallpaper width (2560).
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// DE-coherence sub-pixel threshold θ: an escaped pixel with `de_px < θ` (at
+    /// the target spacing) counts as sub-pixel-boundary speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub coherence_theta: f64,
 
     /// maxiter schedule base: `maxiter = round(base + per_decade·log10(mag))`.
     #[arg(long, default_value_t = 1000.0)]

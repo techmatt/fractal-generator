@@ -27,9 +27,14 @@
 //! target makes a cheap 640-wide probe predict the *actual* wallpaper-resolution
 //! gate. See the module-level `target_render_width` argument.
 //!
-//! This module only computes and reports the statistic (Prompt
-//! `de-coherence-gate`, phases 2–3). Wiring it into `wallpaper`/`search`
-//! candidate scoring is the deferred follow-up.
+//! This module computes the statistic ([`coherence_stats`], the `cohere` probe)
+//! **and** owns the gate it feeds ([`coherence_gate`] / [`gate_from`]): the
+//! shared reject/penalty contract both selectors route their rendered frames
+//! through. `search` gates each expanded node's frame (hard reject ⇒ dropped from
+//! the surfaced candidates and its children pruned; soft penalty folded into the
+//! node score); `wallpaper` gates per K×K window during the descent and again on
+//! the final wallpaper buffer. `de_px` is always taken against the *target render
+//! width*, never the probe/panel width (the spacing trap — see below).
 
 use std::fs;
 use std::path::Path;
@@ -126,6 +131,82 @@ pub fn coherence_stats(
     }
 }
 
+// ===========================================================================
+// The gate — the shared reject/penalty contract wired into the selectors.
+// ===========================================================================
+
+/// Speckle-fraction reject threshold: an escaped-pixel sub-pixel-boundary
+/// fraction above this is grain, not a coherent boundary. Validated empirically
+/// (Prompt `de-coherence-gate`): noise frames 0.72–0.94, coherent control 0.03,
+/// empty gap `[0.04, 0.72]`. Matt may retune.
+pub const COHERENCE_REJECT: f64 = 0.5;
+
+/// Median-`de_px` co-gate floor (pixels). A coherent frame has a fat tail of
+/// large `de_px` (control median ~159); a speckle frame's median sits well below
+/// one pixel (noise 0.003). Co-gating on this guards the `N=1`-control risk in
+/// the `subpixel_frac` ceiling (the indicator could in principle saturate for a
+/// single odd frame); both must agree to *pass*, either fires to *reject*.
+pub const DE_PX_MEDIAN_FLOOR: f64 = 1.0;
+
+/// Soft-penalty onset. Below this `subpixel_frac` the frame is unpenalized; from
+/// here the score ramps down to 0 at [`COHERENCE_REJECT`], so a borderline frame
+/// degrades gracefully instead of passing at full score then falling off a cliff.
+pub const COHERENCE_SOFT_LO: f64 = 0.25;
+
+/// The gate's verdict for one frame: a hard `reject`, or a soft `penalty`
+/// multiplier in `[0,1]` to fold into the existing score (1.0 = unpenalized).
+#[derive(Clone, Copy, Debug)]
+pub struct CoherenceGate {
+    /// Hard drop: this frame is sub-pixel speckle at the target resolution.
+    pub reject: bool,
+    /// Multiplier on the candidate score (`1.0` when clean / rejected-handled).
+    pub penalty: f64,
+    /// Which rule fired (for logs / JSON); `None` when clean.
+    pub reason: Option<&'static str>,
+}
+
+/// Hermite smoothstep clamped to `[0,1]` (matches the band ramps in the selectors).
+fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Map a frame's [`CoherenceStats`] to the gate verdict — **the shared contract**
+/// both `search` and `wallpaper` route their rendered frames through.
+///
+/// - **Hard reject** when `subpixel_frac > COHERENCE_REJECT` **or**
+///   `de_px_median < DE_PX_MEDIAN_FLOOR` (the co-gate).
+/// - **Soft penalty** otherwise: `1 − smoothstep(SOFT_LO, REJECT, subpixel_frac)`,
+///   so the score ramps down as speckle rises toward the reject threshold.
+/// - A fully-interior frame (`escaped == 0`, NaN stats) is a **no-op** here
+///   (`reject = false`, `penalty = 1.0`): emptiness is the too-flat / `esc_frac`
+///   gate's job, not the speckle gate's. Guard the NaN explicitly so the
+///   smoothstep/comparisons never propagate it.
+pub fn coherence_gate(stats: &CoherenceStats) -> CoherenceGate {
+    gate_from(stats.subpixel_frac, stats.de_px_median)
+}
+
+/// The gate on the two raw scalars — the actual contract. `search` passes a
+/// whole-frame [`CoherenceStats`] via [`coherence_gate`]; `wallpaper` passes a
+/// single window's `subpixel_frac` / median `de_px` directly, so the descent
+/// steers per window. Either way the same thresholds decide.
+pub fn gate_from(subpixel_frac: f64, de_px_median: f64) -> CoherenceGate {
+    // Interior / no-exterior frame (or window): nothing to say about coherence.
+    if !subpixel_frac.is_finite() {
+        return CoherenceGate { reject: false, penalty: 1.0, reason: None };
+    }
+    if subpixel_frac > COHERENCE_REJECT {
+        return CoherenceGate { reject: true, penalty: 0.0, reason: Some("subpixel_frac>reject") };
+    }
+    // de_px_median is NaN only when subpixel_frac is too (handled above), so this
+    // comparison is well-defined here.
+    if de_px_median < DE_PX_MEDIAN_FLOOR {
+        return CoherenceGate { reject: true, penalty: 0.0, reason: Some("de_px_median<floor") };
+    }
+    let penalty = 1.0 - smoothstep(COHERENCE_SOFT_LO, COHERENCE_REJECT, subpixel_frac);
+    CoherenceGate { reject: false, penalty, reason: None }
+}
+
 /// Population standard deviation (n<2 → 0).
 fn stddev(v: &[f64]) -> f64 {
     let n = v.len() as f64;
@@ -160,7 +241,7 @@ fn frame_busyness(buf: &SampleBuffer, maxiter: u32) -> f64 {
 /// `max_available_busyness` reported per level in `wallpaper.json`, so a
 /// structured frame's best in-band window is represented honestly (frame-wide
 /// busyness would wrongly read it as too-flat).
-fn windowed_busyness_max(buf: &SampleBuffer, probe_w: u32, probe_h: u32, k: i32, maxiter: u32) -> f64 {
+pub(crate) fn windowed_busyness_max(buf: &SampleBuffer, probe_w: u32, probe_h: u32, k: i32, maxiter: u32) -> f64 {
     let w = probe_w as usize;
     let h = probe_h as usize;
     let s = buf.ss as usize;
@@ -410,6 +491,72 @@ mod tests {
         assert_eq!(deep.subpixel, 2, "smaller target spacing should flag sub-pixel");
     }
 
+    /// A `CoherenceStats` carrying only the two fields the gate keys on (the rest
+    /// are irrelevant to [`coherence_gate`]).
+    fn stats_with(subpixel_frac: f64, de_px_median: f64) -> CoherenceStats {
+        CoherenceStats {
+            total: 1,
+            escaped: 1,
+            esc_frac: 1.0,
+            subpixel: 0,
+            subpixel_frac,
+            de_px_median,
+            theta: 1.0,
+            target_spacing: 1.0,
+        }
+    }
+
+    /// Phase-3 wiring validation: the **cached** isolation frames (`out/cohere/`
+    /// sidecars) fed through the augmented gate must reject the speckle frames (A
+    /// noise, the deep flat L8/L9) and pass the coherent control C at full score.
+    /// The gate consumes the per-frame statistic, so this drives it with the exact
+    /// cached `subpixel_frac` / `de_px_median` — proving the term composes into the
+    /// selector pipeline before the expensive drive, not just the standalone probe.
+    #[test]
+    fn gate_rejects_cached_noise_passes_control() {
+        // (label, subpixel_frac, de_px_median) straight from the cached sidecars.
+        let a_noise = coherence_gate(&stats_with(0.93659114829612, 2.645664870252327e-3));
+        let b_l8 = coherence_gate(&stats_with(0.720150880079176, 5.94462370288494e-2));
+        let b_l9 = coherence_gate(&stats_with(0.7424875053982322, 4.766830046372818e-2));
+        let c_control = coherence_gate(&stats_with(2.6053421714347682e-2, 1.5914030317454007e2));
+
+        // Speckle frames: hard reject (both the subpixel_frac and the co-gate fire).
+        assert!(a_noise.reject, "A noise must be rejected");
+        assert!(b_l8.reject, "B flat L8 must be rejected");
+        assert!(b_l9.reject, "B flat L9 must be rejected");
+
+        // Coherent control: survives, and at full score (well below the soft onset).
+        assert!(!c_control.reject, "C control must survive the gate");
+        assert!(
+            (c_control.penalty - 1.0).abs() < 1e-9,
+            "C control penalty should be ~1.0 (subpixel_frac far below soft onset), got {}",
+            c_control.penalty
+        );
+        assert!(c_control.reason.is_none());
+    }
+
+    /// The co-gate guards the `N=1` ceiling risk: a frame with an *acceptable*
+    /// `subpixel_frac` but a sub-pixel median `de_px` is still rejected.
+    #[test]
+    fn co_gate_rejects_on_median_alone() {
+        let g = coherence_gate(&stats_with(0.1, 0.5)); // frac ok, median < floor
+        assert!(g.reject);
+        assert_eq!(g.reason, Some("de_px_median<floor"));
+    }
+
+    /// The soft penalty ramps monotonically over `[SOFT_LO, REJECT]` and is a no-op
+    /// below the onset.
+    #[test]
+    fn soft_penalty_ramps() {
+        let clean = coherence_gate(&stats_with(0.10, 100.0));
+        let mid = coherence_gate(&stats_with(0.375, 100.0)); // midpoint of [0.25, 0.5]
+        let hot = coherence_gate(&stats_with(0.49, 100.0));
+        assert!((clean.penalty - 1.0).abs() < 1e-9);
+        assert!(mid.penalty < clean.penalty && mid.penalty > hot.penalty);
+        assert!(hot.penalty < 0.1, "near the reject edge the penalty should be small");
+        assert!(!clean.reject && !mid.reject && !hot.reject);
+    }
+
     /// Fully interior frame: no escaped subsamples → NaN coherence (handled
     /// upstream by the too-flat/esc_frac gate, not here).
     #[test]
@@ -420,5 +567,8 @@ mod tests {
         assert_eq!(s.esc_frac, 0.0);
         assert!(s.subpixel_frac.is_nan());
         assert!(s.de_px_median.is_nan());
+        // The gate is a no-op on an interior frame (emptiness is another gate's job).
+        let g = coherence_gate(&s);
+        assert!(!g.reject && (g.penalty - 1.0).abs() < 1e-12 && g.reason.is_none());
     }
 }

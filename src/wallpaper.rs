@@ -52,8 +52,13 @@ const DE_SHADE_STRENGTH: f64 = 1.0;
 struct Feature {
     /// Mean smooth-iteration over escaped subpixels (0 if none escaped).
     smooth: f64,
-    /// Mean DE in pixel units over escaped subpixels (`∞` if none escaped).
+    /// Mean DE in **panel** pixel units over escaped subpixels (`∞` if none
+    /// escaped). The panel-relative structure test (`BOUNDARY_DE`).
     de_px: f64,
+    /// Mean DE in **target wallpaper** pixel units (`de / (width/wp_w)`). `de` is
+    /// resolution-invariant, so this predicts the speckle the full-res render will
+    /// see; the DE-coherence gate keys on it, *not* on the panel-relative `de_px`.
+    de_px_target: f64,
     /// Pixel reads as exterior (majority of subpixels escaped).
     escaped: bool,
 }
@@ -70,6 +75,13 @@ struct Pick {
     /// would have taken. When `≫ hi` and `chosen` is in-band, the band steered.
     max_busyness: f64,
     n_valid: usize,
+    /// Chosen window's DE-coherence: sub-pixel-boundary fraction at the target
+    /// spacing, and median target `de_px`. The selection now steers away from
+    /// speckle windows (hard reject) and de-weights borderline ones (soft penalty).
+    chosen_subpixel_frac: f64,
+    chosen_de_px_median: f64,
+    /// Windows dropped by the coherence hard reject (speckle), for the log.
+    n_coherence_rejected: usize,
 }
 
 /// One descent level's logged record.
@@ -85,6 +97,9 @@ struct LevelLog {
     chosen_score: f64,
     max_busyness: f64,
     n_windows: usize,
+    chosen_subpixel_frac: f64,
+    chosen_de_px_median: f64,
+    n_coherence_rejected: usize,
     target_re: String,
     target_im: String,
 }
@@ -209,10 +224,15 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
             deepest = Some((center_re.clone(), center_im.clone(), width, maxiter));
         }
 
-        // Feature map → band-ranked window pick.
-        let feats = build_features(&buf, spacing);
-        let pick =
-            score_and_pick(&feats, panel_w, panel_h, k, maxiter, args.zoom, band_lo, band_hi, &mut rng);
+        // Feature map → band-ranked window pick. The coherence gate keys on the
+        // *target wallpaper* spacing (width/wp_w), not the 640-wide panel spacing,
+        // so a window's speckle is judged at the resolution the wallpaper renders.
+        let target_spacing = width / wp_w as f64;
+        let feats = build_features(&buf, spacing, target_spacing);
+        let pick = score_and_pick(
+            &feats, panel_w, panel_h, k, maxiter, args.zoom, band_lo, band_hi,
+            args.coherence_theta, &mut rng,
+        );
 
         // Pixel offset of the chosen target (straight from geometry), accumulated
         // in full precision so the path stays exact at the deepest level.
@@ -252,6 +272,9 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
             chosen_score: pick.chosen_score,
             max_busyness: pick.max_busyness,
             n_windows: pick.n_valid,
+            chosen_subpixel_frac: pick.chosen_subpixel_frac,
+            chosen_de_px_median: pick.chosen_de_px_median,
+            n_coherence_rejected: pick.n_coherence_rejected,
             target_re: hp::to_decimal_string(&target_re)?,
             target_im: hp::to_decimal_string(&target_im)?,
         });
@@ -300,6 +323,32 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
         buf.glitched_pixels,
     );
 
+    // Frame-level DE-coherence gate on the actual wallpaper buffer. Here the
+    // render IS at wp_w, so `de_px` against `width/wp_w` is exact (no thumbnail
+    // extrapolation). The per-window gate already steered the descent away from
+    // speckle, so this should pass; report it either way (and warn if it doesn't —
+    // we still emit the images, this command is a forced single descent to judge).
+    let wp_stats = crate::coherence::coherence_stats(&buf, dwidth, wp_w, args.coherence_theta);
+    let wp_gate = crate::coherence::coherence_gate(&wp_stats);
+    eprintln!(
+        "  wallpaper coherence: subpixel_frac={:.4} de_px_median={:.4} → {}",
+        wp_stats.subpixel_frac,
+        wp_stats.de_px_median,
+        if wp_gate.reject {
+            format!("REJECT ({})", wp_gate.reason.unwrap_or("speckle"))
+        } else if wp_gate.penalty < 0.999 {
+            format!("pass (soft penalty {:.3})", wp_gate.penalty)
+        } else {
+            "pass (clean)".to_string()
+        },
+    );
+    if wp_gate.reject {
+        eprintln!(
+            "  WARNING: the deepest frame is sub-pixel speckle at {wp_w}px — emitting anyway \
+             (forced single descent), but it is not a wallpaper candidate."
+        );
+    }
+
     // The coloring × palette matrix. Base params from --shade; each cell overrides
     // channel / interior / de_shade. One buffer, 6 sequential reshades.
     let base = probe::color_params(&args.shade);
@@ -335,9 +384,15 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
         dmaxiter,
         spacing,
     );
+    let wp_coherence = (
+        wp_stats.subpixel_frac,
+        wp_stats.de_px_median,
+        wp_gate.penalty,
+        wp_gate.reject,
+    );
     let json = build_json(
         &logs, args, band_lo, band_hi, floor, &deepest_info, wp_w, wp_h,
-        &wallpaper_paths, &probe::path_str(strip_path),
+        &wallpaper_paths, &probe::path_str(strip_path), wp_coherence,
     );
     crate::ensure_parent_dir(&args.json)?;
     fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
@@ -347,18 +402,22 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
 }
 
 /// Aggregate the supersampled buffer into one [`Feature`] per output pixel.
-fn build_features(buf: &SampleBuffer, spacing: f64) -> Vec<Feature> {
+/// `spacing` is the panel pixel spacing (for `de_px`); `target_spacing` is the
+/// final wallpaper spacing (`width / wp_w`) the coherence gate keys on.
+fn build_features(buf: &SampleBuffer, spacing: f64, target_spacing: f64) -> Vec<Feature> {
     let w = buf.out_width as usize;
     let h = buf.out_height as usize;
     let s = buf.ss as usize;
     let sub_w = w * s;
     let total = (s * s) as f64;
+    let inv_target = 1.0 / target_spacing;
     let mut feats = Vec::with_capacity(w * h);
     for row in 0..h {
         for col in 0..w {
             let mut esc = 0usize;
             let mut sm = 0.0f64;
             let mut de = 0.0f64;
+            let mut de_t = 0.0f64;
             for sj in 0..s {
                 let base = (row * s + sj) * sub_w + col * s;
                 for si in 0..s {
@@ -367,18 +426,20 @@ fn build_features(buf: &SampleBuffer, spacing: f64) -> Vec<Feature> {
                         esc += 1;
                         sm += px.smooth_iter;
                         de += px.de / spacing;
+                        de_t += px.de * inv_target;
                     }
                 }
             }
             let esc_frac = esc as f64 / total;
-            let (smooth, de_px) = if esc > 0 {
-                (sm / esc as f64, de / esc as f64)
+            let (smooth, de_px, de_px_target) = if esc > 0 {
+                (sm / esc as f64, de / esc as f64, de_t / esc as f64)
             } else {
-                (0.0, f64::INFINITY)
+                (0.0, f64::INFINITY, f64::INFINITY)
             };
             feats.push(Feature {
                 smooth,
                 de_px,
+                de_px_target,
                 escaped: esc_frac >= 0.5,
             });
         }
@@ -430,6 +491,7 @@ fn score_and_pick(
     zoom: f64,
     band_lo: f64,
     band_hi: f64,
+    theta: f64,
     rng: &mut SplitMix64,
 ) -> Pick {
     let w = panel_w as i32;
@@ -446,13 +508,26 @@ fn score_and_pick(
     // with the corpus native band.
     let inv_scale = 1.0 / maxiter.max(1) as f64;
 
-    // (col, row, score, busyness) for each valid window.
-    let mut cands: Vec<(usize, usize, f64, f64)> = Vec::new();
+    // Per surviving window: position, band score (already coherence-penalized),
+    // busyness, and the window's coherence stats (for the chosen-window log).
+    struct Win {
+        col: usize,
+        row: usize,
+        score: f64,
+        busyness: f64,
+        subpixel_frac: f64,
+        de_px_median: f64,
+    }
+    let mut cands: Vec<Win> = Vec::new();
+    let mut n_coherence_rejected = 0usize;
+    let mut de_t_buf: Vec<f64> = Vec::with_capacity((k * k) as usize);
     for row in margin_y..(h - margin_y) {
         for col in margin_x..(w - margin_x) {
             let mut vals: Vec<f64> = Vec::with_capacity((k * k) as usize);
+            de_t_buf.clear();
             let mut interior_c = 0usize;
             let mut boundary_c = 0usize;
+            let mut subpixel_c = 0usize;
             for dy in -r..=r {
                 for dx in -r..=r {
                     let f = &feats[(row + dy) as usize * w as usize + (col + dx) as usize];
@@ -460,6 +535,11 @@ fn score_and_pick(
                         vals.push(f.smooth);
                         if f.de_px < BOUNDARY_DE {
                             boundary_c += 1;
+                        }
+                        // Coherence keys on the *target*-spacing de_px.
+                        de_t_buf.push(f.de_px_target);
+                        if f.de_px_target < theta {
+                            subpixel_c += 1;
                         }
                     } else {
                         interior_c += 1;
@@ -475,9 +555,22 @@ fn score_and_pick(
             if interior_c == 0 && boundary_c == 0 {
                 continue;
             }
+
+            // DE-coherence over the escaped pixels of this window, at the target
+            // wallpaper spacing — the shared gate (reject speckle, penalize
+            // borderline). de_t_buf is non-empty here (vals.len() ≥ 3 ⇒ escaped).
+            let escaped_n = de_t_buf.len();
+            let subpixel_frac = subpixel_c as f64 / escaped_n as f64;
+            let de_px_median = median(&mut de_t_buf);
+            let gate = crate::coherence::gate_from(subpixel_frac, de_px_median);
+            if gate.reject {
+                n_coherence_rejected += 1;
+                continue; // steer away from sub-pixel speckle windows
+            }
+
             let busyness = stddev(&vals) * inv_scale;
-            let score = band_membership(busyness, band_lo, band_hi);
-            cands.push((col as usize, row as usize, score, busyness));
+            let score = band_membership(busyness, band_lo, band_hi) * gate.penalty;
+            cands.push(Win { col: col as usize, row: row as usize, score, busyness, subpixel_frac, de_px_median });
         }
     }
 
@@ -489,27 +582,47 @@ fn score_and_pick(
             chosen_score: 0.0,
             max_busyness: 0.0,
             n_valid: 0,
+            chosen_subpixel_frac: f64::NAN,
+            chosen_de_px_median: f64::NAN,
+            n_coherence_rejected,
         };
     }
 
     let n_valid = cands.len();
-    let max_busyness = cands.iter().fold(0.0f64, |m, c| m.max(c.3));
+    let max_busyness = cands.iter().fold(0.0f64, |m, c| m.max(c.busyness));
 
     // Rank by band score; sample one from the top 1% (seeded) for reproducible
     // diversity among the in-band windows.
     let mut order: Vec<usize> = (0..n_valid).collect();
-    order.sort_by(|&a, &b| cands[b].2.partial_cmp(&cands[a].2).unwrap());
+    order.sort_by(|&a, &b| cands[b].score.partial_cmp(&cands[a].score).unwrap());
     let topk = (n_valid / 100).max(1);
     let chosen = order[rng.below(topk)];
-    let (col, row, chosen_score, chosen_busyness) = cands[chosen];
+    let c = &cands[chosen];
 
     Pick {
-        col,
-        row,
-        chosen_busyness,
-        chosen_score,
+        col: c.col,
+        row: c.row,
+        chosen_busyness: c.busyness,
+        chosen_score: c.score,
         max_busyness,
         n_valid,
+        chosen_subpixel_frac: c.subpixel_frac,
+        chosen_de_px_median: c.de_px_median,
+        n_coherence_rejected,
+    }
+}
+
+/// Median of a slice (mutates: sorts in place). Empty → NaN.
+fn median(v: &mut [f64]) -> f64 {
+    let n = v.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
     }
 }
 
@@ -615,8 +728,9 @@ fn build_corpus_palette(text: &str) -> Result<Palette, String> {
 
 fn print_table_header() {
     println!(
-        "{:>3}  {:>10}  {:>9}  {:>6}  {:>4}  {:>8}  {:>8}  {:>8}  {:>9}  {:>6}",
-        "lvl", "width", "mag", "maxit", "bknd", "chosen_b", "band_lo", "band_hi", "max_avail", "wins",
+        "{:>3}  {:>10}  {:>9}  {:>6}  {:>4}  {:>8}  {:>8}  {:>8}  {:>9}  {:>6}  {:>6}  {:>5}",
+        "lvl", "width", "mag", "maxit", "bknd", "chosen_b", "band_lo", "band_hi", "max_avail",
+        "wins", "spx", "crej",
     );
 }
 
@@ -635,9 +749,10 @@ fn print_table_row(
         ""
     };
     println!(
-        "{:>3}  {:>10.3e}  {:>9.2e}  {:>6}  {:>4}  {:>8.4}  {:>8.4}  {:>8.4}  {:>9.4}  {:>6}{}",
+        "{:>3}  {:>10.3e}  {:>9.2e}  {:>6}  {:>4}  {:>8.4}  {:>8.4}  {:>8.4}  {:>9.4}  {:>6}  {:>6.3}  {:>5}{}",
         level, width, mag, maxiter, "F64", pick.chosen_busyness, band_lo, band_hi,
-        pick.max_busyness, pick.n_valid, steered,
+        pick.max_busyness, pick.n_valid, pick.chosen_subpixel_frac, pick.n_coherence_rejected,
+        steered,
     );
 }
 
@@ -657,6 +772,7 @@ fn build_json(
     wp_h: u32,
     wallpapers: &[(String, String, String)],
     strip: &str,
+    wp_coherence: (f64, f64, f64, bool),
 ) -> String {
     use probe::{jf, js};
     let mut s = String::from("{\n");
@@ -675,6 +791,9 @@ fn build_json(
         jf(band_lo),
         jf(band_hi)
     ));
+    s.push_str(&format!("    \"coherence_theta\": {},\n", jf(args.coherence_theta)));
+    s.push_str(&format!("    \"coherence_reject\": {},\n", jf(crate::coherence::COHERENCE_REJECT)));
+    s.push_str(&format!("    \"de_px_median_floor\": {},\n", jf(crate::coherence::DE_PX_MEDIAN_FLOOR)));
     s.push_str(&format!("    \"seed\": {}\n", args.seed));
     s.push_str("  },\n");
 
@@ -689,6 +808,12 @@ fn build_json(
     s.push_str(&format!("    \"maxiter\": {},\n", deepest.3));
     s.push_str(&format!("    \"pixel_spacing\": {},\n", jf(deepest.4)));
     s.push_str("    \"backend\": \"F64\",\n");
+    s.push_str("    \"coherence\": {\n");
+    s.push_str(&format!("      \"subpixel_frac\": {},\n", jf(wp_coherence.0)));
+    s.push_str(&format!("      \"de_px_median\": {},\n", jf(wp_coherence.1)));
+    s.push_str(&format!("      \"penalty\": {},\n", jf(wp_coherence.2)));
+    s.push_str(&format!("      \"reject\": {}\n", wp_coherence.3));
+    s.push_str("    },\n");
     s.push_str("    \"images\": [\n");
     for (i, (coloring, pal, path)) in wallpapers.iter().enumerate() {
         s.push_str(&format!(
@@ -726,6 +851,11 @@ fn build_json(
             jf(band_hi)
         ));
         s.push_str(&format!("      \"n_windows\": {},\n", lv.n_windows));
+        s.push_str("      \"coherence\": {\n");
+        s.push_str(&format!("        \"chosen_subpixel_frac\": {},\n", jf(lv.chosen_subpixel_frac)));
+        s.push_str(&format!("        \"chosen_de_px_median\": {},\n", jf(lv.chosen_de_px_median)));
+        s.push_str(&format!("        \"n_windows_rejected\": {}\n", lv.n_coherence_rejected));
+        s.push_str("      },\n");
         s.push_str(&format!(
             "      \"chosen_target\": {{ \"re\": {}, \"im\": {} }}\n",
             js(&lv.target_re),

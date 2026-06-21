@@ -57,6 +57,10 @@ const MIN_WIDTH: f64 = 1e-200;
 /// the user-facing knob is λ (`--diversity`), which scales the *penalty*.
 const DIVERSITY_SIGMA: f64 = 0.35;
 
+/// K×K window for the per-node `busy_win` reported alongside the DE-coherence
+/// stats (mirrors the selector / `cohere` window so the numbers are comparable).
+const COHERENCE_WINDOW: i32 = 5;
+
 // ===========================================================================
 // Diversity feature vector
 // ===========================================================================
@@ -150,6 +154,21 @@ struct Node {
     glitch_count: u64,
     n_candidates: usize,
     collapse_reason: Option<String>,
+
+    // ---- DE-coherence gate (filled on expansion; see `coherence`) ----
+    /// Fraction of escaped subsamples whose boundary is finer than a pixel at the
+    /// target resolution — the speckle indicator. `NaN` until expanded.
+    coherence_subpixel_frac: f64,
+    /// Median `de_px` over escaped subsamples (the co-gate). `NaN` until expanded.
+    coherence_de_px_median: f64,
+    /// Windowed-max busyness of this frame (what the selector keys on).
+    busy_win: f64,
+    /// Soft penalty multiplier already folded into `score` (`1.0` = unpenalized).
+    coherence_penalty: f64,
+    /// Hard-rejected as sub-pixel speckle → excluded from the surfaced candidates
+    /// and its children are not explored.
+    coherence_reject: bool,
+
     children: Vec<usize>,
     /// Clean shaded Mandelbrot panel (child footprint circles drawn), cached for
     /// the strip / sheet so neither output re-iterates.
@@ -445,6 +464,10 @@ struct Cfg<'a> {
     backend: crate::cli::BackendChoice,
     panels_dir: std::path::PathBuf,
     bands: ScoreBands,
+    /// Wallpaper width the DE-coherence gate is pinned to (resolution-invariant
+    /// `de` → predicts the final render's speckle from a cheap thumbnail).
+    target_width: u32,
+    coherence_theta: f64,
 }
 
 /// Entry point for the `search` subcommand.
@@ -513,6 +536,8 @@ pub fn run_search(args: &SearchArgs) -> Result<(), String> {
         backend: args.backend,
         panels_dir: panels_dir.clone(),
         bands,
+        target_width: args.target_width,
+        coherence_theta: args.coherence_theta,
     };
 
     // ---- tree state ----
@@ -548,6 +573,11 @@ pub fn run_search(args: &SearchArgs) -> Result<(), String> {
         glitch_count: 0,
         n_candidates: 0,
         collapse_reason: None,
+        coherence_subpixel_frac: f64::NAN,
+        coherence_de_px_median: f64::NAN,
+        busy_win: f64::NAN,
+        coherence_penalty: 1.0,
+        coherence_reject: false,
         children: Vec::new(),
         panel: None,
         panel_path: String::new(),
@@ -708,19 +738,41 @@ fn expand_node(
     let spacing = panel.spacing;
     let glitch_count = panel.buf.glitched_pixels;
 
+    // DE-coherence gate over this rendered frame, pinned to the *target wallpaper*
+    // spacing (the panels are cheap thumbnails, but `de` is resolution-invariant,
+    // so the thumbnail predicts the final render's speckle). The root (whole-set
+    // entry view) is never gated. A hard reject drops the node from the surfaced
+    // candidates and stops descent here (its children are deeper, hence worse
+    // speckle); a soft penalty ramps the node's score down toward the threshold.
+    let cstats = crate::coherence::coherence_stats(
+        &panel.buf, width, cfg.target_width, cfg.coherence_theta,
+    );
+    let cgate = crate::coherence::coherence_gate(&cstats);
+    let busy_win = crate::coherence::windowed_busyness_max(
+        &panel.buf, cfg.panel_w, cfg.panel_h, COHERENCE_WINDOW, maxiter,
+    );
+    let coherence_reject = !is_root && cgate.reject;
+
     // Shade the panel now; we draw child footprint circles after finding them.
     let mut shaded = crate::render::shade_and_downsample(
         &panel.buf.samples, cfg.panel_w, cfg.panel_h, cfg.ss, cfg.palette, cfg.params, spacing,
     );
 
-    // --- find children (unless the period cap stops descent here) ---
+    // --- find children (unless a hard gate stops descent here) ---
     let half_w = width * 0.5;
     let half_h = width * (cfg.panel_h as f64 / cfg.panel_w as f64) * 0.5;
     let mut builds: Vec<ChildBuild> = Vec::new();
     let mut n_candidates = 0usize;
     let mut collapse_reason: Option<String> = None;
 
-    if !is_root && node_period > cfg.period_cap {
+    if coherence_reject {
+        collapse_reason = Some(format!(
+            "coherence reject: {} (subpixel_frac={:.3}, de_px_median={:.3})",
+            cgate.reason.unwrap_or("speckle"),
+            cstats.subpixel_frac,
+            cstats.de_px_median,
+        ));
+    } else if !is_root && node_period > cfg.period_cap {
         collapse_reason = Some(format!("period {node_period} exceeds cap {}", cfg.period_cap));
     } else {
         let mut cands = atom_candidates(&panel.buf, cfg.panel_w, cfg.panel_h, width, maxiter);
@@ -871,6 +923,11 @@ fn expand_node(
             glitch_count: 0,
             n_candidates: 0,
             collapse_reason: None,
+            coherence_subpixel_frac: f64::NAN,
+            coherence_de_px_median: f64::NAN,
+            busy_win: f64::NAN,
+            coherence_penalty: 1.0,
+            coherence_reject: false,
             children: Vec::new(),
             panel: None,
             panel_path: String::new(),
@@ -896,6 +953,17 @@ fn expand_node(
     n.glitch_count = glitch_count;
     n.n_candidates = n_candidates;
     n.collapse_reason = collapse_reason;
+    n.coherence_subpixel_frac = cstats.subpixel_frac;
+    n.coherence_de_px_median = cstats.de_px_median;
+    n.busy_win = busy_win;
+    n.coherence_penalty = cgate.penalty;
+    n.coherence_reject = coherence_reject;
+    // Fold the soft penalty into the node's own surfacing score (best-path /
+    // top-N rank on `score`). Non-root only: the root score is NaN by design.
+    // A rejected node keeps `score` for the record but is excluded by the flag.
+    if !n.is_root && n.score.is_finite() {
+        n.score *= cgate.penalty;
+    }
     n.children = child_ids;
     n.panel = Some(shaded);
     n.panel_path = probe::path_str(&panel_file);
@@ -924,7 +992,9 @@ fn node_label(id: usize, period: u32, mag: f64, score: f64, is_root: bool) -> St
 fn best_path_ids(nodes: &[Node]) -> Vec<usize> {
     let best = nodes
         .iter()
-        .filter(|n| n.expanded && !n.is_root && n.panel.is_some() && n.score.is_finite())
+        .filter(|n| {
+            n.expanded && !n.is_root && !n.coherence_reject && n.panel.is_some() && n.score.is_finite()
+        })
         .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(Ordering::Equal))
         .map(|n| n.id)
         // Fallback: root only (e.g. nothing past the start expanded).
@@ -985,7 +1055,9 @@ fn write_best_path_strip(
 fn top_n_ids(nodes: &[Node], n: usize) -> Vec<usize> {
     let pool: Vec<usize> = nodes
         .iter()
-        .filter(|nd| nd.expanded && !nd.is_root && nd.panel.is_some() && nd.score.is_finite())
+        .filter(|nd| {
+            nd.expanded && !nd.is_root && !nd.coherence_reject && nd.panel.is_some() && nd.score.is_finite()
+        })
         .map(|nd| nd.id)
         .collect();
     if pool.is_empty() || n == 0 {
@@ -1043,6 +1115,14 @@ fn write_top_sheet(
             )
             .to_uppercase();
             font::draw_text(&mut t, &label, 2, 2, 2, Rgb([240, 240, 240]), true);
+            // Second line: the DE-coherence stats so Matt sees how close each
+            // surfaced candidate sits to the speckle floor.
+            let cline = format!(
+                "SPX={:.3} DEM={:.2} BW={:.3}",
+                n.coherence_subpixel_frac, n.coherence_de_px_median, n.busy_win
+            )
+            .to_uppercase();
+            font::draw_text(&mut t, &cline, 2, 22, 2, Rgb([180, 220, 180]), true);
             t
         })
         .collect();
@@ -1059,16 +1139,23 @@ fn write_top_sheet(
 
 fn print_table_header() {
     println!(
-        "{:>4}  {:>4}  {:>3}  {:>9}  {:>6}  {:>4}  {:>5}  {:>7}  {:>6}  {:>6}  {:>5}  {:>6}",
+        "{:>4}  {:>4}  {:>3}  {:>9}  {:>6}  {:>4}  {:>5}  {:>7}  {:>6}  {:>6}  {:>5}  {:>6}  {:>5}  {:>5}",
         "id", "par", "dep", "mag", "maxit", "bknd", "cand", "period", "roff", "score", "adj",
-        "child",
+        "child", "spx", "gate",
     );
 }
 
 fn print_expand_row(n: &Node, n_candidates: usize) {
     let par = n.parent.map(|p| p as i64).unwrap_or(-1);
+    let gate = if n.coherence_reject {
+        "REJ"
+    } else if n.coherence_penalty < 0.999 {
+        "pen"
+    } else {
+        "ok"
+    };
     println!(
-        "{:>4}  {:>4}  {:>3}  {:>9.2e}  {:>6}  {:>4}  {:>5}  {:>7}  {:>6.3}  {:>6.3}  {:>5.3}  {:>6}",
+        "{:>4}  {:>4}  {:>3}  {:>9.2e}  {:>6}  {:>4}  {:>5}  {:>7}  {:>6.3}  {:>6.3}  {:>5.3}  {:>6}  {:>5.3}  {:>5}",
         n.id,
         par,
         n.depth,
@@ -1081,6 +1168,8 @@ fn print_expand_row(n: &Node, n_candidates: usize) {
         n.score,
         n.adjusted,
         n.children.len(),
+        n.coherence_subpixel_frac,
+        gate,
     );
 }
 
@@ -1128,6 +1217,10 @@ fn build_json(
     s.push_str(&format!("    \"frame_multiple\": {},\n", jf(args.frame_multiple)));
     s.push_str(&format!("    \"reselect_k\": {},\n", jf(args.reselect_k)));
     s.push_str(&format!("    \"panel_width\": {},\n", args.panel_width));
+    s.push_str(&format!("    \"coherence_target_width\": {},\n", args.target_width));
+    s.push_str(&format!("    \"coherence_theta\": {},\n", jf(args.coherence_theta)));
+    s.push_str(&format!("    \"coherence_reject\": {},\n", jf(crate::coherence::COHERENCE_REJECT)));
+    s.push_str(&format!("    \"de_px_median_floor\": {},\n", jf(crate::coherence::DE_PX_MEDIAN_FLOOR)));
     s.push_str(&format!("    \"seed\": {}\n", args.seed));
     s.push_str("  },\n");
 
@@ -1191,6 +1284,13 @@ fn build_json(
         s.push_str(&format!("      \"roff\": {},\n", jf(n.roff)));
         s.push_str(&format!("      \"score\": {},\n", jf(n.score)));
         s.push_str(&format!("      \"adjusted\": {},\n", jf(n.adjusted)));
+        s.push_str("      \"coherence\": {\n");
+        s.push_str(&format!("        \"subpixel_frac\": {},\n", jf(n.coherence_subpixel_frac)));
+        s.push_str(&format!("        \"de_px_median\": {},\n", jf(n.coherence_de_px_median)));
+        s.push_str(&format!("        \"busy_win\": {},\n", jf(n.busy_win)));
+        s.push_str(&format!("        \"penalty\": {},\n", jf(n.coherence_penalty)));
+        s.push_str(&format!("        \"reject\": {}\n", n.coherence_reject));
+        s.push_str("      },\n");
         s.push_str(&format!("      \"final_z2\": {},\n", jf(n.final_z2)));
         s.push_str(&format!(
             "      \"c_f64\": {{ \"re\": {}, \"im\": {} }},\n",
