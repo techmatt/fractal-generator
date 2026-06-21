@@ -12,59 +12,29 @@
 //! self-similar tedium or dives into a minibrot interior, and *that collapse is
 //! the signal* — the row labels and JSON log surface interior fraction, the
 //! score range, the `low_signal` flag, and the f64→perturbation handoff so the
-//! falloff is legible. The real navigation (Newton / atom domains) must beat it.
+//! falloff is legible. The real navigation (`navigate`, Newton / atom domains)
+//! must beat it.
+//!
+//! The generic filmstrip / Julia / hp-accumulation / JSON-scalar machinery lives
+//! in [`crate::probe`]; only the greedy window scoring is descend-specific.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use astro_float::{BigFloat, RoundingMode};
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
-use crate::backend::{F64Backend, FractalBackend, JuliaBackend, PerturbationBackend, Trap};
-use crate::cli::{BackendChoice, DescendArgs};
-use crate::coloring::ColorParams;
+use crate::backend::Trap;
+use crate::cli::DescendArgs;
 use crate::font;
 use crate::hp;
 use crate::palette_io::load_palette;
-use crate::render::{self, Frame, SampleBuffer};
-
-/// Pixel spacing at/below which f64 enters its quantization regime — the auto
-/// switch to perturbation (mirrors `main`'s constant; the back third of a deep
-/// descent crosses it).
-const PERTURB_SPACING: f64 = 1e-13;
-
-/// Base-scale Julia view width (whole set, center 0). f64 is always accurate
-/// here, so Julia panels never need perturbation.
-const JULIA_WIDTH: f64 = 3.5;
+use crate::probe::{self, SplitMix64};
+use crate::render::{self, SampleBuffer};
 
 /// `de_px < BOUNDARY_DE` counts a feature pixel as near-boundary structure.
 const BOUNDARY_DE: f64 = 2.0;
-
-/// Horizontal gap (px) between the Mandelbrot and Julia panels in a row.
-const GAP_H: u32 = 4;
-/// Vertical gap (px) between rows of the filmstrip.
-const GAP_V: u32 = 3;
-/// Filmstrip background (near-black).
-const STRIP_BG: [u8; 3] = [16, 16, 16];
-
-/// SplitMix64 — a tiny, dependency-free seeded PRNG. Deterministic for a fixed
-/// `--seed`, which is what makes a descent reproducible.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-    /// Uniform index in `0..n` (`n > 0`).
-    fn below(&mut self, n: usize) -> usize {
-        (self.next_u64() % n as u64) as usize
-    }
-}
 
 /// Per-output-pixel aggregate of its `ss×ss` subsamples.
 #[derive(Clone, Copy)]
@@ -137,7 +107,7 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
         args.palette.palette_entry.as_deref(),
         args.palette.palette_reverse,
     )?;
-    let params = color_params(args);
+    let params = probe::color_params(&args.shade);
     let trap = Trap {
         shape: args.trap,
         center: args.resolved_trap_center()?,
@@ -159,7 +129,7 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
 
     // Per-level output panels live alongside the strip in `<stem>_panels/`.
     let strip_path = Path::new(&args.output);
-    let panels_dir = panels_dir_for(strip_path);
+    let panels_dir = probe::panels_dir_for(strip_path);
     fs::create_dir_all(&panels_dir)
         .map_err(|e| format!("failed to create {}: {e}", panels_dir.display()))?;
 
@@ -178,41 +148,30 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
         let prec = hp::prec_bits(panel_w, width);
 
         let center_f64 = Complex::new(hp::to_f64(&center_re), hp::to_f64(&center_im));
-        let frame = Frame {
-            center: center_f64,
-            frame_width: width,
-            out_width: panel_w,
-            out_height: panel_h,
-        };
-        let spacing = frame.pixel_size();
-        let use_perturb = match args.backend {
-            BackendChoice::Auto => spacing <= PERTURB_SPACING,
-            BackendChoice::Perturb => true,
-            BackendChoice::F64 => false,
-        };
 
         // Mandelbrot panel (the only expensive iteration; perturbation engages
         // automatically on the back third).
-        let (backend, backend_name): (Box<dyn FractalBackend>, &'static str) = if use_perturb {
-            let pb = PerturbationBackend::new(
-                &center_re,
-                &center_im,
-                maxiter,
-                args.bailout,
-                prec,
-                trap,
-            );
-            (Box::new(pb), "PERT")
-        } else {
-            (Box::new(F64Backend::new(maxiter, args.bailout, trap)), "F64")
-        };
-        let buf = render::iterate_samples(&*backend, &frame, ss);
+        let panel = probe::render_mandel_panel(
+            &center_re,
+            &center_im,
+            center_f64,
+            width,
+            panel_w,
+            panel_h,
+            ss,
+            maxiter,
+            args.bailout,
+            prec,
+            trap,
+            args.backend,
+        );
+        let buf = panel.buf;
+        let backend_name = panel.backend_name;
+        let spacing = panel.spacing;
 
         // Feature map → score every window → sample a target from the top 1%.
         let feats = build_features(&buf, spacing);
-        let pick = score_and_pick(
-            &feats, panel_w, panel_h, k, args.zoom, &mut rng,
-        );
+        let pick = score_and_pick(&feats, panel_w, panel_h, k, args.zoom, &mut rng);
 
         // Pixel offset of the chosen target from the current center (straight
         // from geometry — never c − center), accumulated in full precision.
@@ -225,28 +184,29 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
         let c_f64 = Complex::new(hp::to_f64(&target_re), hp::to_f64(&target_im));
 
         // Shade the Mandelbrot panel and annotate the chosen target's footprint.
-        let mut mandel_img =
-            render::shade_and_downsample(&buf.samples, panel_w, panel_h, ss, &palette, &params, spacing);
-        let circle_r = panel_w as f64 / (2.0 * args.zoom);
-        draw_circle(&mut mandel_img, pick.col, pick.row, circle_r);
-
-        // Julia panel for the chosen target, base scale (whole set), f64.
-        let julia_backend = JuliaBackend::new(c_f64, args.julia_maxiter, args.bailout, trap);
-        let julia_frame = Frame {
-            center: Complex::new(0.0, 0.0),
-            frame_width: JULIA_WIDTH,
-            out_width: panel_w,
-            out_height: panel_h,
-        };
-        let julia_buf = render::iterate_samples(&julia_backend, &julia_frame, ss);
-        let julia_img = render::shade_and_downsample(
-            &julia_buf.samples,
+        let mut mandel_img = render::shade_and_downsample(
+            &buf.samples,
             panel_w,
             panel_h,
             ss,
             &palette,
             &params,
-            julia_frame.pixel_size(),
+            spacing,
+        );
+        let circle_r = panel_w as f64 / (2.0 * args.zoom);
+        probe::draw_circle(&mut mandel_img, pick.col as f64, pick.row as f64, circle_r);
+
+        // Julia panel for the chosen target, base scale (whole set), f64.
+        let julia_img = probe::render_julia_panel(
+            c_f64,
+            args.julia_maxiter,
+            args.bailout,
+            trap,
+            panel_w,
+            panel_h,
+            ss,
+            &palette,
+            &params,
         );
 
         // On-image label (uppercased into the reduced glyph set).
@@ -294,8 +254,8 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
             target_im: target_im_str,
             c_f64,
             pick,
-            mandel_panel: path_str(&mandel_path),
-            julia_panel: path_str(&julia_path),
+            mandel_panel: probe::path_str(&mandel_path),
+            julia_panel: probe::path_str(&julia_path),
         });
         mandel_panels.push(mandel_img);
         julia_panels.push(julia_img);
@@ -307,13 +267,13 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
     }
 
     // Compose the filmstrip (one row per level: Mandelbrot | Julia).
-    let strip = compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h);
+    let strip = probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h);
     strip
         .save(strip_path)
         .map_err(|e| format!("failed to write {}: {e}", strip_path.display()))?;
 
     // JSON log.
-    let json = build_json(&logs, args.zoom, &path_str(strip_path));
+    let json = build_json(&logs, args.zoom, &probe::path_str(strip_path));
     fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
 
     eprintln!(
@@ -324,21 +284,6 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
         args.json,
     );
     Ok(())
-}
-
-/// Map the descend shading args to coloring parameters.
-fn color_params(args: &DescendArgs) -> ColorParams {
-    ColorParams {
-        density: args.shade.density,
-        offset: args.shade.offset,
-        channel: args.shade.color,
-        interior: args.shade.interior,
-        trap_scale: args.shade.trap_scale,
-        trap_curve: args.shade.trap_curve,
-        trap_phase_strength: args.shade.trap_phase_strength,
-        de_shade: args.shade.de_shade,
-        mark_glitches: args.shade.mark_glitches,
-    }
 }
 
 /// Aggregate the supersampled buffer into one [`Feature`] per output pixel.
@@ -522,86 +467,6 @@ fn score_and_pick(
     }
 }
 
-/// Draw a white circle (radius `r` px) at `(cx, cy)` with a 1px dark halo on
-/// each side for legibility over light regions. `r` marks the next frame's
-/// footprint.
-fn draw_circle(img: &mut RgbImage, cx: usize, cy: usize, r: f64) {
-    let w = img.width() as i64;
-    let h = img.height() as i64;
-    let cxf = cx as f64;
-    let cyf = cy as f64;
-    let x0 = ((cxf - r - 2.0).floor() as i64).max(0);
-    let x1 = ((cxf + r + 2.0).ceil() as i64).min(w - 1);
-    let y0 = ((cyf - r - 2.0).floor() as i64).max(0);
-    let y1 = ((cyf + r + 2.0).ceil() as i64).min(h - 1);
-    let dark = Rgb([0u8, 0, 0]);
-    let white = Rgb([255u8, 255, 255]);
-    // Halo first (wider), then the white ring inside it.
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let d = (((x as f64 - cxf).powi(2)) + ((y as f64 - cyf).powi(2))).sqrt();
-            if (d - r).abs() <= 2.0 {
-                img.put_pixel(x as u32, y as u32, dark);
-            }
-        }
-    }
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let d = (((x as f64 - cxf).powi(2)) + ((y as f64 - cyf).powi(2))).sqrt();
-            if (d - r).abs() <= 1.0 {
-                img.put_pixel(x as u32, y as u32, white);
-            }
-        }
-    }
-}
-
-/// Compose the tall filmstrip: one row per level, `Mandelbrot | Julia`.
-fn compose_strip(
-    mandel: &[RgbImage],
-    julia: &[RgbImage],
-    panel_w: u32,
-    panel_h: u32,
-) -> RgbImage {
-    let n = mandel.len() as u32;
-    let width = 2 * panel_w + GAP_H;
-    let height = n * panel_h + n.saturating_sub(1) * GAP_V;
-    let mut strip = RgbImage::from_pixel(width, height, Rgb(STRIP_BG));
-    for i in 0..mandel.len() {
-        let y0 = i as u32 * (panel_h + GAP_V);
-        blit(&mut strip, &mandel[i], 0, y0);
-        blit(&mut strip, &julia[i], panel_w + GAP_H, y0);
-    }
-    strip
-}
-
-/// Paste `src` into `dst` at `(x0, y0)`.
-fn blit(dst: &mut RgbImage, src: &RgbImage, x0: u32, y0: u32) {
-    for (sx, sy, px) in src.enumerate_pixels() {
-        let (dx, dy) = (x0 + sx, y0 + sy);
-        if dx < dst.width() && dy < dst.height() {
-            dst.put_pixel(dx, dy, *px);
-        }
-    }
-}
-
-/// `<stem>_panels/` directory beside the strip output.
-fn panels_dir_for(strip: &Path) -> PathBuf {
-    let stem = strip
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("descend");
-    let dir = format!("{stem}_panels");
-    match strip.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.join(dir),
-        _ => PathBuf::from(dir),
-    }
-}
-
-/// Forward-slash path string for the JSON (portable, copy-pasteable).
-fn path_str(p: &Path) -> String {
-    p.to_string_lossy().replace('\\', "/")
-}
-
 // ---------------------------------------------------------------------------
 // stdout table
 // ---------------------------------------------------------------------------
@@ -644,21 +509,8 @@ fn print_table_row(
 // JSON log (hand-rolled — the project keeps deps minimal)
 // ---------------------------------------------------------------------------
 
-/// Format a finite f64 in scientific form for JSON; non-finite → `null`.
-fn jf(x: f64) -> String {
-    if x.is_finite() {
-        format!("{x:e}")
-    } else {
-        "null".into()
-    }
-}
-
-/// JSON-escape a decimal string (only `"`/`\` are possible; defensive).
-fn js(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
 fn build_json(logs: &[LevelLog], zoom: f64, strip: &str) -> String {
+    use probe::{jf, js};
     let mut s = String::from("[\n");
     for (i, lv) in logs.iter().enumerate() {
         s.push_str("  {\n");

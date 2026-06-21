@@ -51,6 +51,19 @@ pub struct PixelSample {
     /// pixel had a nonzero offset from the reference (too deep for this tier).
     /// Additive field, defaults false — the f64 backend never sets it.
     pub glitched: bool,
+    /// **Navigation channel, not coloring.** The iteration `n ≥ 1` at which the
+    /// orbit made its closest approach to the origin (`z_0 = 0` is skipped). This
+    /// is the period of the nearby minibrot — the atom domain (see
+    /// `crate::navigate`). The coloring stage ignores it. Both Mandelbrot
+    /// backends populate it identically (perturbation feeds the full value
+    /// `Z[m]+δ`, so `n` is absolute and unaffected by rebasing); Julia leaves the
+    /// default `0`.
+    pub atom_period: u32,
+    /// **Navigation channel, not coloring.** Minimum `|z_n|` over the orbit
+    /// (`n ≥ 1`): how near this pixel passes a nucleus. Pixels with the smallest
+    /// `atom_min` of a given `atom_period` sit nearest that period's nucleus.
+    /// Default `f64::INFINITY` (Julia).
+    pub atom_min: f64,
 }
 
 /// Geometric orbit trap. The orbit's closest approach to this shape (over all
@@ -154,6 +167,9 @@ impl FractalBackend for F64Backend {
         let mut n = 0u32;
         let mut trap_min = f64::INFINITY;
         let mut trap_phase = 0.0f64;
+        // Atom domain: closest approach of the full value to the origin (n ≥ 1).
+        let mut atom_min2 = f64::INFINITY;
+        let mut atom_period = 0u32;
 
         loop {
             // dz_{n+1} = 2·z_n·dz_n + 1 (z still holds z_n from the prior step).
@@ -175,6 +191,10 @@ impl FractalBackend for F64Backend {
                 trap_min = d;
                 trap_phase = ph;
             }
+            if zmag2 < atom_min2 {
+                atom_min2 = zmag2;
+                atom_period = n;
+            }
 
             if n >= self.maxiter {
                 return PixelSample {
@@ -184,6 +204,8 @@ impl FractalBackend for F64Backend {
                     trap_min,
                     trap_phase,
                     glitched: false,
+                    atom_period,
+                    atom_min: atom_min2.sqrt(),
                 };
             }
             if zmag2 > self.bailout2 {
@@ -194,6 +216,8 @@ impl FractalBackend for F64Backend {
                     trap_min,
                     trap_phase,
                     glitched: false,
+                    atom_period,
+                    atom_min: atom_min2.sqrt(),
                 };
             }
         }
@@ -265,6 +289,8 @@ impl FractalBackend for JuliaBackend {
                     trap_min,
                     trap_phase,
                     glitched: false,
+                    atom_period: 0, // navigation channel unused for Julia
+                    atom_min: f64::INFINITY,
                 };
             }
             if zmag2 > self.bailout2 {
@@ -275,6 +301,8 @@ impl FractalBackend for JuliaBackend {
                     trap_min,
                     trap_phase,
                     glitched: false,
+                    atom_period: 0, // navigation channel unused for Julia
+                    atom_min: f64::INFINITY,
                 };
             }
         }
@@ -384,6 +412,11 @@ impl FractalBackend for PerturbationBackend {
         let mut glitched = false;
         let mut trap_min = f64::INFINITY;
         let mut trap_phase = 0.0f64;
+        // Atom domain: closest approach of the full value Z[m]+δ to the origin.
+        // `n` is absolute (a rebase realigns `m`, not the iteration count), so
+        // `atom_period` matches the f64 backend exactly.
+        let mut atom_min2 = f64::INFINITY;
+        let mut atom_period = 0u32;
 
         loop {
             // dz_{n+1} = 2·z_n·dz_n + 1 (full value z still holds z_n; a rebase
@@ -415,6 +448,10 @@ impl FractalBackend for PerturbationBackend {
                 trap_min = d;
                 trap_phase = ph;
             }
+            if zmag2 < atom_min2 {
+                atom_min2 = zmag2;
+                atom_period = n;
+            }
 
             if n >= self.maxiter {
                 return PixelSample {
@@ -424,6 +461,8 @@ impl FractalBackend for PerturbationBackend {
                     trap_min,
                     trap_phase,
                     glitched,
+                    atom_period,
+                    atom_min: atom_min2.sqrt(),
                 };
             }
             if zmag2 > bailout2 {
@@ -436,6 +475,8 @@ impl FractalBackend for PerturbationBackend {
                     trap_min,
                     trap_phase,
                     glitched,
+                    atom_period,
+                    atom_min: atom_min2.sqrt(),
                 };
             }
 

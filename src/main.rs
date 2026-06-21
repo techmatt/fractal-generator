@@ -16,6 +16,7 @@ use fractal_generator::backend::{
 };
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
 use fractal_generator::descend;
+use fractal_generator::navigate;
 use fractal_generator::coloring::ColorParams;
 use fractal_generator::hp;
 use fractal_generator::palette::{builtin, Palette};
@@ -316,6 +317,7 @@ fn run() -> Result<(), String> {
     match &cli.command {
         Some(Command::Sheet(args)) => run_sheet(args),
         Some(Command::Descend(args)) => descend::run_descend(args),
+        Some(Command::Navigate(args)) => navigate::run_navigate(args),
         None => run_render(&cli),
     }
 }
