@@ -172,7 +172,7 @@ pub struct Cli {
     pub palette: PaletteSelectArgs,
 
     /// Output PNG path.
-    #[arg(long, default_value = "out.png")]
+    #[arg(long, default_value = "out/renders/out.png")]
     pub output: String,
 }
 
@@ -275,19 +275,19 @@ pub struct WallpaperArgs {
 
     /// Corpus targets (`targets.json`): supplies the busyness band `[lo,hi]` used
     /// for ranking and the color block used to build the `corpus` palette.
-    #[arg(long, default_value = "targets.json")]
+    #[arg(long, default_value = "out/corpus/targets.json")]
     pub targets: String,
 
     /// Descent strip PNG. Per-level panels go in `<stem>_panels/`.
-    #[arg(long, default_value = "wallpaper_strip.png")]
+    #[arg(long, default_value = "out/strips/wallpaper_strip.png")]
     pub strip: String,
 
     /// Output prefix for the 6 wallpapers (`<prefix>_<coloring>_<palette>.png`).
-    #[arg(long, default_value = "wallpaper")]
+    #[arg(long, default_value = "out/wallpaper/wallpaper")]
     pub out_prefix: String,
 
     /// JSON log path.
-    #[arg(long, default_value = "wallpaper.json")]
+    #[arg(long, default_value = "out/wallpaper/wallpaper.json")]
     pub json: String,
 }
 
@@ -332,15 +332,15 @@ pub struct CorpusArgs {
     pub search: Option<String>,
 
     /// Output `targets.json` path (the search consumes this).
-    #[arg(long, default_value = "targets.json")]
+    #[arg(long, default_value = "out/corpus/targets.json")]
     pub targets_out: String,
 
     /// Output per-image features JSON path.
-    #[arg(long, default_value = "corpus_features.json")]
+    #[arg(long, default_value = "out/corpus/corpus_features.json")]
     pub features_out: String,
 
     /// Output rejected-thumbnails contact-sheet PNG (eyeball the ~5% tossed).
-    #[arg(long, default_value = "corpus_rejected.png")]
+    #[arg(long, default_value = "out/corpus/corpus_rejected.png")]
     pub rejected_sheet: String,
 
     /// Longest-edge pixels to downscale each image to before feature extraction.
@@ -494,21 +494,21 @@ pub struct SearchArgs {
     pub backend: BackendChoice,
 
     /// Best-path filmstrip PNG. Per-node panels go in `<stem>_panels/`.
-    #[arg(long, default_value = "search_strip.png")]
+    #[arg(long, default_value = "out/strips/search_strip.png")]
     pub strip: String,
 
     /// Top-N diversity contact-sheet PNG.
-    #[arg(long, default_value = "search_sheet.png")]
+    #[arg(long, default_value = "out/strips/search_sheet.png")]
     pub sheet: String,
 
     /// Node-tree JSON output path.
-    #[arg(long, default_value = "search.json")]
+    #[arg(long, default_value = "out/search/search.json")]
     pub json: String,
 
     /// Corpus-derived structural target bands (`corpus` subcommand output). When
     /// present, its busyness/period bands replace the hand-tuned score constants
     /// (per-band, only where provenance ≠ "default"); absent → current constants.
-    #[arg(long, default_value = "targets.json")]
+    #[arg(long, default_value = "out/corpus/targets.json")]
     pub targets: String,
 }
 
@@ -614,11 +614,11 @@ pub struct NavigateArgs {
     pub backend: BackendChoice,
 
     /// Output filmstrip PNG path. Per-level panels go in `<stem>_panels/`.
-    #[arg(long, default_value = "navigate_strip.png")]
+    #[arg(long, default_value = "out/strips/navigate_strip.png")]
     pub output: String,
 
     /// Output JSON log path.
-    #[arg(long, default_value = "navigate.json")]
+    #[arg(long, default_value = "out/strips/navigate.json")]
     pub json: String,
 }
 
@@ -719,11 +719,11 @@ pub struct DescendArgs {
     pub backend: BackendChoice,
 
     /// Output filmstrip PNG path. Per-level panels go in `<stem>_panels/`.
-    #[arg(long, default_value = "descend_strip.png")]
+    #[arg(long, default_value = "out/strips/descend_strip.png")]
     pub output: String,
 
     /// Output JSON log path.
-    #[arg(long, default_value = "descend.json")]
+    #[arg(long, default_value = "out/strips/descend.json")]
     pub json: String,
 }
 
@@ -795,7 +795,7 @@ pub struct SheetArgs {
     pub palette_reverse: bool,
 
     /// Output PNG path.
-    #[arg(long, default_value = "sheet.png")]
+    #[arg(long, default_value = "out/strips/sheet.png")]
     pub output: String,
 }
 

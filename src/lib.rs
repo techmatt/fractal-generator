@@ -10,6 +10,25 @@
 //!  2. A separable [`coloring`] stage (sample → RGB) so re-coloring never
 //!     re-iterates (palette system, Prompt 4).
 
+use std::path::Path;
+
+/// Ensure the parent directory of an output path exists, creating it if needed.
+///
+/// Generated artifacts default under the gitignored `out/` tree (see the
+/// generated-output convention in `CLAUDE.md`). Its subdirs are gitignored and
+/// absent on a fresh checkout, so a no-flag invocation writing its default path
+/// (e.g. `out/renders/out.png`) must create the dir first. Call this before any
+/// top-level `save`/`fs::write` of an output file.
+pub fn ensure_parent_dir(path: impl AsRef<Path>) -> Result<(), String> {
+    if let Some(parent) = path.as_ref().parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        }
+    }
+    Ok(())
+}
+
 pub mod backend;
 pub mod cli;
 pub mod coloring;

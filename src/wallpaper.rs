@@ -265,6 +265,7 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
 
     // ---- descent strip (single column of mandel panels) ----
     let strip = compose_column(&panels, panel_w, panel_h);
+    crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)
         .map_err(|e| format!("failed to write {}: {e}", strip_path.display()))?;
@@ -317,6 +318,7 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
                 &buf.samples, wp_w, wp_h, ss, pal, &params, spacing,
             );
             let path = format!("{}_{cname}_{pname}.png", args.out_prefix);
+            crate::ensure_parent_dir(&path)?;
             img.save(&path).map_err(|e| format!("failed to write {path}: {e}"))?;
             eprintln!("  wrote {path} ({cname} × {pname})");
             wallpaper_paths.push((cname.to_string(), pname.to_string(), probe::path_str(Path::new(&path))));
@@ -337,6 +339,7 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
         &logs, args, band_lo, band_hi, floor, &deepest_info, wp_w, wp_h,
         &wallpaper_paths, &probe::path_str(strip_path),
     );
+    crate::ensure_parent_dir(&args.json)?;
     fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
     eprintln!("wrote {}", args.json);
 

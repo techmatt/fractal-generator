@@ -210,6 +210,7 @@ fn run_render(cli: &Cli) -> Result<(), String> {
     );
     let shade_secs = t1.elapsed().as_secs_f64();
 
+    fractal_generator::ensure_parent_dir(&cli.output)?;
     img.save(&cli.output)
         .map_err(|e| format!("failed to write {}: {e}", cli.output))?;
     eprintln!(
@@ -298,6 +299,7 @@ fn run_sheet(args: &SheetArgs) -> Result<(), String> {
         sheet::render_contact_sheet(&it.buf, &palettes, &params, it.frame.pixel_size(), args.cols);
     let shade_secs = t1.elapsed().as_secs_f64();
 
+    fractal_generator::ensure_parent_dir(&args.output)?;
     grid.save(&args.output)
         .map_err(|e| format!("failed to write {}: {e}", args.output))?;
 

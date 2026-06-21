@@ -836,11 +836,13 @@ pub fn run_navigate(args: &NavigateArgs) -> Result<(), String> {
     }
 
     let strip = probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h);
+    crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)
         .map_err(|e| format!("failed to write {}: {e}", strip_path.display()))?;
 
     let json = build_json(&logs, &probe::path_str(strip_path));
+    crate::ensure_parent_dir(&args.json)?;
     fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
 
     eprintln!(

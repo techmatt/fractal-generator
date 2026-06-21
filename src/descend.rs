@@ -268,12 +268,14 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
 
     // Compose the filmstrip (one row per level: Mandelbrot | Julia).
     let strip = probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h);
+    crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)
         .map_err(|e| format!("failed to write {}: {e}", strip_path.display()))?;
 
     // JSON log.
     let json = build_json(&logs, args.zoom, &probe::path_str(strip_path));
+    crate::ensure_parent_dir(&args.json)?;
     fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
 
     eprintln!(

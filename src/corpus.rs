@@ -167,6 +167,7 @@ pub fn run_corpus(args: &CorpusArgs) -> Result<(), String> {
             None
         } else {
             let grid = compose_grid(&tiles, None);
+            crate::ensure_parent_dir(&args.rejected_sheet)?;
             grid.save(&args.rejected_sheet)
                 .map_err(|e| format!("failed to write {}: {e}", args.rejected_sheet))?;
             Some(args.rejected_sheet.clone())
@@ -190,10 +191,12 @@ pub fn run_corpus(args: &CorpusArgs) -> Result<(), String> {
     let targets_json = build_targets_json(
         &bands, &agg, args, n_total, n_kept, n_rejected, n_errors, n_labels,
     );
+    crate::ensure_parent_dir(&args.targets_out)?;
     fs::write(&args.targets_out, targets_json)
         .map_err(|e| format!("failed to write {}: {e}", args.targets_out))?;
 
     let features_json = build_features_json(&results, args);
+    crate::ensure_parent_dir(&args.features_out)?;
     fs::write(&args.features_out, features_json)
         .map_err(|e| format!("failed to write {}: {e}", args.features_out))?;
 

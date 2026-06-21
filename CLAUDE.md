@@ -64,6 +64,10 @@ The f64 backend is the **ground truth** for perturbation: shallow renders from b
 
 ## Conventions
 
+> **Generated-output convention.** All generated artifacts — renders, strips, contact sheets, descent/search/corpus/wallpaper JSON, logs, demo fixtures — are written under the single `out/` tree, never the repo root. The root holds only source, config, docs, and committed `assets/`. `out/` is gitignored (except `.gitkeep`), so the entire working corpus wipes with one `rm -r out/*` without touching anything tracked. **New subcommands MUST default their output under `out/<subcommand>/` and MUST NOT write to the repo root.**
+
+The tree is `out/{renders,strips,search,corpus,wallpaper,demos}/`. Use `crate::ensure_parent_dir(path)?` before any top-level `save`/`fs::write` so a no-flag default writes its dir on a fresh checkout.
+
 - Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png only), astro-float. The descend JSON is hand-rolled rather than pulling in serde.
 - Matt is expert (graphics + ML PhD) — be terse and precise; skip basics.
 - Module docs (`//!`) carry the real design rationale; read them before changing a module.

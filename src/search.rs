@@ -629,6 +629,7 @@ pub fn run_search(args: &SearchArgs) -> Result<(), String> {
         budget_hit,
     };
     let json = build_json(&nodes, &best_path, &top_ids, args, &summary, strip_path);
+    crate::ensure_parent_dir(&args.json)?;
     fs::write(&args.json, json).map_err(|e| format!("failed to write {}: {e}", args.json))?;
 
     eprintln!(
@@ -968,6 +969,7 @@ fn write_best_path_strip(
         ));
     }
     let strip = probe::compose_strip(&mandel, &julia, cfg.panel_w, cfg.panel_h);
+    crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)
         .map_err(|e| format!("failed to write {}: {e}", strip_path.display()))
@@ -1045,6 +1047,7 @@ fn write_top_sheet(
         })
         .collect();
     let grid = sheet::compose_grid(&tiles, None);
+    crate::ensure_parent_dir(&args.sheet)?;
     grid.save(&args.sheet)
         .map_err(|e| format!("failed to write {}: {e}", args.sheet))?;
     Ok(())
