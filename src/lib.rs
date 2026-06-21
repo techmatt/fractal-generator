@@ -13,6 +13,7 @@
 pub mod backend;
 pub mod cli;
 pub mod coloring;
+pub mod corpus;
 pub mod descend;
 pub mod font;
 pub mod hp;
@@ -21,4 +22,6 @@ pub mod palette;
 pub mod palette_io;
 pub mod probe;
 pub mod render;
+pub mod search;
 pub mod sheet;
+pub mod wallpaper;

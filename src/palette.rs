@@ -64,6 +64,24 @@ impl Palette {
         Palette::from_oklab_stops(name, oklab, reverse)
     }
 
+    /// Build a cyclic gradient from a set of OKLab colors placed at **evenly
+    /// spaced** positions (`i / n`). The corpus color block (Prompt 9) is a set of
+    /// dominant OKLab cluster centers with no inherent parametric position; the
+    /// caller orders them (e.g. by luminance) and this lays them out uniformly.
+    /// At least two colors are required.
+    pub fn from_oklab_colors(name: impl Into<String>, colors: &[[f64; 3]], reverse: bool) -> Self {
+        let n = colors.len();
+        let stops: Vec<OklabStop> = colors
+            .iter()
+            .enumerate()
+            .map(|(i, &lab)| OklabStop {
+                pos: i as f64 / n as f64,
+                lab,
+            })
+            .collect();
+        Palette::from_oklab_stops(name, stops, reverse)
+    }
+
     /// Build from already-OKLab control points. Stops are sorted by position;
     /// at least two distinct stops are required.
     fn from_oklab_stops(name: impl Into<String>, mut stops: Vec<OklabStop>, reverse: bool) -> Self {

@@ -56,7 +56,26 @@ pub fn render_contact_sheet(
         })
         .collect();
 
-    let n = palettes.len();
+    let grid = compose_grid(&tiles, cols);
+
+    let legend = palettes
+        .iter()
+        .enumerate()
+        .map(|(i, p)| format!("tile {i} → {}", p.name()))
+        .collect();
+    (grid, legend)
+}
+
+/// Compose equal-sized `tiles` into a padded grid (`PAD`-px gutters, `PAD_RGB`
+/// background), `cols` columns (default ≈ √N). Shared by the palette contact
+/// sheet and the `search` top-N diversity sheet — the only difference between
+/// them is how the tiles are produced (one buffer × N palettes vs. N distinct
+/// already-rendered locations), so the grid layout itself lives here once.
+pub fn compose_grid(tiles: &[RgbImage], cols: Option<usize>) -> RgbImage {
+    assert!(!tiles.is_empty(), "compose_grid needs ≥1 tile");
+    let tile_w = tiles[0].width();
+    let tile_h = tiles[0].height();
+    let n = tiles.len();
     let cols = cols.unwrap_or_else(|| (n as f64).sqrt().ceil() as usize).max(1);
     let rows = n.div_ceil(cols);
 
@@ -70,16 +89,12 @@ pub fn render_contact_sheet(
         let x0 = PAD + col * (tile_w + PAD);
         let y0 = PAD + row * (tile_h + PAD);
         for (tx, ty, px) in tile.enumerate_pixels() {
-            grid.put_pixel(x0 + tx, y0 + ty, *px);
+            if x0 + tx < grid_w && y0 + ty < grid_h {
+                grid.put_pixel(x0 + tx, y0 + ty, *px);
+            }
         }
     }
-
-    let legend = palettes
-        .iter()
-        .enumerate()
-        .map(|(i, p)| format!("tile {i} → {}", p.name()))
-        .collect();
-    (grid, legend)
+    grid
 }
 
 /// Burn the palette's gradient (`t∈[0,1)`) across the bottom `SWATCH_H` rows.
