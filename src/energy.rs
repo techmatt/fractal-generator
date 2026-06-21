@@ -46,7 +46,10 @@ use num_complex::Complex;
 use rayon::prelude::*;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::{ArchetypeArgs, BackendChoice, CalibrateArgs, OverbusyArgs, RescoreArgs};
+use crate::cli::{
+    AnchorArgs, ArchetypeArgs, BackendChoice, CalibrateArgs, DedupArgs, MusterArgs, OverbusyArgs,
+    RescoreArgs,
+};
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use crate::hp;
 use crate::palette::{builtin, srgb8_to_oklab, Palette};
@@ -2317,6 +2320,1424 @@ fn write_archetype_json(
         s.push_str(&format!("    }}{}\n", if ki + 1 < per_k.len() { "," } else { "" }));
     }
     s.push_str("  ]\n}\n");
+    crate::ensure_parent_dir(&args.out_json)?;
+    fs::write(&args.out_json, s).map_err(|e| format!("writing {}: {e}", args.out_json))?;
+    Ok(())
+}
+
+// ===========================================================================
+// `anchor` — adversarial anchor: does the corpus *individually* support a bad tile?
+// ===========================================================================
+//
+// Diagnosis-only. Three centroid-based estimators have already failed the 22-tile
+// set; a centroid can be a dense-busy mode without any *individual* real wallpaper
+// sitting where speckle sits. This probe tests the founding axiom directly — "good
+// = resembles some real wallpaper" — at the level of individual members:
+//
+//   Task 0  calibrate the corpus 1-NN distance distribution (how tightly real
+//           wallpapers embed in each other) → the "supported" yardstick.
+//   Task A  each known-answer tile → its nearest *individual* corpus wallpaper
+//           (k=1, top-3 for context) + where that distance falls in Task 0.
+//   Task B  the smallest intrinsic corpus-corpus pairs (no candidate needed).
+//
+// All distances reuse the cached histograms + `distance` unchanged. The ONLY render
+// is a deterministic re-render of the fixed known-answer set (4 controls + 18 buffet
+// DEEP tiles) for the montage images — flagged. Picks no pivot, wires nothing.
+
+/// A known-answer tile resolved for the montage: cached signature + render recipe.
+struct AnchorTile {
+    id: String,
+    cat: Cat,
+    center: Complex<f64>,
+    width: f64,
+    maxiter: u32,
+    sig: Signature,
+}
+
+/// One tile's nearest individual corpus wallpaper(s).
+struct AnchorMatch {
+    id: String,
+    cat: Cat,
+    nearest: usize, // corpus index of the single closest wallpaper
+    nearest_d: f64,
+    top3: Vec<(usize, f64)>,
+    pctile: f64, // fraction of the corpus 1-NN distances ≤ nearest_d
+}
+
+/// Category sort rank for the Task-A sheet (controls → sparse → okay).
+fn cat_rank(c: Cat) -> u8 {
+    match c {
+        Cat::Control => 0,
+        Cat::Sparse => 1,
+        Cat::Okay => 2,
+    }
+}
+
+pub fn run_anchor(args: &AnchorArgs) -> Result<(), String> {
+    let weights = args.resolved_weights()?;
+
+    // ---- load persisted corpus calibration (frozen bins + per-image histograms) ----
+    let text = fs::read_to_string(&args.artifact)
+        .map_err(|e| format!("reading artifact {}: {e}", args.artifact))?;
+    let (_bins, corpus) = parse_artifact(&text)?;
+    let n = corpus.len();
+    if n < 2 {
+        return Err("artifact needs ≥2 corpus images".into());
+    }
+    let root = Path::new(&args.corpus_dir);
+    eprintln!(
+        "anchor: loaded {n} corpus signatures from {} (images under {})",
+        args.artifact, args.corpus_dir
+    );
+
+    let corpus_sigs: Vec<&Signature> = corpus.iter().map(|(_, s)| s).collect();
+    let corpus_path = |i: usize| root.join(&corpus[i].0);
+
+    // ---- Task 0: corpus 1-NN distance distribution (the "supported" yardstick) ----
+    eprintln!("anchor: Task 0 — corpus 1-NN distances ({n}² EMD) ...");
+    let nn: Vec<f64> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let mut best = f64::INFINITY;
+            for j in 0..n {
+                if j != i {
+                    let d = distance(corpus_sigs[i], corpus_sigs[j], &weights);
+                    if d < best {
+                        best = d;
+                    }
+                }
+            }
+            best
+        })
+        .collect();
+    let mut nn_sorted = nn.clone();
+    nn_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let d0 = NnDist {
+        min: nn_sorted[0],
+        p10: pct(&nn_sorted, 0.10),
+        p25: pct(&nn_sorted, 0.25),
+        p50: pct(&nn_sorted, 0.50),
+        p90: pct(&nn_sorted, 0.90),
+        max: nn_sorted[nn_sorted.len() - 1],
+    };
+
+    // ---- known-answer tiles: cached signatures + render recipes ----
+    let buffet_cache = parse_tile_cache(
+        &fs::read_to_string(&args.buffet_hist)
+            .map_err(|e| format!("reading buffet cache {}: {e}", args.buffet_hist))?,
+    )?;
+    let control_cache = parse_tile_cache(
+        &fs::read_to_string(&args.control_hist)
+            .map_err(|e| format!("reading control cache {}: {e}", args.control_hist))?,
+    )?;
+    if buffet_cache.is_empty() || control_cache.is_empty() {
+        return Err("buffet or control histogram cache is empty".into());
+    }
+    // render recipes keyed by id: buffet DEEP centers + the fixed controls.
+    let btext = fs::read_to_string(&args.buffet_json)
+        .map_err(|e| format!("reading buffet json {}: {e}", args.buffet_json))?;
+    let deep = parse_buffet_deep_b(&btext);
+    let mut recipe: HashMap<String, (Complex<f64>, f64, u32)> = HashMap::new();
+    for t in &deep {
+        recipe.insert(t.id.clone(), (t.center, t.width, t.maxiter));
+    }
+    for c in CONTROLS {
+        recipe.insert(c.id.to_string(), (Complex::new(c.re, c.im), c.width, c.maxiter));
+    }
+
+    let mut tiles: Vec<AnchorTile> = Vec::new();
+    for ts in control_cache.iter().chain(buffet_cache.iter()) {
+        let (center, width, maxiter) = *recipe
+            .get(&ts.id)
+            .ok_or_else(|| format!("no render recipe for tile {}", ts.id))?;
+        tiles.push(AnchorTile {
+            id: ts.id.clone(),
+            cat: Cat::of_loc(&ts.loc),
+            center,
+            width,
+            maxiter,
+            sig: ts.sig.clone(),
+        });
+    }
+    tiles.sort_by(|a, b| cat_rank(a.cat).cmp(&cat_rank(b.cat)).then(a.id.cmp(&b.id)));
+
+    // ---- Task A: each tile → nearest individual corpus wallpaper (k=1, top-3) ----
+    let mut matches: Vec<AnchorMatch> = Vec::with_capacity(tiles.len());
+    for t in &tiles {
+        let mut ds: Vec<(usize, f64)> = (0..n)
+            .map(|j| (j, distance(&t.sig, corpus_sigs[j], &weights)))
+            .collect();
+        ds.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let top3: Vec<(usize, f64)> = ds.iter().take(3).copied().collect();
+        let (nearest, nearest_d) = ds[0];
+        let pctile = nn_sorted.partition_point(|&x| x <= nearest_d) as f64 / n as f64;
+        matches.push(AnchorMatch {
+            id: t.id.clone(),
+            cat: t.cat,
+            nearest,
+            nearest_d,
+            top3,
+            pctile,
+        });
+    }
+
+    // ---- Task B: smallest intrinsic corpus-corpus pairs ----
+    eprintln!("anchor: Task B — smallest corpus-corpus pairs ...");
+    let mut pairs: Vec<(f64, usize, usize)> = (0..n)
+        .into_par_iter()
+        .flat_map_iter(|i| {
+            let mut row = Vec::new();
+            for j in (i + 1)..n {
+                row.push((distance(corpus_sigs[i], corpus_sigs[j], &weights), i, j));
+            }
+            row.into_iter()
+        })
+        .collect();
+    pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let top_pairs: Vec<(f64, usize, usize)> =
+        pairs.iter().take(args.top_pairs.max(1)).copied().collect();
+
+    // ---- render the montage images (the ONLY render; fixed known-answer set) ----
+    eprintln!(
+        "anchor: RE-RENDERING {} fixed known-answer tiles ({} controls + {} buffet DEEP) \
+         at {}px ss{} for the montage (flagged; EMD itself uses cached histograms) ...",
+        tiles.len(),
+        control_cache.len(),
+        buffet_cache.len(),
+        args.candidate_width,
+        args.supersample,
+    );
+    let palette = builtin("default", false).expect("default palette");
+    let params = default_color_params();
+    let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
+
+    // Task-A sheet: [rendered tile | nearest individual corpus wallpaper], grouped.
+    let mut row_a: Vec<RgbImage> = Vec::with_capacity(tiles.len() * 2);
+    for (t, m) in tiles.iter().zip(&matches) {
+        let cand = render_candidate(
+            t.center,
+            t.width,
+            t.maxiter,
+            args.candidate_width,
+            args.supersample,
+            trap,
+            &palette,
+            &params,
+        );
+        let mut ct = fit_to(&cand, args.thumb_width);
+        let mut nt = thumb(&corpus_path(m.nearest), args.thumb_width)?;
+        label(&mut ct, &format!("{} {} d{:.2}", t.id, t.cat.tag(), m.nearest_d));
+        label(&mut nt, &format!("p{:.0}% {}", m.pctile * 100.0, short(&corpus[m.nearest].0)));
+        row_a.push(ct);
+        row_a.push(nt);
+    }
+    crate::ensure_parent_dir(&args.out_sheet_a)?;
+    compose_grid(&row_a, Some(2))
+        .save(&args.out_sheet_a)
+        .map_err(|e| format!("writing {}: {e}", args.out_sheet_a))?;
+
+    // Task-B sheet: [corpus a | corpus b] per smallest pair.
+    let mut row_b: Vec<RgbImage> = Vec::with_capacity(top_pairs.len() * 2);
+    for &(d, i, j) in &top_pairs {
+        let mut ta = thumb(&corpus_path(i), args.thumb_width)?;
+        let mut tb = thumb(&corpus_path(j), args.thumb_width)?;
+        label(&mut ta, short(&corpus[i].0));
+        label(&mut tb, &format!("d{d:.3} {}", short(&corpus[j].0)));
+        row_b.push(ta);
+        row_b.push(tb);
+    }
+    crate::ensure_parent_dir(&args.out_sheet_b)?;
+    if !row_b.is_empty() {
+        compose_grid(&row_b, Some(2))
+            .save(&args.out_sheet_b)
+            .map_err(|e| format!("writing {}: {e}", args.out_sheet_b))?;
+    }
+
+    anchor_report(&d0, &matches, &corpus, &top_pairs, n);
+    write_anchor_json(args, &d0, &matches, &corpus, &top_pairs)?;
+    Ok(())
+}
+
+/// The corpus 1-NN distance distribution (the "supported" yardstick).
+struct NnDist {
+    min: f64,
+    p10: f64,
+    p25: f64,
+    p50: f64,
+    p90: f64,
+    max: f64,
+}
+
+/// Bucket a tile's nearest-distance against the corpus 1-NN distribution.
+fn supported_label(d0: &NnDist, v: f64) -> &'static str {
+    if v < d0.min {
+        "below corpus min → tighter than any real pair"
+    } else if v <= d0.p25 {
+        "<= corpus p25 → tightly supported"
+    } else if v <= d0.p50 {
+        "<= corpus p50 → supported"
+    } else if v <= d0.p90 {
+        "p50-p90 → loosely supported"
+    } else if v <= d0.max {
+        "p90-max → marginal (corpus tail)"
+    } else {
+        "above corpus max → outlier (descriptor separates it)"
+    }
+}
+
+fn anchor_report(
+    d0: &NnDist,
+    matches: &[AnchorMatch],
+    corpus: &[(String, Signature)],
+    top_pairs: &[(f64, usize, usize)],
+    n: usize,
+) {
+    println!("\n=== anchor: adversarial individual-member support ({n} corpus images) ===");
+    println!("\n  Task 0 — corpus 1-NN distance distribution (real wallpaper-to-wallpaper similarity):");
+    println!(
+        "    min={:.4}  p10={:.4}  p25={:.4}  p50={:.4}  p90={:.4}  max={:.4}",
+        d0.min, d0.p10, d0.p25, d0.p50, d0.p90, d0.max
+    );
+
+    println!("\n  Task A — each known-answer tile → nearest INDIVIDUAL corpus wallpaper:");
+    println!(
+        "    {:<14} {:<8} {:>8} {:>7}  {:<22} {}",
+        "tile", "cat", "near_d", "pctile", "nearest wallpaper", "support"
+    );
+    for m in matches {
+        println!(
+            "    {:<14} {:<8} {:>8.4} {:>6.1}%  {:<22} {}",
+            m.id,
+            m.cat.tag(),
+            m.nearest_d,
+            m.pctile * 100.0,
+            short(&corpus[m.nearest].0),
+            supported_label(d0, m.nearest_d),
+        );
+    }
+
+    println!("\n  focus — controls + sparse (the adversarial cases):");
+    println!("    {:<14} {:<8} {:>8} {:>7}", "tile", "cat", "near_d", "pctile");
+    for m in matches.iter().filter(|m| m.cat != Cat::Okay) {
+        println!(
+            "    {:<14} {:<8} {:>8.4} {:>6.1}%",
+            m.id,
+            m.cat.tag(),
+            m.nearest_d,
+            m.pctile * 100.0
+        );
+    }
+
+    println!("\n  Task B — smallest intrinsic corpus-corpus pairs (top {}):", top_pairs.len());
+    println!("    {:>8}  {:<24} {:<24}", "dist", "image a", "image b");
+    for &(d, i, j) in top_pairs {
+        println!("    {:>8.4}  {:<24} {:<24}", d, short(&corpus[i].0), short(&corpus[j].0));
+    }
+
+    println!("\n  reminder: the eye sorts each rendered pair into collision (bad tile / good twin,");
+    println!("  distance in corpus-self range — falsifies the axiom) vs corpus-hygiene (twin also");
+    println!("  junk — descriptor fine) vs working. Distances alone do not decide; Matt judges the pairs.");
+}
+
+fn write_anchor_json(
+    args: &AnchorArgs,
+    d0: &NnDist,
+    matches: &[AnchorMatch],
+    corpus: &[(String, Signature)],
+    top_pairs: &[(f64, usize, usize)],
+) -> Result<(), String> {
+    let mut s = String::from("{\n");
+    s.push_str(&format!(
+        "  \"corpus_1nn_distribution\": {{ \"n\": {}, \"min\": {}, \"p10\": {}, \"p25\": {}, \
+\"p50\": {}, \"p90\": {}, \"max\": {} }},\n",
+        corpus.len(),
+        jf(d0.min),
+        jf(d0.p10),
+        jf(d0.p25),
+        jf(d0.p50),
+        jf(d0.p90),
+        jf(d0.max),
+    ));
+    s.push_str("  \"tiles\": [\n");
+    for (k, m) in matches.iter().enumerate() {
+        let top3: Vec<String> = m
+            .top3
+            .iter()
+            .map(|&(idx, d)| format!("{{ \"name\": {}, \"dist\": {} }}", js(&corpus[idx].0), jf(d)))
+            .collect();
+        s.push_str(&format!(
+            "    {{ \"id\": {}, \"cat\": {}, \"nearest\": {}, \"nearest_dist\": {}, \
+\"percentile_in_corpus_1nn\": {}, \"top3\": [{}] }}{}\n",
+            js(&m.id),
+            js(m.cat.tag()),
+            js(&corpus[m.nearest].0),
+            jf(m.nearest_d),
+            jf(m.pctile),
+            top3.join(", "),
+            if k + 1 < matches.len() { "," } else { "" },
+        ));
+    }
+    s.push_str("  ],\n");
+    s.push_str("  \"corpus_collisions\": [\n");
+    for (k, &(d, i, j)) in top_pairs.iter().enumerate() {
+        s.push_str(&format!(
+            "    {{ \"dist\": {}, \"a\": {}, \"b\": {} }}{}\n",
+            jf(d),
+            js(&corpus[i].0),
+            js(&corpus[j].0),
+            if k + 1 < top_pairs.len() { "," } else { "" },
+        ));
+    }
+    s.push_str("  ]\n}\n");
+    crate::ensure_parent_dir(&args.out_json)?;
+    fs::write(&args.out_json, s).map_err(|e| format!("writing {}: {e}", args.out_json))?;
+    Ok(())
+}
+
+// ===========================================================================
+// `dedup` — trivial corpus dedup (near-pixel-identical only). Diagnosis-only.
+// ===========================================================================
+//
+// Descriptor-near (cached-histogram EMD < epsilon) is the cheap *finder*; the
+// verdict is a direct 16×16 gray pixel diff on the corpus PNGs. Confirmed pairs
+// are unioned into duplicate groups (keep the lexically-first member); the rest
+// are emitted as a drop-list filtered at use-time — the artifact is NOT mutated.
+// Reuses `distance`/`parse_artifact`/`Signature`/`NnDist`/`pct` unchanged.
+
+/// Corpus 1-NN distance distribution over an *active* index subset (each active
+/// image's nearest other active image by summed EMD). `active.len()` must be ≥ 2.
+fn nn_distribution(sigs: &[&Signature], active: &[usize], weights: &[f64; 4]) -> NnDist {
+    let mut nn: Vec<f64> = active
+        .par_iter()
+        .map(|&i| {
+            let mut best = f64::INFINITY;
+            for &j in active {
+                if j != i {
+                    let d = distance(sigs[i], sigs[j], weights);
+                    if d < best {
+                        best = d;
+                    }
+                }
+            }
+            best
+        })
+        .collect();
+    nn.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    NnDist {
+        min: nn[0],
+        p10: pct(&nn, 0.10),
+        p25: pct(&nn, 0.25),
+        p50: pct(&nn, 0.50),
+        p90: pct(&nn, 0.90),
+        max: nn[nn.len() - 1],
+    }
+}
+
+/// Decode a corpus image, center-crop 16:9, resize to `side`×`side`, return its
+/// Rec.601 luma values (0..255) row-major. The pixel-identity confirmation map.
+fn gray_thumb(path: &Path, side: u32) -> Result<Vec<f64>, String> {
+    let img = image::open(path)
+        .map_err(|e| format!("decode {}: {e}", path.display()))?
+        .to_rgb8();
+    let cropped = center_crop_16x9(&img);
+    let small = image::imageops::resize(&cropped, side, side, FilterType::Triangle);
+    Ok(small
+        .pixels()
+        .map(|p| 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64)
+        .collect())
+}
+
+/// Mean absolute difference between two equal-length gray thumbnails (0..255).
+fn gray_mad(a: &[f64], b: &[f64]) -> f64 {
+    debug_assert_eq!(a.len(), b.len());
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>() / a.len().max(1) as f64
+}
+
+/// Union-find root with path compression (iterative).
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+pub fn run_dedup(args: &DedupArgs) -> Result<(), String> {
+    let weights = args.resolved_weights()?;
+
+    // ---- load persisted corpus calibration (frozen bins + per-image histograms) ----
+    let text = fs::read_to_string(&args.artifact)
+        .map_err(|e| format!("reading artifact {}: {e}", args.artifact))?;
+    let (_bins, corpus) = parse_artifact(&text)?;
+    let n = corpus.len();
+    if n < 2 {
+        return Err("artifact needs ≥2 corpus images".into());
+    }
+    let root = Path::new(&args.corpus_dir);
+    let sigs: Vec<&Signature> = corpus.iter().map(|(_, s)| s).collect();
+    let cpath = |i: usize| root.join(&corpus[i].0);
+    eprintln!(
+        "dedup: loaded {n} corpus signatures from {} (PNG root {})",
+        args.artifact, args.corpus_dir
+    );
+
+    // ---- before-drop corpus 1-NN distribution (band reference yardstick) ----
+    let all: Vec<usize> = (0..n).collect();
+    eprintln!("dedup: corpus 1-NN distribution before drop ({n}² EMD) ...");
+    let d_before = nn_distribution(&sigs, &all, &weights);
+
+    // ---- Task 1: candidate pairs by descriptor (EMD ≤ epsilon) ----
+    let mut candidates: Vec<(f64, usize, usize)> = (0..n)
+        .into_par_iter()
+        .flat_map_iter(|i| {
+            let mut row = Vec::new();
+            for j in (i + 1)..n {
+                let d = distance(sigs[i], sigs[j], &weights);
+                if d <= args.epsilon {
+                    row.push((d, i, j));
+                }
+            }
+            row.into_iter()
+        })
+        .collect();
+    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // threshold counts so the cutoff is visible, not blind.
+    let thresholds = [0.0, 0.02, 0.05, 0.13];
+    let counts: Vec<(f64, usize)> = thresholds
+        .iter()
+        .map(|&t| (t, candidates.iter().filter(|c| c.0 <= t).count()))
+        .collect();
+
+    // ---- Task 2: confirm near-pixel-identity (gray thumbnail diff) ----
+    // load each candidate image's gray thumbnail once (parallel).
+    let mut uniq: Vec<usize> = candidates.iter().flat_map(|&(_, i, j)| [i, j]).collect();
+    uniq.sort_unstable();
+    uniq.dedup();
+    eprintln!(
+        "dedup: {} candidate pair(s) ≤ {:.3}; loading {} unique gray thumbnail(s) ...",
+        candidates.len(),
+        args.epsilon,
+        uniq.len()
+    );
+    let thumbs: HashMap<usize, Vec<f64>> = uniq
+        .par_iter()
+        .filter_map(|&i| match gray_thumb(&cpath(i), args.thumb_side) {
+            Ok(t) => Some((i, t)),
+            Err(e) => {
+                eprintln!("  warning: {e} — pairs involving it can't be confirmed");
+                None
+            }
+        })
+        .collect();
+
+    // confirmed (pixel-near) and rejected (descriptor-near but pixel-far).
+    let mut confirmed: Vec<(f64, f64, usize, usize)> = Vec::new(); // (emd, mad, i, j)
+    let mut rejected: Vec<(f64, f64, usize, usize)> = Vec::new();
+    for &(emd, i, j) in &candidates {
+        let (Some(ti), Some(tj)) = (thumbs.get(&i), thumbs.get(&j)) else {
+            continue; // a thumbnail failed to load — leave the pair undecided
+        };
+        let mad = gray_mad(ti, tj);
+        if mad <= args.pixel_threshold {
+            confirmed.push((emd, mad, i, j));
+        } else {
+            rejected.push((emd, mad, i, j));
+        }
+    }
+
+    // ---- Task 3: union confirmed pairs → groups, keep lexically-first ----
+    let mut parent: Vec<usize> = (0..n).collect();
+    for &(_, _, i, j) in &confirmed {
+        let (ri, rj) = (uf_find(&mut parent, i), uf_find(&mut parent, j));
+        if ri != rj {
+            parent[ri.max(rj)] = ri.min(rj); // attach to lower index (name-sorted)
+        }
+    }
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &(_, _, i, j) in &confirmed {
+        for x in [i, j] {
+            let r = uf_find(&mut parent, x);
+            let v = groups.entry(r).or_default();
+            if !v.contains(&x) {
+                v.push(x);
+            }
+        }
+    }
+
+    // build drop-list: keep the lexically-first member of each group, drop the rest.
+    struct DropEntry {
+        dropped: usize,
+        kept: usize,
+        mad_to_kept: f64,
+    }
+    let mut group_list: Vec<(usize, Vec<usize>)> = groups.into_iter().collect();
+    group_list.sort_by_key(|(_, m)| corpus[*m.iter().min().unwrap()].0.clone());
+    let mut drops: Vec<DropEntry> = Vec::new();
+    for (_, members) in group_list.iter() {
+        let mut members = members.clone();
+        members.sort_by(|&a, &b| corpus[a].0.cmp(&corpus[b].0));
+        let kept = members[0];
+        for &d in &members[1..] {
+            // pixel distance of the dropped image to its kept representative.
+            let mad = match (thumbs.get(&d), thumbs.get(&kept)) {
+                (Some(a), Some(b)) => gray_mad(a, b),
+                _ => f64::NAN,
+            };
+            drops.push(DropEntry { dropped: d, kept, mad_to_kept: mad });
+        }
+    }
+    drops.sort_by(|a, b| corpus[a.dropped].0.cmp(&corpus[b.dropped].0));
+    let dropped_set: std::collections::HashSet<usize> =
+        drops.iter().map(|d| d.dropped).collect();
+
+    // ---- after-drop corpus 1-NN distribution (over the kept set) ----
+    let kept_idx: Vec<usize> = (0..n).filter(|i| !dropped_set.contains(i)).collect();
+    eprintln!("dedup: corpus 1-NN distribution after drop ({} kept) ...", kept_idx.len());
+    let d_after = nn_distribution(&sigs, &kept_idx, &weights);
+
+    // ---- report ----
+    println!("\n=== dedup: trivial near-pixel-identical corpus dedup ({n} corpus images) ===");
+    println!(
+        "  weights {:?}; candidate epsilon {:.3}; pixel-confirm MAD ≤ {:.2} on {side}×{side} gray",
+        weights,
+        args.epsilon,
+        args.pixel_threshold,
+        side = args.thumb_side,
+    );
+    println!("\n  Task 1 — descriptor-near candidate pairs (cumulative counts by EMD cutoff):");
+    for (t, c) in &counts {
+        println!("    EMD ≤ {t:.3}  →  {c:>5} pair(s)");
+    }
+    println!(
+        "    EMD ≤ {:.3}  →  {:>5} pair(s)   (the candidate set fed to the pixel check)",
+        args.epsilon,
+        candidates.len()
+    );
+
+    println!(
+        "\n  Task 2 — pixel confirmation: {} confirmed dup pair(s), {} rejected (distinct, similar energy)",
+        confirmed.len(),
+        rejected.len()
+    );
+
+    println!(
+        "\n  Task 3 — confirmed duplicate groups ({} group(s), {} image(s) dropped):",
+        group_list.len(),
+        drops.len()
+    );
+    if drops.is_empty() {
+        println!("    (none)");
+    } else {
+        let mut by_kept: std::collections::BTreeMap<usize, Vec<&DropEntry>> = Default::default();
+        for d in &drops {
+            by_kept.entry(d.kept).or_default().push(d);
+        }
+        for (kept, ds) in &by_kept {
+            println!("    KEEP {}", short(&corpus[*kept].0));
+            for d in ds {
+                println!(
+                    "      drop {:<24} (pixel MAD {:.2} to kept)",
+                    short(&corpus[d.dropped].0),
+                    d.mad_to_kept
+                );
+            }
+        }
+    }
+
+    if !rejected.is_empty() {
+        println!(
+            "\n  descriptor signal — pairs the pixel check REJECTED (descriptor-near, pixel-distinct):"
+        );
+        println!("    {:>8} {:>8}  {:<24} {}", "EMD", "MAD", "image a", "image b");
+        for &(emd, mad, i, j) in rejected.iter().take(15) {
+            println!(
+                "    {emd:>8.4} {mad:>8.2}  {:<24} {}",
+                short(&corpus[i].0),
+                short(&corpus[j].0)
+            );
+        }
+        if rejected.len() > 15 {
+            println!("    … {} more", rejected.len() - 15);
+        }
+        println!(
+            "    → {} descriptor-near pair(s) are genuinely distinct images the energy descriptor",
+            rejected.len()
+        );
+        println!("      conflates; they are NOT duplicates and are kept.");
+    }
+
+    println!("\n  corpus 1-NN distribution — before vs after drop (the band-reference effect):");
+    println!(
+        "    {:<7} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "", "min", "p10", "p25", "p50", "p90", "max"
+    );
+    println!(
+        "    {:<7} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4}",
+        "before", d_before.min, d_before.p10, d_before.p25, d_before.p50, d_before.p90, d_before.max
+    );
+    println!(
+        "    {:<7} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4}",
+        "after", d_after.min, d_after.p10, d_after.p25, d_after.p50, d_after.p90, d_after.max
+    );
+
+    // ---- write drop-list (artifact untouched; filtered at use-time) ----
+    let mut s = String::from("{\n");
+    s.push_str(&format!(
+        "  \"params\": {{ \"epsilon\": {}, \"pixel_threshold\": {}, \"thumb_side\": {}, \"weights\": [{}] }},\n",
+        jf(args.epsilon),
+        jf(args.pixel_threshold),
+        args.thumb_side,
+        weights.iter().map(|w| jf(*w)).collect::<Vec<_>>().join(", ")
+    ));
+    s.push_str(&format!(
+        "  \"n_corpus\": {n}, \"n_groups\": {}, \"n_dropped\": {},\n",
+        group_list.len(),
+        drops.len()
+    ));
+    let cand_counts: Vec<String> = counts
+        .iter()
+        .map(|(t, c)| format!("{{ \"emd_le\": {}, \"pairs\": {} }}", jf(*t), c))
+        .collect();
+    s.push_str(&format!("  \"candidate_counts\": [{}],\n", cand_counts.join(", ")));
+    s.push_str(&format!(
+        "  \"corpus_1nn_before\": {{ \"min\": {}, \"p10\": {}, \"p25\": {}, \"p50\": {}, \"p90\": {}, \"max\": {} }},\n",
+        jf(d_before.min), jf(d_before.p10), jf(d_before.p25), jf(d_before.p50), jf(d_before.p90), jf(d_before.max)
+    ));
+    s.push_str(&format!(
+        "  \"corpus_1nn_after\": {{ \"n_kept\": {}, \"min\": {}, \"p10\": {}, \"p25\": {}, \"p50\": {}, \"p90\": {}, \"max\": {} }},\n",
+        kept_idx.len(),
+        jf(d_after.min), jf(d_after.p10), jf(d_after.p25), jf(d_after.p50), jf(d_after.p90), jf(d_after.max)
+    ));
+
+    // groups (kept ↔ dropped, with the confirming pixel distance per dropped).
+    let mut by_kept: std::collections::BTreeMap<usize, Vec<&DropEntry>> = Default::default();
+    for d in &drops {
+        by_kept.entry(d.kept).or_default().push(d);
+    }
+    s.push_str("  \"groups\": [\n");
+    let gkeys: Vec<usize> = by_kept.keys().copied().collect();
+    for (gi, kept) in gkeys.iter().enumerate() {
+        let ds = &by_kept[kept];
+        let members: Vec<String> = ds
+            .iter()
+            .map(|d| format!("{{ \"name\": {}, \"pixel_mad\": {} }}", js(&corpus[d.dropped].0), jf(d.mad_to_kept)))
+            .collect();
+        s.push_str(&format!(
+            "    {{ \"keep\": {}, \"drop\": [{}] }}{}\n",
+            js(&corpus[*kept].0),
+            members.join(", "),
+            if gi + 1 < gkeys.len() { "," } else { "" }
+        ));
+    }
+    s.push_str("  ],\n");
+
+    // flat drop-list (the thing downstream filters at use-time, like the C4 quarantine).
+    let flat: Vec<String> = drops.iter().map(|d| js(&corpus[d.dropped].0)).collect();
+    s.push_str(&format!("  \"dropped\": [{}],\n", flat.join(", ")));
+
+    // rejected descriptor-near pairs (a note about the descriptor, not a drop).
+    let rej: Vec<String> = rejected
+        .iter()
+        .map(|&(emd, mad, i, j)| {
+            format!(
+                "{{ \"a\": {}, \"b\": {}, \"emd\": {}, \"pixel_mad\": {} }}",
+                js(&corpus[i].0),
+                js(&corpus[j].0),
+                jf(emd),
+                jf(mad)
+            )
+        })
+        .collect();
+    s.push_str(&format!("  \"descriptor_near_but_distinct\": [{}]\n", rej.join(", ")));
+    s.push_str("}\n");
+
+    crate::ensure_parent_dir(&args.out_json)?;
+    fs::write(&args.out_json, s).map_err(|e| format!("writing {}: {e}", args.out_json))?;
+    println!("\nwrote:");
+    println!("  {} (drop-list; artifact left intact)", args.out_json);
+    Ok(())
+}
+
+// ===========================================================================
+// `muster` — palette-sweep marginal-density muster (Prompt palette-muster)
+// ===========================================================================
+//
+// Diagnosis-only. Does a corpus-marginal busyness band filter the 22-tile
+// known-answer set? Each fixed tile's iteration data is rendered ONCE; the
+// separable coloring stage then recolors it across a legit palette sweep (+ two
+// degenerate negative controls) with NO re-iteration. A two-sided busyness scalar
+// — mean fine (s16) per-area OKLab edge energy, recovered from the frozen-bin
+// histogram so it is the same pixel-space function on corpus and recolor — is
+// placed as a percentile in the corpus marginal. An accept band [p_lo,p_hi] is
+// swept; we report okay-recall / speckle-leak / sparse-rejection. MARGINAL
+// CONTROL ONLY: the scalar measures *how busy*, never *which busy* (the dedup
+// result proved the descriptor collides on distinct busy textures). Picks no
+// band, builds no loop. Reuses parse_artifact/region_energies/FrozenBins/the
+// palette + recolor path; renders only the 22 fixed tiles' iteration data once.
+
+/// A palette in the muster sweep: a baked gradient + its coloring params.
+struct MusterPalette {
+    name: String,
+    /// false = degenerate negative control (random / flat), excluded from recall/leak.
+    legit: bool,
+    palette: Palette,
+    params: ColorParams,
+}
+
+/// A fixed known-answer tile: render recipe + category.
+struct MusterTile {
+    id: String,
+    cat: Cat,
+    center: Complex<f64>,
+    width: f64,
+    maxiter: u32,
+}
+
+/// One recolor's busyness measurement against the corpus marginal.
+#[derive(Clone, Copy)]
+struct Recolor {
+    busy: f64,
+    pctile: f64, // fraction of the corpus with B ≤ busy (= CDF position)
+}
+
+/// Per-bin midpoints for a scale's frozen quantile edges (NBINS values). The top
+/// bin's midpoint uses the corpus-max upper edge, so it is finite and bounded.
+fn bin_mids(edges: &[f64]) -> Vec<f64> {
+    (0..NBINS).map(|b| 0.5 * (edges[b] + edges[b + 1])).collect()
+}
+
+/// Busyness scalar B(sig) = mean fine (s16) per-area OKLab edge energy, recovered
+/// from the binned histogram via frozen-bin midpoints: Σ_b hist_s16[b]·mid[b].
+/// Two-sided magnitude (NOT a saturating fraction like `d = 1 − s16-bin0`);
+/// identical pixel-space function on a corpus image and on a recolored tile.
+fn busyness(sig: &Signature, mids: &[f64]) -> f64 {
+    sig.hist[0].iter().zip(mids).map(|(h, m)| h * m).sum()
+}
+
+/// Fraction of a sorted slice ≤ v (the CDF position = corpus percentile of v).
+fn cdf_pos(sorted: &[f64], v: f64) -> f64 {
+    sorted.partition_point(|&x| x <= v) as f64 / sorted.len().max(1) as f64
+}
+
+/// Compact tile label: "B1_ON_DEEP" → "B1ON", "OB_A1" → "OBA1".
+fn short_id(id: &str) -> String {
+    id.split('_').take(2).collect::<Vec<_>>().concat()
+}
+
+/// Per-LUT-entry random palette: `LUT_SIZE` random sRGB8 colors at evenly spaced
+/// positions → `from_oklab_colors` reproduces each per entry (palette-space
+/// speckle). Reuses the existing public palette path; no new constructor.
+fn random_palette(seed: u64) -> Palette {
+    let mut rng = SplitMix64(seed);
+    let colors: Vec<[f64; 3]> = (0..crate::palette::LUT_SIZE)
+        .map(|_| {
+            srgb8_to_oklab([
+                (rng.unit() * 256.0) as u8,
+                (rng.unit() * 256.0) as u8,
+                (rng.unit() * 256.0) as u8,
+            ])
+        })
+        .collect();
+    Palette::from_oklab_colors("random", &colors, false)
+}
+
+/// The legit density sweep (low→high color-cycle frequency, a couple corpus-valid
+/// hue families) + two degenerate negative controls (random → busy end, flat →
+/// sparse end). Density is the primary busyness lever; hue varies for breadth.
+fn muster_palettes(seed: u64) -> Vec<MusterPalette> {
+    let legit = |name: &str, pal: Palette, density: f64| MusterPalette {
+        name: name.into(),
+        legit: true,
+        palette: pal,
+        params: ColorParams { density, ..default_color_params() },
+    };
+    // corpus-valid hue gradients (blue/purple darks, amber accents).
+    let blue = Palette::from_srgb8_stops(
+        "blue",
+        &[(0.0, [4, 7, 34]), (0.34, [28, 78, 170]), (0.60, [200, 222, 255]), (0.82, [8, 12, 46])],
+        false,
+    );
+    let amber = Palette::from_srgb8_stops(
+        "amber",
+        &[(0.0, [8, 5, 2]), (0.30, [120, 66, 10]), (0.55, [255, 198, 92]), (0.80, [36, 18, 5])],
+        false,
+    );
+    vec![
+        legit("blue.lo", blue, 0.012),
+        legit("uf.lo", builtin("default", false).unwrap(), 0.018),
+        legit("uf.mid", builtin("default", false).unwrap(), 0.028),
+        legit("helix.mid", builtin("cubehelix", false).unwrap(), 0.040),
+        legit("amber.hi", amber, 0.055),
+        legit("viridis.hi", builtin("viridis", false).unwrap(), 0.075),
+        // degenerate negative controls (NOT part of the legit sweep):
+        MusterPalette {
+            name: "RAND".into(),
+            legit: false,
+            palette: random_palette(seed),
+            // high density so the channel sweeps many random LUT cells → speckle.
+            params: ColorParams { density: 0.080, ..default_color_params() },
+        },
+        MusterPalette {
+            name: "FLAT".into(),
+            legit: false,
+            palette: Palette::from_srgb8_stops(
+                "flat",
+                &[(0.0, [44, 44, 66]), (0.5, [48, 46, 70])],
+                false,
+            ),
+            params: ColorParams { density: 0.028, ..default_color_params() },
+        },
+    ]
+}
+
+/// Iterate one tile ONCE (f64 cheap regime); the panel's samples feed every
+/// recolor without re-iterating (the project's separability seam).
+fn iterate_tile_once(
+    center: Complex<f64>,
+    width: f64,
+    maxiter: u32,
+    w: u32,
+    ss: u32,
+    trap: Trap,
+) -> probe::MandelPanel {
+    let h = (w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
+    let prec = hp::prec_bits(w, width);
+    let cre = BigFloat::from_f64(center.re, prec);
+    let cim = BigFloat::from_f64(center.im, prec);
+    probe::render_mandel_panel(
+        &cre, &cim, center, width, w, h, ss, maxiter, 1e6, prec, trap, BackendChoice::F64,
+    )
+}
+
+/// Corpus busyness-marginal distribution + the non-saturation check.
+struct ScalarDist {
+    min: f64,
+    p10: f64,
+    p25: f64,
+    p50: f64,
+    p75: f64,
+    p90: f64,
+    p95: f64,
+    max: f64,
+    floor: f64,       // smallest attainable B (s16 bin0 midpoint)
+    ceil: f64,        // largest attainable B (s16 top-bin midpoint)
+    bot_pileup: f64,  // fraction within 2% of the floor
+    top_pileup: f64,  // fraction within 2% of the ceil
+    saturated: bool,  // piles at a ceiling like `d` did → do NOT band on it
+}
+
+impl ScalarDist {
+    fn of(sorted: &[f64], mids: &[f64]) -> ScalarDist {
+        let floor = mids[0];
+        let ceil = mids[NBINS - 1];
+        let span = (ceil - floor).max(1e-12);
+        let near = |target: f64| {
+            sorted.iter().filter(|&&x| (x - target).abs() <= 0.02 * span).count() as f64
+                / sorted.len().max(1) as f64
+        };
+        let (min, max) = (sorted[0], sorted[sorted.len() - 1]);
+        let p90 = pct(sorted, 0.90);
+        let p95 = pct(sorted, 0.95);
+        // Saturation = the busy half collapses onto one ceiling value (what killed
+        // `d`): big top pileup, or no resolvable spread between p90 and max.
+        let top_pileup = near(ceil.min(max));
+        let saturated = top_pileup > 0.05 || (max - p90) < 0.02 * (max - min).max(1e-12);
+        ScalarDist {
+            min,
+            p10: pct(sorted, 0.10),
+            p25: pct(sorted, 0.25),
+            p50: pct(sorted, 0.50),
+            p75: pct(sorted, 0.75),
+            p90,
+            p95,
+            max,
+            floor,
+            ceil,
+            bot_pileup: near(floor.max(min)),
+            top_pileup,
+            saturated,
+        }
+    }
+}
+
+/// One band-sweep row: percentile band → recall/leak/rejection over the tiles.
+struct BandRow {
+    lo: f64,
+    hi: f64,
+    okay_recall: f64,
+    speckle_leak: f64,
+    sparse_reject: f64,
+    okay_pass: usize,
+    n_okay: usize,
+    ctrl_pass: usize,
+    n_ctrl: usize,
+    sparse_reject_n: usize,
+    n_sparse: usize,
+}
+
+pub fn run_muster(args: &MusterArgs) -> Result<(), String> {
+    // ---- load persisted corpus calibration (frozen bins + per-image histograms) ----
+    let text = fs::read_to_string(&args.artifact)
+        .map_err(|e| format!("reading artifact {}: {e}", args.artifact))?;
+    let (bins, corpus) = parse_artifact(&text)?;
+    let n = corpus.len();
+    if n == 0 {
+        return Err("artifact has no per-image histograms".into());
+    }
+    let mids = bin_mids(&bins.edges[0]);
+    eprintln!("muster: loaded {n} corpus signatures + frozen bins from {}", args.artifact);
+
+    // ---- Task 1: busyness scalar over the corpus marginal + non-saturation check ----
+    let mut corpus_b: Vec<f64> = corpus.iter().map(|(_, s)| busyness(s, &mids)).collect();
+    corpus_b.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let dist = ScalarDist::of(&corpus_b, &mids);
+
+    // ---- assemble the 22 fixed tiles (18 buffet source-B DEEP + 4 controls) ----
+    let btext = fs::read_to_string(&args.buffet_json)
+        .map_err(|e| format!("reading buffet json {}: {e}", args.buffet_json))?;
+    let deep = parse_buffet_deep_b(&btext);
+    if deep.is_empty() {
+        return Err(format!("no source-B DEEP tiles in {}", args.buffet_json));
+    }
+    let mut tiles: Vec<MusterTile> = deep
+        .iter()
+        .map(|t| MusterTile {
+            id: t.id.clone(),
+            cat: Cat::of_loc(&loc_of(&t.id)),
+            center: t.center,
+            width: t.width,
+            maxiter: t.maxiter,
+        })
+        .collect();
+    for c in CONTROLS {
+        tiles.push(MusterTile {
+            id: c.id.to_string(),
+            cat: Cat::Control,
+            center: Complex::new(c.re, c.im),
+            width: c.width,
+            maxiter: c.maxiter,
+        });
+    }
+
+    // ---- palette sweep ----
+    let palettes = muster_palettes(args.seed);
+    let legit_idx: Vec<usize> = (0..palettes.len()).filter(|&i| palettes[i].legit).collect();
+
+    // ---- render each tile ONCE, recolor across every palette (no re-iteration) ----
+    eprintln!(
+        "muster: rendering {} tiles ONCE at {}px ss{}, recoloring across {} palettes \
+         ({} legit + {} degenerate control) — separable, no per-palette re-iteration ...",
+        tiles.len(),
+        args.candidate_width,
+        args.supersample,
+        palettes.len(),
+        legit_idx.len(),
+        palettes.len() - legit_idx.len(),
+    );
+    let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
+    let w = args.candidate_width;
+    let h = (w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
+    let mut grid_thumbs: Vec<Vec<RgbImage>> = Vec::with_capacity(tiles.len()); // [tile][palette]
+    let mut rec: Vec<Vec<Recolor>> = Vec::with_capacity(tiles.len());
+    for t in &tiles {
+        let panel = iterate_tile_once(t.center, t.width, t.maxiter, w, args.supersample, trap);
+        let mut row_thumb = Vec::with_capacity(palettes.len());
+        let mut row_rec = Vec::with_capacity(palettes.len());
+        for mp in &palettes {
+            let img = render::shade_and_downsample(
+                &panel.buf.samples,
+                w,
+                h,
+                args.supersample,
+                &mp.palette,
+                &mp.params,
+                panel.spacing,
+            );
+            let sig = bins.signature(&region_energies(&img));
+            let busy = busyness(&sig, &mids);
+            let pctile = cdf_pos(&corpus_b, busy);
+            let mut th = fit_to(&img, args.thumb_width);
+            label(&mut th, &format!("{} {} p{:.0}", short_id(&t.id), mp.name, pctile * 100.0));
+            row_thumb.push(th);
+            row_rec.push(Recolor { busy, pctile });
+        }
+        grid_thumbs.push(row_thumb);
+        rec.push(row_rec);
+    }
+
+    // ---- Task 3: band sweep over (p_lo, p_hi) ----
+    let p_los = [0.05, 0.10, 0.25];
+    let p_his = [0.75, 0.90, 0.95];
+    let cat_idx = |c: Cat| -> Vec<usize> {
+        (0..tiles.len()).filter(|&i| tiles[i].cat == c).collect()
+    };
+    let okay = cat_idx(Cat::Okay);
+    let sparse = cat_idx(Cat::Sparse);
+    let ctrl = cat_idx(Cat::Control);
+    // a tile passes the band if SOME legit palette lands its recolor in [lo,hi].
+    let passes = |ti: usize, lo: f64, hi: f64| -> bool {
+        legit_idx.iter().any(|&pi| {
+            let p = rec[ti][pi].pctile;
+            p >= lo && p <= hi
+        })
+    };
+    let mut bands: Vec<BandRow> = Vec::new();
+    for &lo in &p_los {
+        for &hi in &p_his {
+            let okay_pass = okay.iter().filter(|&&ti| passes(ti, lo, hi)).count();
+            let ctrl_pass = ctrl.iter().filter(|&&ti| passes(ti, lo, hi)).count();
+            let sparse_pass = sparse.iter().filter(|&&ti| passes(ti, lo, hi)).count();
+            let sparse_reject_n = sparse.len() - sparse_pass;
+            bands.push(BandRow {
+                lo,
+                hi,
+                okay_recall: okay_pass as f64 / okay.len().max(1) as f64,
+                speckle_leak: ctrl_pass as f64 / ctrl.len().max(1) as f64,
+                sparse_reject: sparse_reject_n as f64 / sparse.len().max(1) as f64,
+                okay_pass,
+                n_okay: okay.len(),
+                ctrl_pass,
+                n_ctrl: ctrl.len(),
+                sparse_reject_n,
+                n_sparse: sparse.len(),
+            });
+        }
+    }
+    // Headline = the band admitting ~all okay tiles (max recall), tie-broken by
+    // lowest speckle leak (the most useful funnel at that recall).
+    let headline = bands
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.okay_recall
+                .partial_cmp(&b.okay_recall)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(
+                    b.speckle_leak
+                        .partial_cmp(&a.speckle_leak)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let (hlo, hhi) = (bands[headline].lo, bands[headline].hi);
+
+    // ---- sheets ----
+    // 1) the 22 × all-palette recolor grid (legit sweep + RAND/FLAT control cols).
+    let flat: Vec<RgbImage> = grid_thumbs.iter().flatten().cloned().collect();
+    crate::ensure_parent_dir(&args.out_grid)?;
+    compose_grid(&flat, Some(palettes.len()))
+        .save(&args.out_grid)
+        .map_err(|e| format!("writing {}: {e}", args.out_grid))?;
+
+    // 2) speckle controls that passed muster via some legit palette (at headline band).
+    let mut speckle_tiles: Vec<RgbImage> = Vec::new();
+    for &ti in &ctrl {
+        for &pi in &legit_idx {
+            let p = rec[ti][pi].pctile;
+            if p >= hlo && p <= hhi {
+                speckle_tiles.push(grid_thumbs[ti][pi].clone());
+            }
+        }
+    }
+    let speckle_empty = speckle_tiles.is_empty();
+    if speckle_empty {
+        // emit a placeholder so the named output exists and the verdict is explicit.
+        let mut ph = RgbImage::from_pixel(args.thumb_width, h.min(args.thumb_width), Rgb([18, 18, 18]));
+        label(&mut ph, "NO SPECKLE RECOLOR PASSED MUSTER");
+        speckle_tiles.push(ph);
+    }
+    crate::ensure_parent_dir(&args.out_speckle)?;
+    compose_grid(&speckle_tiles, Some(if speckle_empty { 1 } else { legit_idx.len().min(4) }))
+        .save(&args.out_speckle)
+        .map_err(|e| format!("writing {}: {e}", args.out_speckle))?;
+
+    // 3) the descriptor-near-but-distinct corpus pairs (the within-busy blind spot).
+    let colocated = build_colocated_sheet(args)?;
+
+    // ---- report + JSON ----
+    muster_report(n, &dist, &tiles, &palettes, &rec, &bands, headline, &colocated, &args.out_grid, &args.out_speckle, speckle_empty);
+    write_muster_json(args, &dist, &tiles, &palettes, &rec, &bands, headline, &mids)?;
+    Ok(())
+}
+
+/// Montage the dedup `descriptor_near_but_distinct` pairs (the EMD-collides-but-
+/// visually-distinct busy textures): [corpus a | corpus b]. Returns the written
+/// path (empty if the drop-list / pairs are unavailable).
+fn build_colocated_sheet(args: &MusterArgs) -> Result<String, String> {
+    let text = match fs::read_to_string(&args.droplist) {
+        Ok(t) => t,
+        Err(_) => {
+            eprintln!("  (no drop-list at {}; skipping colocated-pair sheet)", args.droplist);
+            return Ok(String::new());
+        }
+    };
+    let pairs = parse_colocated_pairs(&text);
+    if pairs.is_empty() {
+        eprintln!("  (no descriptor_near_but_distinct pairs in {}; skipping)", args.droplist);
+        return Ok(String::new());
+    }
+    let root = Path::new(&args.corpus_dir);
+    let mut tiles: Vec<RgbImage> = Vec::new();
+    for (a, b, emd, mad) in pairs.iter().take(args.colocated_pairs) {
+        let (Ok(mut ta), Ok(mut tb)) =
+            (thumb(&root.join(a), args.thumb_width), thumb(&root.join(b), args.thumb_width))
+        else {
+            eprintln!("  (could not load corpus pair {a} | {b}; skipping it)");
+            continue;
+        };
+        label(&mut ta, &format!("{} emd{:.3}", short(a), emd));
+        label(&mut tb, &format!("{} mad{:.0}", short(b), mad));
+        tiles.push(ta);
+        tiles.push(tb);
+    }
+    if tiles.is_empty() {
+        return Ok(String::new());
+    }
+    crate::ensure_parent_dir(&args.out_colocated)?;
+    compose_grid(&tiles, Some(2))
+        .save(&args.out_colocated)
+        .map_err(|e| format!("writing {}: {e}", args.out_colocated))?;
+    Ok(args.out_colocated.clone())
+}
+
+/// Parse the `descriptor_near_but_distinct` array out of a dedup drop-list
+/// (tolerant block scan, same style as the buffet parser). Returns (a,b,emd,mad).
+fn parse_colocated_pairs(text: &str) -> Vec<(String, String, f64, f64)> {
+    let Some(start) = text.find("\"descriptor_near_but_distinct\"") else {
+        return Vec::new();
+    };
+    let region = &text[start..];
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(ap) = region[i..].find("\"a\":").map(|p| p + i) {
+        let end = region[ap + 4..].find("\"a\":").map(|p| p + ap + 4).unwrap_or(region.len());
+        let block = &region[ap..end];
+        let a = str_field(block, "\"a\":").unwrap_or_default();
+        let b = str_field(block, "\"b\":").unwrap_or_default();
+        let emd = num_field(block, "\"emd\":").unwrap_or(f64::NAN);
+        let mad = num_field(block, "\"pixel_mad\":").unwrap_or(f64::NAN);
+        if !a.is_empty() && !b.is_empty() {
+            out.push((a, b, emd, mad));
+        }
+        i = ap + 4;
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn muster_report(
+    n_corpus: usize,
+    dist: &ScalarDist,
+    tiles: &[MusterTile],
+    palettes: &[MusterPalette],
+    rec: &[Vec<Recolor>],
+    bands: &[BandRow],
+    headline: usize,
+    colocated: &str,
+    out_grid: &str,
+    out_speckle: &str,
+    speckle_empty: bool,
+) {
+    println!("\n=== muster: palette-sweep marginal-density band vs the 22-tile known-answer set ===");
+    println!(
+        "  busyness scalar B = mean fine (s16) per-area OKLab edge energy, recovered from the \
+         frozen-bin histogram (Σ hist·binmid). Two-sided magnitude; same fn on corpus + recolor."
+    );
+
+    // Task 1 — corpus marginal + non-saturation.
+    println!("\n  Task 1 — corpus busyness marginal ({n_corpus} images):");
+    println!(
+        "    min={:.5}  p10={:.5}  p25={:.5}  p50={:.5}  p75={:.5}  p90={:.5}  p95={:.5}  max={:.5}",
+        dist.min, dist.p10, dist.p25, dist.p50, dist.p75, dist.p90, dist.p95, dist.max
+    );
+    println!(
+        "    attainable range [floor={:.5} .. ceil={:.5}]; bottom pileup={:.1}%  top pileup={:.1}%",
+        dist.floor, dist.ceil, dist.bot_pileup * 100.0, dist.top_pileup * 100.0
+    );
+    if dist.saturated {
+        println!(
+            "    NON-SATURATION CHECK: *** SATURATED *** — B piles at a ceiling like `d` did; \
+             do NOT band on it. (Reported and stopping short of trusting the sweep.)"
+        );
+    } else {
+        println!(
+            "    NON-SATURATION CHECK: PASS — busy half resolves (p90<p95<max, gaps real; \
+             top pileup {:.1}% < 5%). Genuine two-sided spread, unlike `d`.",
+            dist.top_pileup * 100.0
+        );
+    }
+
+    // per-tile per-palette percentile table.
+    println!("\n  Task 3 — per-tile recolor percentiles (corpus-marginal position of B); legit cols then |RAND FLAT|:");
+    let header: Vec<String> = palettes.iter().map(|p| format!("{:>6}", p.name)).collect();
+    println!("    {:<14} {:<6} {}", "tile", "cat", header.join(" "));
+    for (ti, t) in tiles.iter().enumerate() {
+        let cells: Vec<String> = rec[ti]
+            .iter()
+            .map(|r| format!("{:>5.0}%", r.pctile * 100.0))
+            .collect();
+        println!("    {:<14} {:<6} {}", t.id, t.cat.tag(), cells.join(" "));
+    }
+
+    // band sweep.
+    println!("\n  band sweep (a tile passes if SOME legit palette lands its recolor in [p_lo,p_hi]):");
+    println!(
+        "    {:<14} {:>12} {:>14} {:>16}",
+        "band", "okay-recall", "speckle-leak", "sparse-reject"
+    );
+    for (i, b) in bands.iter().enumerate() {
+        let mark = if i == headline { "  <== headline" } else { "" };
+        println!(
+            "    [p{:>2.0},p{:>2.0}]     {:>6.0}% ({}/{}) {:>7.0}% ({}/{}) {:>9.0}% ({}/{}){}",
+            b.lo * 100.0,
+            b.hi * 100.0,
+            b.okay_recall * 100.0,
+            b.okay_pass,
+            b.n_okay,
+            b.speckle_leak * 100.0,
+            b.ctrl_pass,
+            b.n_ctrl,
+            b.sparse_reject * 100.0,
+            b.sparse_reject_n,
+            b.n_sparse,
+            mark,
+        );
+    }
+    let hb = &bands[headline];
+    println!(
+        "\n  HEADLINE — at the band admitting ~all okay tiles ([p{:.0},p{:.0}], okay-recall {:.0}%): \
+         SPECKLE LEAK = {:.0}% ({}/{} controls), sparse-reject {:.0}%.",
+        hb.lo * 100.0,
+        hb.hi * 100.0,
+        hb.okay_recall * 100.0,
+        hb.speckle_leak * 100.0,
+        hb.ctrl_pass,
+        hb.n_ctrl,
+        hb.sparse_reject * 100.0,
+    );
+    println!(
+        "    {}",
+        if hb.speckle_leak <= 0.0 {
+            "Low → the marginal funnel works: no speckle control is admitted at corpus frequency."
+        } else {
+            "High → speckle would poison a label set drawn through this band; see the speckle sheet."
+        }
+    );
+
+    // degenerate-palette two-sidedness (a few okay tiles under RAND/FLAT).
+    let rand_pi = palettes.iter().position(|p| p.name == "RAND");
+    let flat_pi = palettes.iter().position(|p| p.name == "FLAT");
+    if let (Some(rp), Some(fp)) = (rand_pi, flat_pi) {
+        println!("\n  Task 4 — degenerate-palette control (okay tiles; RAND should push busy→p100, FLAT sparse→p0):");
+        for (ti, t) in tiles.iter().enumerate().filter(|(_, t)| t.cat == Cat::Okay).take(4) {
+            println!(
+                "    {:<14} RAND p{:>3.0}%   FLAT p{:>3.0}%",
+                t.id,
+                rec[ti][rp].pctile * 100.0,
+                rec[ti][fp].pctile * 100.0
+            );
+        }
+    }
+
+    println!("\nwrote:");
+    println!("  {out_grid} (22 tiles × palettes recolor grid — eyeball)");
+    println!(
+        "  {out_speckle} ({})",
+        if speckle_empty { "no speckle recolor passed — placeholder" } else { "speckle recolors that passed: redemption vs blind-leak — Matt sorts" }
+    );
+    if !colocated.is_empty() {
+        println!("  {colocated} (descriptor-near-but-distinct corpus pairs — the within-busy blind spot)");
+    }
+    println!(
+        "\nnote: MARGINAL CONTROL ONLY — B measures how-busy, never which-busy (the dedup collision). \
+         No band picked, no loop built; Matt judges the eye-checks."
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_muster_json(
+    args: &MusterArgs,
+    dist: &ScalarDist,
+    tiles: &[MusterTile],
+    palettes: &[MusterPalette],
+    rec: &[Vec<Recolor>],
+    bands: &[BandRow],
+    headline: usize,
+    mids: &[f64],
+) -> Result<(), String> {
+    let mut s = String::from("{\n");
+    s.push_str(
+        "  \"scalar\": { \"name\": \"mean_fine_s16_edge_energy\", \"definition\": \
+\"sum_b hist_s16[b]*binmid[b] over frozen quantile bins (per-area OKLab edge energy)\" },\n",
+    );
+    s.push_str(&format!(
+        "  \"s16_bin_midpoints\": [{}],\n",
+        mids.iter().map(|v| jf(*v)).collect::<Vec<_>>().join(", ")
+    ));
+    s.push_str(&format!(
+        "  \"corpus_marginal\": {{ \"min\": {}, \"p10\": {}, \"p25\": {}, \"p50\": {}, \"p75\": {}, \
+\"p90\": {}, \"p95\": {}, \"max\": {}, \"floor\": {}, \"ceil\": {}, \"bottom_pileup\": {}, \
+\"top_pileup\": {}, \"saturated\": {} }},\n",
+        jf(dist.min), jf(dist.p10), jf(dist.p25), jf(dist.p50), jf(dist.p75),
+        jf(dist.p90), jf(dist.p95), jf(dist.max), jf(dist.floor), jf(dist.ceil),
+        jf(dist.bot_pileup), jf(dist.top_pileup), dist.saturated,
+    ));
+
+    // palettes
+    s.push_str("  \"palettes\": [\n");
+    for (i, p) in palettes.iter().enumerate() {
+        s.push_str(&format!(
+            "    {{ \"name\": {}, \"legit\": {}, \"density\": {} }}{}\n",
+            js(&p.name),
+            p.legit,
+            jf(p.params.density),
+            if i + 1 < palettes.len() { "," } else { "" }
+        ));
+    }
+    s.push_str("  ],\n");
+
+    // per-tile per-palette busyness + percentile
+    s.push_str("  \"tiles\": [\n");
+    for (ti, t) in tiles.iter().enumerate() {
+        let recs: Vec<String> = palettes
+            .iter()
+            .enumerate()
+            .map(|(pi, p)| {
+                format!(
+                    "{{ \"palette\": {}, \"busy\": {}, \"pctile\": {} }}",
+                    js(&p.name),
+                    jf(rec[ti][pi].busy),
+                    jf(rec[ti][pi].pctile)
+                )
+            })
+            .collect();
+        s.push_str(&format!(
+            "    {{ \"id\": {}, \"cat\": {}, \"recolors\": [{}] }}{}\n",
+            js(&t.id),
+            js(t.cat.tag()),
+            recs.join(", "),
+            if ti + 1 < tiles.len() { "," } else { "" }
+        ));
+    }
+    s.push_str("  ],\n");
+
+    // band sweep
+    s.push_str("  \"band_sweep\": [\n");
+    for (i, b) in bands.iter().enumerate() {
+        s.push_str(&format!(
+            "    {{ \"p_lo\": {}, \"p_hi\": {}, \"okay_recall\": {}, \"speckle_leak\": {}, \
+\"sparse_reject\": {}, \"okay_pass\": {}, \"n_okay\": {}, \"ctrl_pass\": {}, \"n_ctrl\": {}, \
+\"sparse_reject_n\": {}, \"n_sparse\": {}, \"headline\": {} }}{}\n",
+            jf(b.lo), jf(b.hi), jf(b.okay_recall), jf(b.speckle_leak), jf(b.sparse_reject),
+            b.okay_pass, b.n_okay, b.ctrl_pass, b.n_ctrl, b.sparse_reject_n, b.n_sparse,
+            i == headline,
+            if i + 1 < bands.len() { "," } else { "" }
+        ));
+    }
+    s.push_str("  ]\n}\n");
+
     crate::ensure_parent_dir(&args.out_json)?;
     fs::write(&args.out_json, s).map_err(|e| format!("writing {}: {e}", args.out_json))?;
     Ok(())

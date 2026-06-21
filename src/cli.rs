@@ -247,6 +247,221 @@ pub enum Command {
     /// histogram caches); renders nothing. Prints a per-k ranking + PASS/FAIL plus the
     /// control-match / straddle / sparse-survivor diagnostics. No winner picked.
     Archetype(ArchetypeArgs),
+    /// Diagnosis-only adversarial anchor probe: tests the founding axiom
+    /// ("good = resembles some real wallpaper") at the level of *individual* corpus
+    /// members, not centroids. Calibrates the corpus 1-NN distance distribution
+    /// (real wallpaper-to-wallpaper similarity), then finds each known-answer tile's
+    /// nearest individual corpus wallpaper and the smallest intrinsic corpus-corpus
+    /// pairs, rendering both as side-by-side montages for Matt's eye. EMD on cached
+    /// histograms; re-renders only the fixed known-answer set (controls + buffet DEEP)
+    /// for the montage images (flagged). Picks no pivot, wires nothing.
+    Anchor(AnchorArgs),
+    /// Diagnosis-only trivial corpus dedup: find descriptor-near corpus pairs
+    /// (EMD < epsilon), confirm each as near-pixel-identical via a 16×16 gray
+    /// thumbnail diff, union confirmed pairs into duplicate groups (keep the
+    /// lexically-first member), and emit a drop-list plus the corpus 1-NN
+    /// distribution before vs after the drop. Reads corpus PNGs + cached
+    /// histograms only — no fractal renders. Does NOT mutate the artifact.
+    Dedup(DedupArgs),
+    /// Diagnosis-only palette-sweep muster: does a corpus-marginal density band
+    /// filter the 22-tile known-answer set? Renders each fixed tile's iteration
+    /// data ONCE, recolors across a legit palette sweep (+ random/flat degenerate
+    /// controls), scores a two-sided busyness scalar (mean fine s16 edge energy,
+    /// recovered from the frozen-bin histogram), places each recolor as a corpus
+    /// percentile, and sweeps an accept band reporting okay-recall / speckle-leak /
+    /// sparse-rejection. Marginal control only — no good-busy vs bad-busy split.
+    /// Picks no band, builds no loop. Matt judges the eye-check sheets.
+    Muster(MusterArgs),
+}
+
+/// `muster` subcommand: see `energy::run_muster`. Diagnosis-only — produces the
+/// busyness-scalar corpus distribution + non-saturation check, the per-tile
+/// per-palette percentile table, the full band sweep, and three eye-check sheets.
+/// Selects nothing.
+#[derive(Args, Debug)]
+pub struct MusterArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Corpus image folder root (for the colocated-pair montage).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub corpus_dir: String,
+
+    /// Buffet metrics JSON (source-B DEEP tile centers — the 18 okay/sparse tiles).
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Dedup drop-list (its `descriptor_near_but_distinct` pairs → colocated sheet).
+    #[arg(long, default_value = "data/calibration/dedup_droplist.json")]
+    pub droplist: String,
+
+    /// Per-tile per-palette percentile table + corpus distribution + band sweep.
+    #[arg(long, default_value = "data/calibration/palette_muster.json")]
+    pub out_json: String,
+
+    /// The 22-tile × legit-palette recolor grid (+ random/flat control columns).
+    #[arg(long, default_value = "out/palette_muster.png")]
+    pub out_grid: String,
+
+    /// Any speckle (OB_*) recolor that passed muster (redemption-vs-blind-leak).
+    #[arg(long, default_value = "out/speckle_passing_recolors.png")]
+    pub out_speckle: String,
+
+    /// Descriptor-near-but-distinct corpus pairs (the within-busy blind spot).
+    #[arg(long, default_value = "out/colocated_pairs.png")]
+    pub out_colocated: String,
+
+    /// Render width (px) per tile (iterated once, recolored per palette).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for the per-tile iteration.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Thumbnail width (px) for the sheet tiles (height follows 16:9).
+    #[arg(long, default_value_t = 300)]
+    pub thumb_width: u32,
+
+    /// Max descriptor-near-but-distinct pairs to montage on the colocated sheet.
+    #[arg(long, default_value_t = 12)]
+    pub colocated_pairs: usize,
+
+    /// RNG seed for the degenerate random palette (per-entry random LUT).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+}
+
+/// `dedup` subcommand: see `energy::run_dedup`. Removes accidental near-pixel
+/// duplicates from the corpus before it is used as a band reference. Trivial only
+/// — descriptor-near is the cheap finder, the pixel check is the verdict; no
+/// aesthetic/quality judgment. Filters at use-time via a drop-list; the calibration
+/// artifact is left intact.
+#[derive(Args, Debug)]
+pub struct DedupArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Corpus image folder root (the `name` fields in the artifact resolve here).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub corpus_dir: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Candidate-pair EMD cutoff: pairs with descriptor distance below this are
+    /// pixel-checked. Generous on purpose — the pixel check, not this, decides.
+    #[arg(long, default_value_t = 0.13)]
+    pub epsilon: f64,
+
+    /// Pixel-confirm threshold: a candidate pair is a duplicate only if the mean
+    /// absolute 16×16 gray difference (0..255 scale) is at/below this.
+    #[arg(long, default_value_t = 8.0)]
+    pub pixel_threshold: f64,
+
+    /// Side length of the gray confirmation thumbnail (S×S, center-cropped 16:9).
+    #[arg(long, default_value_t = 16)]
+    pub thumb_side: u32,
+
+    /// Drop-list output (dropped filenames + kept representative + pixel distance).
+    #[arg(long, default_value = "data/calibration/dedup_droplist.json")]
+    pub out_json: String,
+}
+
+impl DedupArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `anchor` subcommand: see `energy::run_anchor`. Diagnosis-only — produces the
+/// pairs, distances, and calibration; selects nothing.
+#[derive(Args, Debug)]
+pub struct AnchorArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Corpus image folder root (the `name` fields in the artifact resolve here).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub corpus_dir: String,
+
+    /// Buffet metrics JSON (source-B DEEP tile centers, for the montage re-render).
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Cached buffet DEEP-tile histograms (okay/sparse anchors).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Cached over-busy/speckle control histograms.
+    #[arg(long, default_value = "data/calibration/control_histograms.json")]
+    pub control_hist: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Number of smallest intrinsic corpus-corpus pairs to surface (Task B).
+    #[arg(long, default_value_t = 20)]
+    pub top_pairs: usize,
+
+    /// Task-A montage sheet (tile | nearest individual corpus wallpaper).
+    #[arg(long, default_value = "out/adversarial_anchor.png")]
+    pub out_sheet_a: String,
+
+    /// Task-B montage sheet (smallest intrinsic corpus-corpus pairs).
+    #[arg(long, default_value = "out/corpus_collisions.png")]
+    pub out_sheet_b: String,
+
+    /// Per-tile + Task-0 distribution + Task-B pair dump.
+    #[arg(long, default_value = "data/calibration/collision_distances.json")]
+    pub out_json: String,
+
+    /// Thumbnail width (px) for the montage sheets (height follows 16:9).
+    #[arg(long, default_value_t = 384)]
+    pub thumb_width: u32,
+
+    /// Render width (px) for re-rendering each known-answer tile (montage image).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for the known-answer tile re-renders.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+}
+
+impl AnchorArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
 }
 
 /// `calibrate` subcommand: see the module docs in `energy.rs`. Calibration +

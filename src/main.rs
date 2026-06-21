@@ -338,6 +338,9 @@ fn run() -> Result<(), String> {
         Some(Command::Rescore(args)) => energy::run_rescore(args),
         Some(Command::Overbusy(args)) => energy::run_overbusy(args),
         Some(Command::Archetype(args)) => energy::run_archetype(args),
+        Some(Command::Anchor(args)) => energy::run_anchor(args),
+        Some(Command::Dedup(args)) => energy::run_dedup(args),
+        Some(Command::Muster(args)) => energy::run_muster(args),
         None => run_render(&cli),
     }
 }
