@@ -196,18 +196,22 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
         let circle_r = panel_w as f64 / (2.0 * args.zoom);
         probe::draw_circle(&mut mandel_img, pick.col as f64, pick.row as f64, circle_r);
 
-        // Julia panel for the chosen target, base scale (whole set), f64.
-        let julia_img = probe::render_julia_panel(
-            c_f64,
-            args.julia_maxiter,
-            args.bailout,
-            trap,
-            panel_w,
-            panel_h,
-            ss,
-            &palette,
-            &params,
-        );
+        // Julia panel for the chosen target, base scale (whole set), f64. Opt-in
+        // (`--with-julia`): a good Mandelbrot region implies a good Julia, so the
+        // parallel render is pure cost in this diagnostic probe.
+        let julia_img = args.with_julia.then(|| {
+            probe::render_julia_panel(
+                c_f64,
+                args.julia_maxiter,
+                args.bailout,
+                trap,
+                panel_w,
+                panel_h,
+                ss,
+                &palette,
+                &params,
+            )
+        });
 
         // On-image label (uppercased into the reduced glyph set).
         let label = format!(
@@ -224,15 +228,19 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
 
         // Persist per-level panels (so any level re-renders from the JSON).
         let mandel_rel = format!("mandel_{level:02}.png");
-        let julia_rel = format!("julia_{level:02}.png");
         let mandel_path = panels_dir.join(&mandel_rel);
-        let julia_path = panels_dir.join(&julia_rel);
         mandel_img
             .save(&mandel_path)
             .map_err(|e| format!("failed to write {}: {e}", mandel_path.display()))?;
-        julia_img
-            .save(&julia_path)
-            .map_err(|e| format!("failed to write {}: {e}", julia_path.display()))?;
+        let julia_panel_str = match &julia_img {
+            Some(img) => {
+                let julia_path = panels_dir.join(format!("julia_{level:02}.png"));
+                img.save(&julia_path)
+                    .map_err(|e| format!("failed to write {}: {e}", julia_path.display()))?;
+                probe::path_str(&julia_path)
+            }
+            None => String::new(),
+        };
 
         let center_re_str = hp::to_decimal_string(&center_re)?;
         let center_im_str = hp::to_decimal_string(&center_im)?;
@@ -255,10 +263,12 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
             c_f64,
             pick,
             mandel_panel: probe::path_str(&mandel_path),
-            julia_panel: probe::path_str(&julia_path),
+            julia_panel: julia_panel_str,
         });
         mandel_panels.push(mandel_img);
-        julia_panels.push(julia_img);
+        if let Some(img) = julia_img {
+            julia_panels.push(img);
+        }
 
         // Descend: the sampled target becomes the next center; zoom in.
         center_re = target_re;
@@ -266,8 +276,13 @@ pub fn run_descend(args: &DescendArgs) -> Result<(), String> {
         width /= args.zoom;
     }
 
-    // Compose the filmstrip (one row per level: Mandelbrot | Julia).
-    let strip = probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h);
+    // Compose the filmstrip: Mandelbrot | Julia under `--with-julia`, else a
+    // single Mandelbrot column.
+    let strip = if args.with_julia {
+        probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h)
+    } else {
+        probe::compose_strip_single(&mandel_panels, panel_w, panel_h)
+    };
     crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)

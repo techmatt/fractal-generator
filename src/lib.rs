@@ -34,6 +34,7 @@ pub mod cli;
 pub mod coherence;
 pub mod coloring;
 pub mod corpus;
+pub mod deband;
 pub mod descend;
 pub mod font;
 pub mod hp;

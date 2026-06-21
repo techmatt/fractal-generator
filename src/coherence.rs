@@ -296,6 +296,278 @@ pub(crate) fn windowed_busyness_max(buf: &SampleBuffer, probe_w: u32, probe_h: u
     max_b
 }
 
+// ===========================================================================
+// Off-nucleus de_px-band objective (Prompt offnucleus-deband)
+//
+// The coherence *gate* above only walls off the sub-pixel cliff edge; it does
+// not reverse the busyness gradient, which runs *uphill toward the boundary* —
+// the white minibrot nuclei. Candidate generation (atom → Newton) can only point
+// at nuclei, and nuclei are boundary points, so survivors pile up pressed against
+// the gate. This objective inverts the target: reward a cell whose boundary is
+// *resolved and a few pixels wide* (`de_px` inside a band around a target center)
+// and demote busyness to a floor gate (maximizing busyness inside the band would
+// re-create boundary-seeking). Maximizing band proximity frames the *decoration*
+// that surrounds a minibrot instead of descending into its cusp.
+//
+// Default constants — **set in Phase 3 from the m6 calibration split** (a 1-D
+// 3-means over `log10(de_px_win)`: nucleus de_px p50 0.055, decoration 1.97, flat
+// 63; nucleus busy p50 0.026 vs decoration 0.011 — busyness anti-correlates with
+// the band, confirming it must be a floor gate, not a reward term). Biased toward
+// decoration / away from boundary by design (over-correction is intended). The
+// `deband` subcommand can override any of these per-run via flags.
+// ===========================================================================
+
+/// `de_px` (a window's boundary distance in target-resolution pixels) at which
+/// the band reward peaks. Over-corrected *off* the boundary: decoration cluster
+/// median (~2.0) × ~1.5.
+pub const DE_PX_BAND_CENTER: f64 = 3.0;
+
+/// Hard reject below this `de_px` — near-boundary / sub-pixel speckle (the white
+/// nuclei). Well above the nucleus cluster ceiling (p90 0.17): a deliberately wide
+/// margin to guarantee survivors are off the white.
+pub const DE_PX_REJECT_LO: f64 = 1.0;
+
+/// Hard reject above this `de_px` — flat smooth exterior. Geometric mean of the
+/// decoration p90 (8.0) and flat p50 (63) — cuts the flat while keeping the band.
+pub const DE_PX_REJECT_HI: f64 = 22.5;
+
+/// Busyness floor a cell must clear to count. **Floor gate only** — busyness is
+/// deliberately *not* added to the reward (the maximized quantity is band
+/// proximity alone; folding busyness in would re-create boundary-seeking). Just
+/// under the decoration cells' busyness so the dead-flat exterior (busy ~0) drops
+/// out but the structured band is kept.
+pub const BUSY_FLOOR: f64 = 0.01;
+
+/// Max center drift as a fraction of the frame half-extent, so the drifted frame
+/// stays inside the originally-rendered region.
+pub const DRIFT_MAX: f64 = 0.45;
+
+/// Minimum escaped output pixels in a window for its stats to be defined (matches
+/// the ≥3 rule in [`windowed_busyness_max`]).
+const MIN_WIN_ESCAPED: usize = 3;
+
+/// The four tunable knobs of the de_px-band objective. [`Default`] is the
+/// calibrated module consts; the `deband` CLI overrides them per-run so the band
+/// can be swept without recompiling, and the drive passes the default.
+#[derive(Clone, Copy, Debug)]
+pub struct BandParams {
+    pub band_center: f64,
+    pub reject_lo: f64,
+    pub reject_hi: f64,
+    pub busy_floor: f64,
+}
+
+impl Default for BandParams {
+    fn default() -> Self {
+        BandParams {
+            band_center: DE_PX_BAND_CENTER,
+            reject_lo: DE_PX_REJECT_LO,
+            reject_hi: DE_PX_REJECT_HI,
+            busy_floor: BUSY_FLOOR,
+        }
+    }
+}
+
+/// Band reward `∈[0,1]` under `bp`: a bump peaking at `band_center`, rising via
+/// smoothstep from `reject_lo` and falling to `reject_hi`. Hard 0 (reject) outside
+/// `[reject_lo, reject_hi]` and for a non-finite `de_px` (a window with too few
+/// escaped pixels). The maximized quantity is *only* this (busyness is a gate).
+pub fn band_reward_p(de_px: f64, bp: &BandParams) -> f64 {
+    if !de_px.is_finite() || de_px < bp.reject_lo || de_px > bp.reject_hi {
+        return 0.0;
+    }
+    if de_px <= bp.band_center {
+        smoothstep(bp.reject_lo, bp.band_center, de_px)
+    } else {
+        1.0 - smoothstep(bp.band_center, bp.reject_hi, de_px)
+    }
+}
+
+/// [`band_reward_p`] with the default (calibrated) [`BandParams`].
+pub fn band_reward(de_px: f64) -> f64 {
+    band_reward_p(de_px, &BandParams::default())
+}
+
+/// Per-output-pixel-cell windowed objective map over a cached supersampled buffer.
+/// All vectors are row-major at the **output** (post-downsample) resolution; cells
+/// within `k/2` of an edge are never window-centers and stay `NaN`/`0`/`false`.
+pub struct CellMap {
+    pub w: usize,
+    pub h: usize,
+    pub k: i32,
+    /// Windowed median `de_px` per cell (`NaN` where `< MIN_WIN_ESCAPED` escaped).
+    pub de_px: Vec<f64>,
+    /// Windowed normalized busyness per cell (`stddev(smooth)/maxiter`; `0` where
+    /// undefined). The floor-gate input — never folded into [`reward`](Self::reward).
+    pub busy: Vec<f64>,
+    /// The maximized objective: [`band_reward`]`(de_px)` gated by `busy ≥ BUSY_FLOOR`.
+    pub reward: Vec<f64>,
+    /// `reward > 0` — band membership **and** busy-floor pass.
+    pub in_band: Vec<bool>,
+}
+
+impl CellMap {
+    fn idx(&self, col: usize, row: usize) -> usize {
+        row * self.w + col
+    }
+}
+
+/// Median of a slice (caller guarantees non-empty); sorts a local copy.
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
+}
+
+/// Compute the [`CellMap`]: the **pure** per-K×K-window de_px-band reward over a
+/// cached buffer. Mirrors [`windowed_busyness_max`]'s per-output-pixel aggregation
+/// (mean `smooth` and escaped flag) and additionally aggregates mean `de_px`
+/// pinned to the **target wallpaper spacing** (the same resolution-invariant `de`
+/// normalization the gate uses, so a cheap probe predicts the final render).
+///
+/// `de_px_win` is the median of escaped cells' mean `de_px` in the window (robust,
+/// parallels the frame stat's median choice); `busy` is `stddev(smooth)/maxiter`.
+pub fn cell_reward_map(
+    buf: &SampleBuffer,
+    probe_w: u32,
+    probe_h: u32,
+    k: i32,
+    maxiter: u32,
+    frame_width: f64,
+    target_render_width: u32,
+    bp: &BandParams,
+) -> CellMap {
+    let w = probe_w as usize;
+    let h = probe_h as usize;
+    let s = buf.ss as usize;
+    let sub_w = w * s;
+    let inv_spacing = target_render_width.max(1) as f64 / frame_width;
+
+    // Per-output-pixel mean smooth, mean de_px (target-spacing), escaped flag.
+    let mut smooth = vec![0.0f64; w * h];
+    let mut de_px = vec![0.0f64; w * h];
+    let mut escaped = vec![false; w * h];
+    for row in 0..h {
+        for col in 0..w {
+            let mut esc = 0usize;
+            let mut sm = 0.0f64;
+            let mut de = 0.0f64;
+            for sj in 0..s {
+                let base = (row * s + sj) * sub_w + col * s;
+                for si in 0..s {
+                    let px = &buf.samples[base + si];
+                    if px.escaped {
+                        esc += 1;
+                        sm += px.smooth_iter;
+                        de += px.de * inv_spacing;
+                    }
+                }
+            }
+            let idx = row * w + col;
+            escaped[idx] = esc * 2 >= s * s;
+            if esc > 0 {
+                smooth[idx] = sm / esc as f64;
+                de_px[idx] = de / esc as f64;
+            }
+        }
+    }
+
+    let r = k / 2;
+    let inv_scale = 1.0 / maxiter.max(1) as f64;
+    let mut map = CellMap {
+        w,
+        h,
+        k,
+        de_px: vec![f64::NAN; w * h],
+        busy: vec![0.0; w * h],
+        reward: vec![0.0; w * h],
+        in_band: vec![false; w * h],
+    };
+
+    for row in r..(h as i32 - r) {
+        for col in r..(w as i32 - r) {
+            let mut smooth_vals: Vec<f64> = Vec::with_capacity((k * k) as usize);
+            let mut de_vals: Vec<f64> = Vec::with_capacity((k * k) as usize);
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let idx = (row + dy) as usize * w + (col + dx) as usize;
+                    if escaped[idx] {
+                        smooth_vals.push(smooth[idx]);
+                        de_vals.push(de_px[idx]);
+                    }
+                }
+            }
+            if de_vals.len() < MIN_WIN_ESCAPED {
+                continue;
+            }
+            let center = map.idx(col as usize, row as usize);
+            let busy = stddev(&smooth_vals) * inv_scale;
+            let dpx = median(&mut de_vals);
+            map.busy[center] = busy;
+            map.de_px[center] = dpx;
+            let reward = if busy >= bp.busy_floor { band_reward_p(dpx, bp) } else { 0.0 };
+            map.reward[center] = reward;
+            map.in_band[center] = reward > 0.0;
+        }
+    }
+    map
+}
+
+/// Reward-weighted centroid (in output-pixel cell coordinates `(col, row)`) of the
+/// **best contiguous in-band, busy-floor-passing region** — 4-connected components
+/// over `in_band`, the component maximizing summed `reward`, then its
+/// reward-weighted centroid. A single-cell argmax would chase flukes; the
+/// contiguous-region centroid frames the body of the decoration. `None` when no
+/// cell is in band. Also returns the component's summed reward (region strength).
+pub fn best_inband_centroid(map: &CellMap) -> Option<(f64, f64, f64)> {
+    let w = map.w;
+    let h = map.h;
+    let mut visited = vec![false; w * h];
+    let mut best: Option<(f64, f64, f64)> = None; // (cx, cy, sum_reward)
+    let mut stack: Vec<usize> = Vec::new();
+    for start in 0..w * h {
+        if visited[start] || !map.in_band[start] {
+            continue;
+        }
+        // Flood-fill this component, accumulating the reward-weighted centroid.
+        stack.clear();
+        stack.push(start);
+        visited[start] = true;
+        let (mut sx, mut sy, mut sr) = (0.0f64, 0.0f64, 0.0f64);
+        while let Some(p) = stack.pop() {
+            let col = p % w;
+            let row = p / w;
+            let rw = map.reward[p];
+            sx += col as f64 * rw;
+            sy += row as f64 * rw;
+            sr += rw;
+            let neighbors = [
+                (col >= 1).then(|| p - 1),
+                (col + 1 < w).then(|| p + 1),
+                (row >= 1).then(|| p - w),
+                (row + 1 < h).then(|| p + w),
+            ];
+            for n in neighbors.into_iter().flatten() {
+                if !visited[n] && map.in_band[n] {
+                    visited[n] = true;
+                    stack.push(n);
+                }
+            }
+        }
+        if sr > 0.0 {
+            let cand = (sx / sr, sy / sr, sr);
+            if best.map(|b| cand.2 > b.2).unwrap_or(true) {
+                best = Some(cand);
+            }
+        }
+    }
+    best
+}
+
 /// `cohere` subcommand — isolation validation of the coherence statistic.
 ///
 /// Renders **one** frame at a modest probe resolution with the f64 backend
@@ -555,6 +827,105 @@ mod tests {
         assert!(mid.penalty < clean.penalty && mid.penalty > hot.penalty);
         assert!(hot.penalty < 0.1, "near the reject edge the penalty should be small");
         assert!(!clean.reject && !mid.reject && !hot.reject);
+    }
+
+    /// Band reward shape: 0 (reject) outside `[REJECT_LO, REJECT_HI]` and for a
+    /// non-finite de_px, peaks at the center, rises and falls monotonically.
+    #[test]
+    fn band_reward_bump_shape() {
+        assert_eq!(band_reward(f64::NAN), 0.0);
+        assert_eq!(band_reward(DE_PX_REJECT_LO - 0.1), 0.0, "below LO is rejected (the white nuclei)");
+        assert_eq!(band_reward(DE_PX_REJECT_HI + 1.0), 0.0, "above HI is rejected (flat)");
+        let peak = band_reward(DE_PX_BAND_CENTER);
+        assert!((peak - 1.0).abs() < 1e-9, "reward peaks at the band center");
+        // Monotone rise on the low skirt, fall on the high skirt.
+        let lo_mid = 0.5 * (DE_PX_REJECT_LO + DE_PX_BAND_CENTER);
+        let hi_mid = 0.5 * (DE_PX_BAND_CENTER + DE_PX_REJECT_HI);
+        assert!(band_reward(lo_mid) > 0.0 && band_reward(lo_mid) < peak);
+        assert!(band_reward(hi_mid) > 0.0 && band_reward(hi_mid) < peak);
+    }
+
+    /// The objective flip in miniature: a window whose `de_px` sits in the band
+    /// (decoration) outscores one whose `de_px` is near zero (the nucleus cusp),
+    /// even when the nucleus window is *busier* — busyness is a floor gate only.
+    #[test]
+    fn band_beats_nucleus_even_when_busier() {
+        let decoration = if 1.0 >= BUSY_FLOOR { band_reward(DE_PX_BAND_CENTER) } else { 0.0 };
+        let nucleus = if 5.0 >= BUSY_FLOOR { band_reward(DE_PX_REJECT_LO * 0.1) } else { 0.0 };
+        assert!(decoration > nucleus, "in-band decoration must outscore the busier near-zero-de nucleus");
+        assert_eq!(nucleus, 0.0);
+    }
+
+    /// `best_inband_centroid` picks the larger (higher summed-reward) contiguous
+    /// component and returns its reward-weighted centroid, not a stray single cell.
+    #[test]
+    fn centroid_picks_largest_region() {
+        let w = 8usize;
+        let h = 4usize;
+        let mut map = CellMap {
+            w,
+            h,
+            k: 1,
+            de_px: vec![f64::NAN; w * h],
+            busy: vec![0.0; w * h],
+            reward: vec![0.0; w * h],
+            in_band: vec![false; w * h],
+        };
+        // A fluke single cell at (0,0); a 2x2 block at cols 4..6, rows 1..3.
+        let set = |m: &mut CellMap, c: usize, r: usize, rw: f64| {
+            let i = r * w + c;
+            m.reward[i] = rw;
+            m.in_band[i] = true;
+        };
+        set(&mut map, 0, 0, 1.0);
+        for c in 4..6 {
+            for r in 1..3 {
+                set(&mut map, c, r, 1.0);
+            }
+        }
+        let (cx, cy, sr) = best_inband_centroid(&map).expect("a region exists");
+        assert!((sr - 4.0).abs() < 1e-9, "the 2x2 block (sum 4) beats the single fluke (sum 1)");
+        assert!((cx - 4.5).abs() < 1e-9 && (cy - 1.5).abs() < 1e-9, "centroid is the block center");
+    }
+
+    /// Dive-agnostic boundary (Prompt julia-off-dive-agnostic, Phase 3/4): the
+    /// field-space objective chain — `cell_reward_map` → `best_inband_centroid` —
+    /// is callable from a **bare `PixelSample` buffer + frame geometry alone**, with
+    /// no nucleus / period / size-estimate / atom-domain context. A future Julia
+    /// dive supplies its own buffer and calls these unchanged; only candidate
+    /// framing (atom → Newton → nuclei) stays Mandelbrot-specific.
+    #[test]
+    fn band_objective_runs_on_bare_buffer() {
+        // 6x6 single-sample grid, all escaped: de=0.3 plane units everywhere and a
+        // per-column smooth_iter gradient. Nothing here is Mandelbrot-derived.
+        let (w, h) = (6u32, 6u32);
+        let mut samples = Vec::with_capacity((w * h) as usize);
+        for _row in 0..h {
+            for col in 0..w {
+                let mut s = px(true, 0.3);
+                s.smooth_iter = col as f64 * 3.0; // intra-window spread → clears BUSY_FLOOR
+                samples.push(s);
+            }
+        }
+        let b = buf(samples, w, h);
+
+        // frame_width=1, target=10 → de_px = de*10 = 3.0 = DE_PX_BAND_CENTER (peak).
+        let bp = BandParams::default();
+        let map = cell_reward_map(&b, w, h, 3, 100, 1.0, 10, &bp);
+        assert_eq!((map.w, map.h), (w as usize, h as usize));
+
+        // Interior windows land at the band peak and clear the busy floor.
+        let center = map.idx(3, 3);
+        assert!((map.de_px[center] - 3.0).abs() < 1e-9, "de_px median at band center");
+        assert!(map.busy[center] >= bp.busy_floor, "busy clears the floor");
+        assert!((map.reward[center] - 1.0).abs() < 1e-9, "reward peaks in-band");
+        assert!(map.in_band[center]);
+
+        // The whole interior is one in-band component; its centroid is the grid
+        // center — computed without any Mandelbrot parameter.
+        let (cx, cy, sr) = best_inband_centroid(&map).expect("an in-band region exists");
+        assert!((cx - 2.5).abs() < 1e-6 && (cy - 2.5).abs() < 1e-6);
+        assert!(sr > 0.0);
     }
 
     /// Fully interior frame: no escaped subsamples → NaN coherence (handled

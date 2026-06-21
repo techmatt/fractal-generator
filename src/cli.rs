@@ -203,6 +203,132 @@ pub enum Command {
     /// `esc_frac`, and median `de_px`, with `de_px` pinned to the target
     /// wallpaper spacing. Validates the missing selection statistic in isolation.
     Cohere(CohereArgs),
+    /// Off-nucleus de_px-band calibration: render one (known) frame f64, compute
+    /// the per-cell `de_px_win` band reward, and emit a heatmap + band-membership
+    /// mask overlay + a three-way `de_px` split (nucleus/decoration/flat). Gates
+    /// the objective on the eye test before the drive spends budget.
+    Deband(DebandArgs),
+}
+
+/// `deband` subcommand: Phase-3 calibration of the off-nucleus de_px-band
+/// objective. Re-renders one known frame (default: the P17 m6 frame), computes
+/// the per-K×K-window `de_px_win` reward map (`coherence::cell_reward_map`), and
+/// writes a `de_px_win` heatmap, a band-membership mask overlay on the shaded
+/// frame, and a JSON split of the `de_px_win` distribution into three clusters.
+/// Confirms the band separates the decoration from the white nuclei before the
+/// drive (Phase 4) is run. f64-only (asserted) — the calibration frame is shallow.
+#[derive(Args, Debug)]
+pub struct DebandArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Frame center, real part — arbitrary-precision decimal. Default: the P17 m6
+    /// nucleus from the last drive (`out/search/drive_m6.json`, node 2).
+    #[arg(
+        long,
+        default_value = "2.937985735174103572271884910831587292717171269575242641059e-1",
+        allow_hyphen_values = true
+    )]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal. Default: the
+    /// P17 m6 nucleus.
+    #[arg(
+        long,
+        default_value = "4.534313868625506495538918687112242054342586358915357494512e-1",
+        allow_hyphen_values = true
+    )]
+    pub center_im: String,
+
+    /// Frame width in the complex plane. Default: the m6 frame width.
+    #[arg(long, default_value_t = 3.0601197372164858e-2)]
+    pub frame_width: f64,
+
+    /// Maximum iterations. Default: the m6 frame's scheduled maxiter.
+    #[arg(long, default_value_t = 3987)]
+    pub maxiter: u32,
+
+    /// Probe render width in pixels (height follows 16:9). The cell grid is at
+    /// this resolution; `de_px` is taken against `--target-width`, not this.
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S) for the probe render.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Target wallpaper width `de_px` is pinned to (resolution-invariant `de`).
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Window size K (K×K) for the per-cell `de_px_win` / busyness aggregation.
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape (matches the drive's default so the mask base render is
+    /// the same image Matt judged).
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Override the band reward center `de_px` (default: the calibrated const).
+    #[arg(long)]
+    pub band_center: Option<f64>,
+
+    /// Override the low reject edge `de_px` (default: the calibrated const).
+    #[arg(long)]
+    pub reject_lo: Option<f64>,
+
+    /// Override the high reject edge `de_px` (default: the calibrated const).
+    #[arg(long)]
+    pub reject_hi: Option<f64>,
+
+    /// Override the busyness floor (default: the calibrated const). Sweep this to
+    /// trade band breadth (low floor: the whole structured band) against the
+    /// busy-filigree subset (high floor).
+    #[arg(long)]
+    pub busy_floor: Option<f64>,
+
+    /// Output directory for the heatmap, mask overlay, and split JSON.
+    #[arg(long, default_value = "out/coherence_cal")]
+    pub out_dir: String,
+
+    /// Label prefix for the emitted files.
+    #[arg(long, default_value = "m6")]
+    pub label: String,
+}
+
+impl DebandArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Effective band params: each field overridden by its flag if present, else
+    /// the calibrated module default.
+    pub fn band_params(&self) -> crate::coherence::BandParams {
+        let d = crate::coherence::BandParams::default();
+        crate::coherence::BandParams {
+            band_center: self.band_center.unwrap_or(d.band_center),
+            reject_lo: self.reject_lo.unwrap_or(d.reject_lo),
+            reject_hi: self.reject_hi.unwrap_or(d.reject_hi),
+            busy_floor: self.busy_floor.unwrap_or(d.busy_floor),
+        }
+    }
 }
 
 /// `wallpaper` subcommand: see the module docs in `wallpaper.rs`. Everything here
@@ -527,6 +653,16 @@ pub struct SearchArgs {
     #[arg(long, default_value_t = 2.0)]
     pub reselect_k: f64,
 
+    /// **Off-nucleus drift drive** (Prompt offnucleus-deband, Phase 4). When set,
+    /// each expanded frame is re-centered: render at the nucleus, find the best
+    /// contiguous in-band `de_px`-band region (the decoration), drift the frame
+    /// center toward its centroid (clamped to `coherence::DRIFT_MAX`), re-render,
+    /// and **surface/rank candidates by band reward**, not busyness — framing the
+    /// decoration around a minibrot instead of its cusp. Off → the existing
+    /// busyness-ranked search is unchanged.
+    #[arg(long, default_value_t = false)]
+    pub drift: bool,
+
     /// Target wallpaper width in pixels the DE-coherence gate is pinned to:
     /// `de_px = de / (frame_width / target_width)`. The panels are cheap
     /// thumbnails, but `de` is resolution-invariant, so a thumbnail predicts the
@@ -555,7 +691,14 @@ pub struct SearchArgs {
     #[arg(long, default_value_t = 100_000)]
     pub period_cap: u32,
 
-    /// Fixed maxiter for every Julia panel (base-scale, shallow).
+    /// Also render the parallel base-scale Julia column in the best-path strip.
+    /// Off by default: a good Mandelbrot region implies a good Julia, so the
+    /// automated render is pure cost. The on-demand `render --julia` is unaffected.
+    #[arg(long, default_value_t = false)]
+    pub with_julia: bool,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow). Only used when
+    /// `--with-julia` is set.
     #[arg(long, default_value_t = 3000)]
     pub julia_maxiter: u32,
 
@@ -675,7 +818,14 @@ pub struct NavigateArgs {
     #[arg(long, default_value_t = 100_000)]
     pub period_cap: u32,
 
-    /// Fixed maxiter for every Julia panel (base-scale, shallow).
+    /// Also render the parallel base-scale Julia column in the filmstrip. Off by
+    /// default: a good Mandelbrot region implies a good Julia, so the automated
+    /// render is pure cost. The on-demand `render --julia` is unaffected.
+    #[arg(long, default_value_t = false)]
+    pub with_julia: bool,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow). Only used when
+    /// `--with-julia` is set.
     #[arg(long, default_value_t = 3000)]
     pub julia_maxiter: u32,
 
@@ -780,7 +930,14 @@ pub struct DescendArgs {
     #[arg(long, default_value_t = 1500.0)]
     pub per_decade: f64,
 
-    /// Fixed maxiter for every Julia panel (base-scale, shallow).
+    /// Also render the parallel base-scale Julia column in the filmstrip. Off by
+    /// default: a good Mandelbrot region implies a good Julia, so the automated
+    /// render is pure cost. The on-demand `render --julia` is unaffected.
+    #[arg(long, default_value_t = false)]
+    pub with_julia: bool,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow). Only used when
+    /// `--with-julia` is set.
     #[arg(long, default_value_t = 3000)]
     pub julia_maxiter: u32,
 

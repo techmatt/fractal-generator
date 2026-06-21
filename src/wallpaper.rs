@@ -287,7 +287,7 @@ pub fn run_wallpaper(args: &WallpaperArgs) -> Result<(), String> {
     }
 
     // ---- descent strip (single column of mandel panels) ----
-    let strip = compose_column(&panels, panel_w, panel_h);
+    let strip = probe::compose_strip_single(&panels, panel_w, panel_h);
     crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)
@@ -624,17 +624,6 @@ fn median(v: &mut [f64]) -> f64 {
     } else {
         0.5 * (v[n / 2 - 1] + v[n / 2])
     }
-}
-
-/// Compose a single-column strip of descent panels (no Julia column here).
-fn compose_column(panels: &[RgbImage], panel_w: u32, panel_h: u32) -> RgbImage {
-    let n = panels.len() as u32;
-    let height = n * panel_h + n.saturating_sub(1) * probe::GAP_V;
-    let mut strip = RgbImage::from_pixel(panel_w, height, Rgb(probe::STRIP_BG));
-    for (i, p) in panels.iter().enumerate() {
-        probe::blit(&mut strip, p, 0, i as u32 * (panel_h + probe::GAP_V));
-    }
-    strip
 }
 
 // ---------------------------------------------------------------------------

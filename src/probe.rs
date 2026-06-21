@@ -209,6 +209,20 @@ pub fn compose_strip(
     strip
 }
 
+/// Compose a single-column strip of just the Mandelbrot panels (no Julia column).
+/// The default for the automated drives now that Julia is opt-in: a Mandelbrot
+/// region being good implies its Julia is good, so the parallel render is pure
+/// cost. [`compose_strip`] still builds the two-column layout under `--with-julia`.
+pub fn compose_strip_single(mandel: &[RgbImage], panel_w: u32, panel_h: u32) -> RgbImage {
+    let n = mandel.len() as u32;
+    let height = n * panel_h + n.saturating_sub(1) * GAP_V;
+    let mut strip = RgbImage::from_pixel(panel_w, height, Rgb(STRIP_BG));
+    for (i, p) in mandel.iter().enumerate() {
+        blit(&mut strip, p, 0, i as u32 * (panel_h + GAP_V));
+    }
+    strip
+}
+
 /// Paste `src` into `dst` at `(x0, y0)`.
 pub fn blit(dst: &mut RgbImage, src: &RgbImage, x0: u32, y0: u32) {
     for (sx, sy, px) in src.enumerate_pixels() {

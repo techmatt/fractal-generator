@@ -689,13 +689,17 @@ pub fn run_navigate(args: &NavigateArgs) -> Result<(), String> {
                 &buf, panel_w, panel_h, ss, &palette, &params, spacing,
                 level, mag, maxiter, backend_name,
             );
-            let julia_img = probe::render_julia_panel(
-                center_f64, args.julia_maxiter, args.bailout, trap,
-                panel_w, panel_h, ss, &palette, &params,
-            );
-            save_panels(&panels_dir, level, &mandel_img, &julia_img)?;
+            let julia_img = args.with_julia.then(|| {
+                probe::render_julia_panel(
+                    center_f64, args.julia_maxiter, args.bailout, trap,
+                    panel_w, panel_h, ss, &palette, &params,
+                )
+            });
+            save_panels(&panels_dir, level, &mandel_img, julia_img.as_ref())?;
             mandel_panels.push(mandel_img);
-            julia_panels.push(julia_img);
+            if let Some(img) = julia_img {
+                julia_panels.push(img);
+            }
             break;
         }
 
@@ -751,14 +755,19 @@ pub fn run_navigate(args: &NavigateArgs) -> Result<(), String> {
         .to_uppercase();
         font::draw_text(&mut mandel_img, &label, 2, 2, 2, Rgb([240, 240, 240]), true);
 
-        let julia_img = probe::render_julia_panel(
-            c_f64, args.julia_maxiter, args.bailout, trap,
-            panel_w, panel_h, ss, &palette, &params,
-        );
-        save_panels(&panels_dir, level, &mandel_img, &julia_img)?;
+        let julia_img = args.with_julia.then(|| {
+            probe::render_julia_panel(
+                c_f64, args.julia_maxiter, args.bailout, trap,
+                panel_w, panel_h, ss, &palette, &params,
+            )
+        });
+        save_panels(&panels_dir, level, &mandel_img, julia_img.as_ref())?;
 
         let mandel_rel = format!("mandel_{level:02}.png");
-        let julia_rel = format!("julia_{level:02}.png");
+        let julia_panel_str = julia_img
+            .as_ref()
+            .map(|_| probe::path_str(&panels_dir.join(format!("julia_{level:02}.png"))))
+            .unwrap_or_default();
 
         print_table_row(
             level, width, mag, maxiter, backend_name, buf.glitched_pixels,
@@ -791,10 +800,12 @@ pub fn run_navigate(args: &NavigateArgs) -> Result<(), String> {
             stuck,
             stop_reason: None,
             mandel_panel: probe::path_str(&panels_dir.join(&mandel_rel)),
-            julia_panel: probe::path_str(&panels_dir.join(&julia_rel)),
+            julia_panel: julia_panel_str,
         });
         mandel_panels.push(mandel_img);
-        julia_panels.push(julia_img);
+        if let Some(img) = julia_img {
+            julia_panels.push(img);
+        }
 
         // Score-collapse early-stop: the best candidate is not frame-able (its
         // size exceeds the frame ⇒ a zoom-*out*, or no navigable period). Single
@@ -835,7 +846,11 @@ pub fn run_navigate(args: &NavigateArgs) -> Result<(), String> {
         return Err("navigate produced no panels (first level had no candidate)".into());
     }
 
-    let strip = probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h);
+    let strip = if args.with_julia {
+        probe::compose_strip(&mandel_panels, &julia_panels, panel_w, panel_h)
+    } else {
+        probe::compose_strip_single(&mandel_panels, panel_w, panel_h)
+    };
     crate::ensure_parent_dir(strip_path)?;
     strip
         .save(strip_path)
@@ -912,16 +927,18 @@ fn save_panels(
     dir: &Path,
     level: u32,
     mandel: &RgbImage,
-    julia: &RgbImage,
+    julia: Option<&RgbImage>,
 ) -> Result<(), String> {
     let mp = dir.join(format!("mandel_{level:02}.png"));
-    let jp = dir.join(format!("julia_{level:02}.png"));
     mandel
         .save(&mp)
         .map_err(|e| format!("failed to write {}: {e}", mp.display()))?;
-    julia
-        .save(&jp)
-        .map_err(|e| format!("failed to write {}: {e}", jp.display()))?;
+    if let Some(julia) = julia {
+        let jp = dir.join(format!("julia_{level:02}.png"));
+        julia
+            .save(&jp)
+            .map_err(|e| format!("failed to write {}: {e}", jp.display()))?;
+    }
     Ok(())
 }
 
