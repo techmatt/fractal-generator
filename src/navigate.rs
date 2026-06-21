@@ -292,6 +292,7 @@ pub fn size_estimate(c: Complex<f64>, period: u32) -> SizeEstimate {
 // ===========================================================================
 
 /// A raw nucleus candidate read from the atom channels of a rendered panel.
+#[derive(Clone)]
 pub struct Candidate {
     pub col: usize,
     pub row: usize,
@@ -317,6 +318,10 @@ struct AtomPix {
 /// Read atom-domain candidates from a rendered Mandelbrot buffer: local minima
 /// of `atom_min`, deduplicated to the best representative per distinct period,
 /// filtered to periods in `[2, maxiter]` and away from the frame edge.
+///
+/// This is the **single-frame descent** scan: one nucleus per distinct period.
+/// For the broad *spatial* seed scan (many distinct same-period nuclei across a
+/// wide base region) see [`atom_candidates_spatial`].
 pub fn atom_candidates(
     buf: &SampleBuffer,
     panel_w: u32,
@@ -324,13 +329,60 @@ pub fn atom_candidates(
     width: f64,
     maxiter: u32,
 ) -> Vec<Candidate> {
-    let w = panel_w as usize;
-    let h = panel_h as usize;
+    let raw = atom_local_minima(buf, panel_w, panel_h, width, maxiter);
+    // Dedup by distinct period: keep the deepest-approach (smallest atom_min) rep.
+    let mut best: std::collections::HashMap<u32, Candidate> = std::collections::HashMap::new();
+    for cand in raw {
+        best
+            .entry(cand.period)
+            .and_modify(|c| {
+                if cand.atom_min < c.atom_min {
+                    *c = cand.clone();
+                }
+            })
+            .or_insert(cand);
+    }
+    best.into_values().collect()
+}
+
+/// Broad-seed scan: like [`atom_candidates`] but deduplicated **spatially** (one
+/// nucleus per `cell_px × cell_px` grid cell, the deepest-approach rep) rather
+/// than per distinct period. Over a wide base frame this surfaces *many distinct
+/// low-period nuclei spread across the plane* — multiple period-`p` minibrots at
+/// different locations all survive, where the per-period dedup would collapse them
+/// to one. This is the source of breadth for the shallow harvest (the frontier is
+/// seeded with the whole spread, not one interior point).
+pub fn atom_candidates_spatial(
+    buf: &SampleBuffer,
+    panel_w: u32,
+    panel_h: u32,
+    width: f64,
+    maxiter: u32,
+    cell_px: u32,
+) -> Vec<Candidate> {
+    let raw = atom_local_minima(buf, panel_w, panel_h, width, maxiter);
+    let cell = cell_px.max(1) as usize;
+    let grid_w = (panel_w as usize).div_ceil(cell);
+    // (cell index -> best candidate so far) dedup by spatial grid cell.
+    let mut best: std::collections::HashMap<usize, Candidate> = std::collections::HashMap::new();
+    for cand in raw {
+        let key = (cand.row / cell) * grid_w + (cand.col / cell);
+        best
+            .entry(key)
+            .and_modify(|c| {
+                if cand.atom_min < c.atom_min {
+                    *c = cand.clone();
+                }
+            })
+            .or_insert(cand);
+    }
+    best.into_values().collect()
+}
+
+/// Aggregate subpixels to per-output-pixel atom stats.
+fn atom_pixels(buf: &SampleBuffer, w: usize, h: usize) -> Vec<AtomPix> {
     let s = buf.ss as usize;
     let sub_w = w * s;
-
-    // Aggregate subpixels: take the subpixel of smallest atom_min (nearest a
-    // nucleus) per output pixel; mean smooth over escaped subpixels for busyness.
     let mut pix: Vec<AtomPix> = Vec::with_capacity(w * h);
     for row in 0..h {
         for col in 0..w {
@@ -354,22 +406,33 @@ pub fn atom_candidates(
             }
             let escaped = esc * 2 >= s * s;
             let smooth = if esc > 0 { sm / esc as f64 } else { 0.0 };
-            pix.push(AtomPix {
-                amin,
-                period,
-                smooth,
-                escaped,
-            });
+            pix.push(AtomPix { amin, period, smooth, escaped });
         }
     }
+    pix
+}
+
+/// All raw atom-domain local minima (3×3 minima of `atom_min`, period in
+/// `[2, maxiter]`, away from the edge), each with its windowed busyness. The
+/// shared core both dedup strategies (`atom_candidates`, `atom_candidates_spatial`)
+/// reduce; never returned directly.
+fn atom_local_minima(
+    buf: &SampleBuffer,
+    panel_w: u32,
+    panel_h: u32,
+    width: f64,
+    maxiter: u32,
+) -> Vec<Candidate> {
+    let w = panel_w as usize;
+    let h = panel_h as usize;
+    let pix = atom_pixels(buf, w, h);
 
     let fw = width;
     let fh = width * (panel_h as f64 / panel_w as f64);
     let margin = BUSY_R.max(2);
     let inv_maxiter = 1.0 / maxiter.max(1) as f64;
 
-    // (period -> best candidate so far) dedup by distinct period.
-    let mut best: std::collections::HashMap<u32, Candidate> = std::collections::HashMap::new();
+    let mut out: Vec<Candidate> = Vec::new();
     for row in (margin as usize)..(h - margin as usize) {
         for col in (margin as usize)..(w - margin as usize) {
             let idx = row * w + col;
@@ -411,7 +474,7 @@ pub fn atom_candidates(
             let dc_re = ((col as f64 + 0.5) / panel_w as f64 - 0.5) * fw;
             let dc_im = (0.5 - (row as f64 + 0.5) / panel_h as f64) * fh;
 
-            let cand = Candidate {
+            out.push(Candidate {
                 col,
                 row,
                 period,
@@ -419,26 +482,10 @@ pub fn atom_candidates(
                 dc_re,
                 dc_im,
                 busyness,
-            };
-            best.entry(period)
-                .and_modify(|c| {
-                    if a < c.atom_min {
-                        *c = Candidate {
-                            col,
-                            row,
-                            period,
-                            atom_min: a,
-                            dc_re,
-                            dc_im,
-                            busyness,
-                        };
-                    }
-                })
-                .or_insert(cand);
+            });
         }
     }
-
-    best.into_values().collect()
+    out
 }
 
 /// Population standard deviation (empty → 0).

@@ -653,6 +653,20 @@ pub struct SearchArgs {
     #[arg(long, default_value_t = 2.0)]
     pub reselect_k: f64,
 
+    /// **Broad shallow seed count** (Prompt broad-shallow-harvest). When `> 0`, the
+    /// root frontier is seeded by a coarse global atom-domain scan deduped
+    /// *spatially* — keeping up to this many distinct low-period nuclei spread
+    /// across the base region, instead of `beam_width`. The source of breadth for
+    /// the shallow harvest. `0` (default) → legacy single-root-expand behaviour.
+    #[arg(long, default_value_t = 0)]
+    pub seed_count: usize,
+
+    /// Spatial-dedup cell size (panel px) for the broad seed scan: one nucleus per
+    /// `seed_cell_px²` cell. Smaller → more, closer-packed seeds. Only used when
+    /// `--seed-count > 0`.
+    #[arg(long, default_value_t = 24)]
+    pub seed_cell_px: u32,
+
     /// **Off-nucleus drift drive** (Prompt offnucleus-deband, Phase 4). When set,
     /// each expanded frame is re-centered: render at the nucleus, find the best
     /// contiguous in-band `de_px`-band region (the decoration), drift the frame
@@ -690,6 +704,15 @@ pub struct SearchArgs {
     /// Hard cap: don't descend into minibrots of higher period than this.
     #[arg(long, default_value_t = 100_000)]
     pub period_cap: u32,
+
+    /// **Magnification ceiling** (Prompt broad-shallow-harvest): don't expand a
+    /// node deeper than this magnification. The depth analog of `--period-cap`: a
+    /// chain of low-period descents nests deep even under a low period cap, and the
+    /// busyness-priority frontier dives there, wasting budget on sub-pixel deep
+    /// frames. Capping mag bounds the harvest to the shallow decoration regime.
+    /// `0` (default) → unlimited (default search unchanged).
+    #[arg(long, default_value_t = 0.0)]
+    pub max_mag: f64,
 
     /// Also render the parallel base-scale Julia column in the best-path strip.
     /// Off by default: a good Mandelbrot region implies a good Julia, so the

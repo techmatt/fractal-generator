@@ -39,7 +39,7 @@ use crate::cli::SearchArgs;
 use crate::coloring::ColorParams;
 use crate::font;
 use crate::hp;
-use crate::navigate::{atom_candidates, newton_nucleus, size_estimate};
+use crate::navigate::{atom_candidates, atom_candidates_spatial, newton_nucleus, size_estimate};
 use crate::palette::Palette;
 use crate::palette_io::load_palette;
 use crate::probe::{self, SplitMix64};
@@ -485,12 +485,22 @@ struct Cfg<'a> {
     frame_multiple: f64,
     reselect_k: f64,
     beam_width: usize,
+    /// Broad shallow seed count: when `> 0`, the **root** is seeded by a coarse
+    /// global atom-domain scan deduped *spatially* (see `atom_candidates_spatial`),
+    /// keeping up to this many distinct low-period nuclei across the plane instead
+    /// of `beam_width`. `0` → legacy single-root-expand (root keeps `beam_width`).
+    seed_count: usize,
+    /// Spatial-dedup cell size (panel px) for the broad seed scan.
+    seed_cell_px: u32,
     diversity: f64,
     seed: u64,
     maxiter_base: f64,
     per_decade: f64,
     maxiter_ceiling: u32,
     period_cap: u32,
+    /// Magnification ceiling: don't expand nodes deeper than this (`0` = unlimited).
+    /// The depth analog of `period_cap` for the broad-shallow harvest.
+    max_mag: f64,
     bailout: f64,
     backend: crate::cli::BackendChoice,
     panels_dir: std::path::PathBuf,
@@ -562,12 +572,15 @@ pub fn run_search(args: &SearchArgs) -> Result<(), String> {
         frame_multiple: args.frame_multiple,
         reselect_k: args.reselect_k,
         beam_width: args.beam_width,
+        seed_count: args.seed_count,
+        seed_cell_px: args.seed_cell_px,
         diversity: args.diversity,
         seed: args.seed,
         maxiter_base: args.maxiter_base,
         per_decade: args.per_decade,
         maxiter_ceiling: args.maxiter_ceiling,
         period_cap: args.period_cap,
+        max_mag: args.max_mag,
         bailout: args.bailout,
         backend: args.backend,
         panels_dir: panels_dir.clone(),
@@ -577,6 +590,14 @@ pub fn run_search(args: &SearchArgs) -> Result<(), String> {
         drift: args.drift,
         band: crate::coherence::BandParams::default(),
     };
+    if cfg.seed_count > 0 {
+        eprintln!(
+            "broad shallow seeding ON: root seeded by spatial atom scan (≤{} seeds, cell {}px); \
+             period-cap {}, max-mag {}",
+            cfg.seed_count, cfg.seed_cell_px, cfg.period_cap,
+            if cfg.max_mag > 0.0 { format!("{:.1e}", cfg.max_mag) } else { "unlimited".into() },
+        );
+    }
     if cfg.drift {
         eprintln!(
             "off-nucleus drift drive ON: band objective (center={:.2} reject=[{:.2},{:.2}] \
@@ -776,6 +797,21 @@ fn expand_node(
         print_skip_row(id, depth, mag, "width<floor");
         return Ok(());
     }
+    // Magnification ceiling (the depth analog of `period_cap`): a chain of
+    // low-period descents nests deep even under a low period cap, and the frontier
+    // (priority = busyness base-score) dives toward those busy-but-sub-pixel deep
+    // boundaries — exactly the budget waste the broad-shallow harvest exists to
+    // avoid. Capping mag bounds the harvest to the shallow regime where decoration
+    // resolves at the target width, converting deep-descent pops into near-free
+    // skips so the budget covers breadth. `0` = unlimited (default search).
+    if cfg.max_mag > 0.0 && !is_root && mag > cfg.max_mag {
+        nodes[id].collapse_reason =
+            Some(format!("magnification {mag:.2e} exceeds max-mag {:.2e}", cfg.max_mag));
+        nodes[id].magnification = mag;
+        nodes[id].maxiter = maxiter;
+        print_skip_row(id, depth, mag, "mag>max");
+        return Ok(());
+    }
     if maxiter > cfg.maxiter_ceiling {
         nodes[id].collapse_reason =
             Some(format!("maxiter {maxiter} exceeds ceiling {}", cfg.maxiter_ceiling));
@@ -845,7 +881,19 @@ fn expand_node(
     } else if !is_root && node_period > cfg.period_cap {
         collapse_reason = Some(format!("period {node_period} exceeds cap {}", cfg.period_cap));
     } else {
-        let mut cands = atom_candidates(&panel.buf, cfg.panel_w, cfg.panel_h, width, maxiter);
+        // Broad shallow seeding: at the root, scan the whole base frame and dedup
+        // *spatially* (many distinct same-period nuclei across the plane) and keep
+        // up to `seed_count` of them — the source of breadth. Every other node uses
+        // the per-period descent scan and keeps `beam_width`.
+        let broad_seed = is_root && cfg.seed_count > 0;
+        let keep = if broad_seed { cfg.seed_count } else { cfg.beam_width };
+        let mut cands = if broad_seed {
+            atom_candidates_spatial(
+                &panel.buf, cfg.panel_w, cfg.panel_h, width, maxiter, cfg.seed_cell_px,
+            )
+        } else {
+            atom_candidates(&panel.buf, cfg.panel_w, cfg.panel_h, width, maxiter)
+        };
         n_candidates = cands.len();
         // Newton-refining every candidate just to score it dominates the cost at
         // depth (thousands of distinct periods). The score is
@@ -861,7 +909,7 @@ fn expand_node(
                 && c.busyness >= cfg.bands.busyness_reject_below
         });
         cands.sort_by(|a, b| b.busyness.partial_cmp(&a.busyness).unwrap_or(Ordering::Equal));
-        let n_eval = (cfg.beam_width * 8).max(24);
+        let n_eval = (keep * 4).max(cfg.beam_width * 8).max(24);
         cands.truncate(n_eval);
         for c in &cands {
             let guess_re = center_re.add(&BigFloat::from_f64(c.dc_re, prec), prec, RM);
@@ -942,9 +990,10 @@ fn expand_node(
                 circle: (cx, cy, cr),
             });
         }
-        // Keep the top beam_width by base score.
+        // Keep the top `keep` by base score (seed_count at the root in broad-seed
+        // mode, beam_width otherwise).
         builds.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
-        builds.truncate(cfg.beam_width);
+        builds.truncate(keep);
         if builds.is_empty() && collapse_reason.is_none() {
             collapse_reason =
                 Some("no valid child (atom/Newton/size/re-selection all rejected)".into());
@@ -971,12 +1020,16 @@ fn expand_node(
             cfg.target_width, &cfg.band,
         );
         let reward0 = total_reward(&map0);
-        let centroid0 = crate::coherence::best_inband_centroid(&map0).map(|(cx, cy, _)| (cx, cy));
+        // Phase-3 fix: drift toward the **densest in-band reward lobe**, not the
+        // centroid. Decoration is a ring of filigree around the cusp; the centroid
+        // of a ring is its hole (back on the boundary, de_px → 0), which is why the
+        // centroid-drift landed at de_px ~0.06. The peak sits on an actual lobe.
+        let target0 = crate::coherence::best_inband_peak(&map0).map(|(cx, cy, _)| (cx, cy));
         band_score = reward0 / cells;
         de_px_center = center_de_px(&map0, cfg.panel_w as usize, cfg.panel_h as usize);
 
-        if let Some((cx, cy)) = centroid0 {
-            // Centroid (cell coords) → plane offset from the frame center.
+        if let Some((cx, cy)) = target0 {
+            // Peak cell coords → plane offset from the frame center.
             let frame_h = width * (cfg.panel_h as f64 / cfg.panel_w as f64);
             let mut dre = (cx / cfg.panel_w as f64 - 0.5) * width;
             let mut dim = (0.5 - cy / cfg.panel_h as f64) * frame_h;
@@ -1237,15 +1290,43 @@ fn write_best_path_strip(
 // Top-N diversity contact sheet (farthest-point sampling)
 // ===========================================================================
 
-/// Pick up to `n` diverse high-scoring nodes by farthest-point sampling over the
-/// feature vectors, seeded with the top scorer. Pool = expanded non-root nodes
-/// that have a cached panel.
-fn top_n_ids(nodes: &[Node], n: usize, drift: bool) -> Vec<usize> {
-    let pool: Vec<usize> = nodes
+/// Surfaceable pool with **same-nucleus duplicates collapsed** (highest rank
+/// metric kept). The same minibrot is often reached by two paths (and re-found
+/// drifted/undrifted), producing redundant tiles; the broad spatial seed makes
+/// this common. Conjugate nuclei (`im` sign flip) are genuinely distinct frames
+/// and are *not* collapsed — only nuclei equal to f64 precision. Greedy: sort by
+/// rank desc, keep a node unless its `c_f64` matches an already-kept node's.
+fn dedup_by_nucleus(nodes: &[Node], drift: bool) -> Vec<usize> {
+    let mut ids: Vec<usize> = nodes
         .iter()
         .filter(|nd| surfaceable(nd, drift))
         .map(|nd| nd.id)
         .collect();
+    ids.sort_by(|&a, &b| {
+        rank_metric(&nodes[b], drift)
+            .partial_cmp(&rank_metric(&nodes[a], drift))
+            .unwrap_or(Ordering::Equal)
+    });
+    let mut kept: Vec<usize> = Vec::new();
+    for id in ids {
+        let c = nodes[id].c_f64;
+        let dup = kept.iter().any(|&k| {
+            let o = nodes[k].c_f64;
+            let scale = 1.0 + c.re.abs().max(c.im.abs());
+            (c.re - o.re).hypot(c.im - o.im) < 1e-9 * scale
+        });
+        if !dup {
+            kept.push(id);
+        }
+    }
+    kept
+}
+
+/// Pick up to `n` diverse high-scoring nodes by farthest-point sampling over the
+/// feature vectors, seeded with the top scorer. Pool = surfaceable non-root nodes
+/// (with same-nucleus duplicates collapsed) that have a cached panel.
+fn top_n_ids(nodes: &[Node], n: usize, drift: bool) -> Vec<usize> {
+    let pool = dedup_by_nucleus(nodes, drift);
     if pool.is_empty() || n == 0 {
         return Vec::new();
     }
@@ -1427,9 +1508,13 @@ fn build_json(
     s.push_str(&format!("    \"start_width\": {},\n", jf(args.start_width)));
     s.push_str(&format!("    \"time_budget\": {},\n", jf(args.time_budget)));
     s.push_str(&format!("    \"beam_width\": {},\n", args.beam_width));
+    s.push_str(&format!("    \"seed_count\": {},\n", args.seed_count));
+    s.push_str(&format!("    \"seed_cell_px\": {},\n", args.seed_cell_px));
     s.push_str(&format!("    \"diversity\": {},\n", jf(args.diversity)));
     s.push_str(&format!("    \"frame_multiple\": {},\n", jf(args.frame_multiple)));
     s.push_str(&format!("    \"reselect_k\": {},\n", jf(args.reselect_k)));
+    s.push_str(&format!("    \"period_cap\": {},\n", args.period_cap));
+    s.push_str(&format!("    \"max_mag\": {},\n", jf(args.max_mag)));
     s.push_str(&format!("    \"panel_width\": {},\n", args.panel_width));
     s.push_str(&format!("    \"coherence_target_width\": {},\n", args.target_width));
     s.push_str(&format!("    \"coherence_theta\": {},\n", jf(args.coherence_theta)));

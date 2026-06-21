@@ -568,6 +568,55 @@ pub fn best_inband_centroid(map: &CellMap) -> Option<(f64, f64, f64)> {
     best
 }
 
+/// Smoothing radius (cells) for the reward-density peak: the lobe metric is the
+/// summed `reward` over a `(2r+1)²` window, so a single fluke cell can't win — the
+/// peak lands on the body of the densest decoration cluster.
+const PEAK_SMOOTH_R: i32 = 2;
+
+/// Location of the **densest in-band reward lobe** (output-pixel cell coords
+/// `(col, row)`), plus that lobe's windowed reward density. For each in-band cell
+/// it sums `reward` over a `±PEAK_SMOOTH_R` window and returns the argmax cell.
+///
+/// This is the drift target that **replaces** [`best_inband_centroid`]: decoration
+/// is typically a *ring* of filigree around the minibrot cusp, and the centroid of
+/// a ring is its hole — back on the boundary (`de_px → 0`), which is why the
+/// centroid-drift landed at `de_px` ~0.06. The density peak sits on an actual lobe
+/// of the ring, so the drifted frame centers on resolved decoration and the move
+/// never no-ops on a symmetric halo. `None` when no cell is in band.
+pub fn best_inband_peak(map: &CellMap) -> Option<(f64, f64, f64)> {
+    let w = map.w as i32;
+    let h = map.h as i32;
+    let r = PEAK_SMOOTH_R;
+    let mut best: Option<(f64, f64, f64)> = None; // (cx, cy, density)
+    for row in 0..h {
+        for col in 0..w {
+            let center = (row as usize) * map.w + col as usize;
+            if !map.in_band[center] {
+                continue;
+            }
+            // Windowed reward density around this in-band cell.
+            let mut density = 0.0f64;
+            for dy in -r..=r {
+                let ry = row + dy;
+                if ry < 0 || ry >= h {
+                    continue;
+                }
+                for dx in -r..=r {
+                    let rx = col + dx;
+                    if rx < 0 || rx >= w {
+                        continue;
+                    }
+                    density += map.reward[(ry as usize) * map.w + rx as usize];
+                }
+            }
+            if best.map(|b| density > b.2).unwrap_or(true) {
+                best = Some((col as f64, row as f64, density));
+            }
+        }
+    }
+    best
+}
+
 /// `cohere` subcommand — isolation validation of the coherence statistic.
 ///
 /// Renders **one** frame at a modest probe resolution with the f64 backend
@@ -886,6 +935,48 @@ mod tests {
         let (cx, cy, sr) = best_inband_centroid(&map).expect("a region exists");
         assert!((sr - 4.0).abs() < 1e-9, "the 2x2 block (sum 4) beats the single fluke (sum 1)");
         assert!((cx - 4.5).abs() < 1e-9 && (cy - 1.5).abs() < 1e-9, "centroid is the block center");
+    }
+
+    /// Phase-3 drift-target fix: on a *ring* of in-band reward the centroid lands
+    /// in the hole (back on the boundary), but `best_inband_peak` lands on the ring
+    /// itself (the densest lobe). This is the bug the peak target fixes.
+    #[test]
+    fn peak_lands_on_ring_centroid_in_hole() {
+        let w = 11usize;
+        let h = 11usize;
+        let mut map = CellMap {
+            w,
+            h,
+            k: 1,
+            de_px: vec![f64::NAN; w * h],
+            busy: vec![0.0; w * h],
+            reward: vec![0.0; w * h],
+            in_band: vec![false; w * h],
+        };
+        // A reward ring at radius ~3 from the grid center (5,5); empty hole inside.
+        let (cx0, cy0) = (5i32, 5i32);
+        for row in 0..h as i32 {
+            for col in 0..w as i32 {
+                let d = (((col - cx0).pow(2) + (row - cy0).pow(2)) as f64).sqrt();
+                if (d - 3.0).abs() < 1.0 {
+                    let i = row as usize * w + col as usize;
+                    map.reward[i] = 1.0;
+                    map.in_band[i] = true;
+                }
+            }
+        }
+        // Centroid of the symmetric ring is its center (the hole).
+        let (ccx, ccy, _) = best_inband_centroid(&map).expect("ring is one component");
+        assert!((ccx - 5.0).abs() < 1e-6 && (ccy - 5.0).abs() < 1e-6, "centroid is the hole center");
+        assert!(!map.in_band[5 * w + 5], "the hole center is itself out of band");
+
+        // The density peak lands on the ring — an in-band cell, not the hole.
+        let (pcx, pcy, dens) = best_inband_peak(&map).expect("ring has in-band cells");
+        let pi = pcy as usize * w + pcx as usize;
+        assert!(map.in_band[pi], "peak cell must be in band (on the ring)");
+        let dist = (((pcx as i32 - cx0).pow(2) + (pcy as i32 - cy0).pow(2)) as f64).sqrt();
+        assert!(dist > 1.5, "peak sits out on the ring, not in the hole: dist={dist}");
+        assert!(dens > 0.0);
     }
 
     /// Dive-agnostic boundary (Prompt julia-off-dive-agnostic, Phase 3/4): the
