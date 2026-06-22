@@ -39,6 +39,7 @@ pub mod deband;
 pub mod descend;
 pub mod energy;
 pub mod font;
+pub mod generate;
 pub mod hp;
 /// Throwaway diagnostic (location-source base-rate probe). Test-only: compiled
 /// solely under `cargo test`, never into the production binary. Run explicitly:

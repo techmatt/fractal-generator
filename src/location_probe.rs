@@ -129,7 +129,7 @@ fn run() -> Result<(), String> {
     // Fixed colormap from the JSON library (no serde — tolerant hand scan).
     let cm_text = std::fs::read_to_string(COLORMAPS_PATH)
         .map_err(|e| format!("read {COLORMAPS_PATH}: {e}"))?;
-    let stops = load_colormap(&cm_text, COLORMAP)?;
+    let stops = probe::load_colormap(&cm_text, COLORMAP)?;
     let palette = Palette::from_srgb8_stops(COLORMAP, &stops, false);
     let params = color_params();
     let trap = Trap {
@@ -229,7 +229,7 @@ fn run() -> Result<(), String> {
         let regions = region_energies(&rgb);
         let sig = bins.signature(&regions);
         let sparse_score = sig.hist[0][0];
-        let sparse_pct = frac_le(&corpus_sparse, sparse_score);
+        let sparse_pct = probe::frac_le(&corpus_sparse, sparse_score);
         let nn_emd = corpus_sigs
             .iter()
             .map(|cs| distance(&sig, cs, &WEIGHTS))
@@ -329,77 +329,6 @@ fn run() -> Result<(), String> {
     eprintln!("json  : {}", json_path.display());
     eprintln!("thumbs: {}/NN.png", thumbs_dir.display());
     Ok(())
-}
-
-/// Fraction of a sorted slice `<= v` (the empirical percentile of `v`).
-/// `pub(crate)` so probe 1 reuses the same percentile helper.
-pub(crate) fn frac_le(sorted: &[f64], v: f64) -> f64 {
-    if sorted.is_empty() {
-        return f64::NAN;
-    }
-    // partition_point: count of elements <= v.
-    let c = sorted.partition_point(|&x| x <= v);
-    c as f64 / sorted.len() as f64
-}
-
-/// Pull one named colormap's stops out of `clean_colormaps.json` without serde.
-/// The stops array is `[[pos,[r,g,b]], ...]`; we bracket-match the array span,
-/// flatten every numeric token in it, and chunk by 4 → `(pos, [r,g,b])`.
-/// `pub(crate)` so probe 1 reuses the same colormap loader.
-pub(crate) fn load_colormap(text: &str, name: &str) -> Result<Vec<(f64, [u8; 3])>, String> {
-    let needle = format!("\"{name}\"");
-    let np = text
-        .find(&needle)
-        .ok_or_else(|| format!("colormap '{name}' not found"))?;
-    let sp = text[np..]
-        .find("\"stops\"")
-        .map(|p| p + np)
-        .ok_or_else(|| format!("colormap '{name}': no stops"))?;
-    let open = text[sp..]
-        .find('[')
-        .map(|p| p + sp)
-        .ok_or("stops: no '['")?;
-    // Bracket-match to find the end of the stops array.
-    let bytes = text.as_bytes();
-    let mut depth = 0i32;
-    let mut end = open;
-    for (k, &b) in bytes[open..].iter().enumerate() {
-        match b {
-            b'[' => depth += 1,
-            b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = open + k;
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let span = &text[open + 1..end];
-    // Flatten numeric tokens.
-    let mut nums: Vec<f64> = Vec::new();
-    for tok in span.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E')) {
-        if tok.is_empty() {
-            continue;
-        }
-        if let Ok(x) = tok.parse::<f64>() {
-            nums.push(x);
-        }
-    }
-    if nums.is_empty() || nums.len() % 4 != 0 {
-        return Err(format!(
-            "colormap '{name}': parsed {} numbers (not a multiple of 4)",
-            nums.len()
-        ));
-    }
-    let mut stops = Vec::with_capacity(nums.len() / 4);
-    for ch in nums.chunks_exact(4) {
-        let pos = ch[0];
-        let rgb = [ch[1] as u8, ch[2] as u8, ch[3] as u8];
-        stops.push((pos, rgb));
-    }
-    Ok(stops)
 }
 
 fn jnum(x: f64) -> String {

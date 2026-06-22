@@ -41,7 +41,7 @@ use crate::backend::{Trap, TrapShape};
 use crate::cli::BackendChoice;
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use crate::energy::{self, distance, region_energies, Signature};
-use crate::location_probe::{frac_le, load_colormap};
+use crate::probe::{frac_le, load_colormap};
 use crate::palette::Palette;
 use crate::{font, hp, probe, render, sheet};
 

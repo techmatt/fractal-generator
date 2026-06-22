@@ -264,3 +264,80 @@ pub fn jf(x: f64) -> String {
 pub fn js(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
+
+/// Fraction of a sorted slice `<= v` (the empirical percentile of `v`).
+///
+/// Shared by the location probes and the `generate` subcommand (the corpus
+/// descriptor is a keeper-only feature there). Lifted here from the test-only
+/// `location_probe` module so a production subcommand can reuse it unchanged.
+pub fn frac_le(sorted: &[f64], v: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    // partition_point: count of elements <= v.
+    let c = sorted.partition_point(|&x| x <= v);
+    c as f64 / sorted.len() as f64
+}
+
+/// Pull one named colormap's stops out of `clean_colormaps.json` without serde.
+/// The stops array is `[[pos,[r,g,b]], ...]`; we bracket-match the array span,
+/// flatten every numeric token in it, and chunk by 4 → `(pos, [r,g,b])`.
+///
+/// Shared by the location probes and the `generate` subcommand (one fixed
+/// held-out colormap for the structure-finding previews). Lifted here from the
+/// test-only `location_probe` module so a production subcommand can reuse it.
+pub fn load_colormap(text: &str, name: &str) -> Result<Vec<(f64, [u8; 3])>, String> {
+    let needle = format!("\"{name}\"");
+    let np = text
+        .find(&needle)
+        .ok_or_else(|| format!("colormap '{name}' not found"))?;
+    let sp = text[np..]
+        .find("\"stops\"")
+        .map(|p| p + np)
+        .ok_or_else(|| format!("colormap '{name}': no stops"))?;
+    let open = text[sp..]
+        .find('[')
+        .map(|p| p + sp)
+        .ok_or("stops: no '['")?;
+    // Bracket-match to find the end of the stops array.
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    let mut end = open;
+    for (k, &b) in bytes[open..].iter().enumerate() {
+        match b {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + k;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let span = &text[open + 1..end];
+    // Flatten numeric tokens.
+    let mut nums: Vec<f64> = Vec::new();
+    for tok in span.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E')) {
+        if tok.is_empty() {
+            continue;
+        }
+        if let Ok(x) = tok.parse::<f64>() {
+            nums.push(x);
+        }
+    }
+    if nums.is_empty() || nums.len() % 4 != 0 {
+        return Err(format!(
+            "colormap '{name}': parsed {} numbers (not a multiple of 4)",
+            nums.len()
+        ));
+    }
+    let mut stops = Vec::with_capacity(nums.len() / 4);
+    for ch in nums.chunks_exact(4) {
+        let pos = ch[0];
+        let rgb = [ch[1] as u8, ch[2] as u8, ch[3] as u8];
+        stops.push((pos, rgb));
+    }
+    Ok(stops)
+}
