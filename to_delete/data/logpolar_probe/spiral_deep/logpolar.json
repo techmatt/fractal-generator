@@ -1,6 +1,0 @@
-{
-  "name": "spiral_deep", "center_re": -7.453000000000e-1, "center_im": 1.127000000000e-1, "frame_width": 3.500000e-3,
-  "reflection": { "h": 0.43950, "v": 0.33447, "diag1": 0.25387, "diag2": 0.29054 },
-  "n_nuclei": 536, "bands_px": [(4.0, 90.0), (10.0, 260.0)],
-  "centers": [{"label":"H1","kind":"hub","period":34,"fx":96.15,"fy":715.51,"hubness":0.1573,"pitch":0.0000,"fold":2,"r2":0.0704,"r4":-0.1226,"ratio":1.0481},{"label":"H2","kind":"hub","period":36,"fx":217.34,"fy":509.52,"hubness":0.2012,"pitch":0.2008,"fold":2,"r2":0.0781,"r4":-0.0393,"ratio":1.0481},{"label":"H3","kind":"hub","period":38,"fx":18.79,"fy":76.28,"hubness":0.1767,"pitch":0.9036,"fold":8,"r2":0.0073,"r4":-0.1286,"ratio":1.0481},{"label":"H4","kind":"hub","period":40,"fx":209.60,"fy":109.26,"hubness":0.2192,"pitch":-0.0502,"fold":2,"r2":0.0427,"r4":-0.0664,"ratio":1.0481},{"label":"J1","kind":"junc","period":0,"fx":156.74,"fy":612.52,"hubness":0.1532,"pitch":0.3012,"fold":2,"r2":0.0174,"r4":-0.0613,"ratio":1.0481},{"label":"J2","kind":"junc","period":0,"fx":118.07,"fy":292.90,"hubness":0.2177,"pitch":-1.5060,"fold":8,"r2":-0.7495,"r4":0.0509,"ratio":1.0481}]
-}

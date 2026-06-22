@@ -1,6 +1,0 @@
-{
-  "name": "seahorse_a", "center_re": -7.454000000000e-1, "center_im": 1.132000000000e-1, "frame_width": 1.800000e-2,
-  "reflection": { "h": 0.41165, "v": 0.14073, "diag1": 0.41456, "diag2": 0.26135 },
-  "n_nuclei": 401, "bands_px": [(4.0, 90.0), (10.0, 260.0)],
-  "centers": [{"label":"H1","kind":"hub","period":27,"fx":933.21,"fy":169.44,"hubness":1.0000,"pitch":4.0159,"fold":8,"r2":1.0000,"r4":1.0000,"ratio":4.4906},{"label":"H2","kind":"hub","period":29,"fx":367.20,"fy":196.05,"hubness":0.2375,"pitch":-0.3012,"fold":2,"r2":0.2365,"r4":0.0191,"ratio":1.0481},{"label":"H3","kind":"hub","period":31,"fx":578.62,"fy":62.31,"hubness":0.1071,"pitch":0.3514,"fold":4,"r2":-0.0498,"r4":0.0307,"ratio":1.0481},{"label":"H4","kind":"hub","period":32,"fx":506.01,"fy":545.19,"hubness":0.1808,"pitch":-0.7028,"fold":2,"r2":0.0882,"r4":-0.0352,"ratio":1.0481},{"label":"J1","kind":"junc","period":0,"fx":650.20,"fy":182.74,"hubness":0.1028,"pitch":-0.4518,"fold":4,"r2":0.0855,"r4":0.0855,"ratio":1.0481},{"label":"J2","kind":"junc","period":0,"fx":755.91,"fy":115.87,"hubness":0.1548,"pitch":0.1506,"fold":8,"r2":-0.0089,"r4":-0.0500,"ratio":1.0481}]
-}
