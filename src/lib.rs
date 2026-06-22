@@ -40,6 +40,16 @@ pub mod descend;
 pub mod energy;
 pub mod font;
 pub mod hp;
+/// Throwaway diagnostic (location-source base-rate probe). Test-only: compiled
+/// solely under `cargo test`, never into the production binary. Run explicitly:
+/// `cargo test --release --lib location_probe -- --ignored --nocapture`.
+#[cfg(test)]
+mod location_probe;
+/// Throwaway diagnostic (discovery-sampler probe 1: diversity coverage). Test-only,
+/// builds on the probe-0 scaffold. Run explicitly:
+/// `cargo test --release --lib discovery_probe1 -- --ignored --nocapture`.
+#[cfg(test)]
+mod location_probe_probe1;
 pub mod navigate;
 pub mod palette;
 pub mod palette_io;

@@ -228,7 +228,7 @@ impl FrozenBins {
     }
 
     /// Bin one image's region energies into its 4-scale signature.
-    fn signature(&self, regions: &Regions) -> Signature {
+    pub(crate) fn signature(&self, regions: &Regions) -> Signature {
         let hist = std::array::from_fn(|s| histogram(&regions[s], &self.edges[s]));
         Signature { hist }
     }
@@ -266,7 +266,7 @@ fn emd1d(a: &[f64], b: &[f64]) -> f64 {
 }
 
 /// Per-scale EMD summed across scales, weighted.
-fn distance(x: &Signature, y: &Signature, w: &[f64; 4]) -> f64 {
+pub(crate) fn distance(x: &Signature, y: &Signature, w: &[f64; 4]) -> f64 {
     (0..4).map(|s| w[s] * emd1d(&x.hist[s], &y.hist[s])).sum()
 }
 
@@ -1323,7 +1323,7 @@ fn parse_tile_cache(text: &str) -> Result<Vec<TileSig>, String> {
 
 // ----- artifact parsing (frozen edges + per-image histograms) -----
 
-fn parse_artifact(text: &str) -> Result<(FrozenBins, Vec<(String, Signature)>), String> {
+pub(crate) fn parse_artifact(text: &str) -> Result<(FrozenBins, Vec<(String, Signature)>), String> {
     // frozen edges (one float list per scale)
     let fe = text.find("\"frozen_edges\"").ok_or("artifact: no frozen_edges")?;
     let keys = ["\"s16\":", "\"s8\":", "\"s4\":", "\"s2\":"];
