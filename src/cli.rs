@@ -272,6 +272,95 @@ pub enum Command {
     /// sparse-rejection. Marginal control only — no good-busy vs bad-busy split.
     /// Picks no band, builds no loop. Matt judges the eye-check sheets.
     Muster(MusterArgs),
+    /// Diagnosis-only f64 render-path profiler: time the phase breakdown
+    /// (setup / iterate / shade+downsample / encode / write) of one f64 render,
+    /// build an escape-time histogram (max_iter-pixel fraction, mean/total
+    /// iterations, interior-vs-escaper iteration split), and run a thread-scaling
+    /// sweep (wall-clock / speedup / efficiency vs 1 thread) over the iteration
+    /// pass. Release-build only. Changes no render behavior; picks no optimization.
+    Profile(ProfileArgs),
+}
+
+/// `profile` subcommand: see `profile::run_profile`. Measure-only — phase
+/// breakdown + escape-time histogram + thread-scaling sweep for the f64
+/// Mandelbrot render path. Runs one location (shallow-decorative by default);
+/// run it twice with different `--center-*/--frame-width/--label` to bracket the
+/// cost range. f64-only by construction (asserts the backend stayed f64).
+#[derive(Args, Debug)]
+pub struct ProfileArgs {
+    /// Frame center, real part — arbitrary-precision decimal. Default: the
+    /// shallow-decorative seahorse-valley spiral (reads palette character, not
+    /// interior-dominated).
+    #[arg(long, default_value = "-0.7453", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal.
+    #[arg(long, default_value = "0.1127", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Width of the view in the complex plane.
+    #[arg(long, default_value_t = 0.012)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Output image width in pixels (height follows 3:2). Default 1280 gives a
+    /// stable phase/scaling signal; pass 384 for the contact-sheet tile size.
+    #[arg(long, default_value_t = 1280)]
+    pub width: u32,
+
+    /// Linear supersampling factor (S×S box downsample). Iteration scales with S².
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Repeats per timed measurement (min + median reported; kernel is
+    /// deterministic, so spread is system noise).
+    #[arg(long, default_value_t = 5)]
+    pub runs: usize,
+
+    /// Thread counts for the strong-scaling sweep (comma-separated). Each builds
+    /// its own rayon pool and re-times the iteration pass. Empty skips the sweep.
+    #[arg(long, default_value = "1,2,4,6,8,12")]
+    pub threads: String,
+
+    /// Label for the printed report / JSON (e.g. `shallow`, `interior`).
+    #[arg(long, default_value = "shallow")]
+    pub label: String,
+
+    /// Built-in palette for the shade/encode phases (`default`, `cubehelix`, `viridis`).
+    #[arg(long, default_value = "default")]
+    pub palette: String,
+
+    /// Output directory for the profiling JSON.
+    #[arg(long, default_value = "out/profile")]
+    pub out_dir: String,
+}
+
+impl ProfileArgs {
+    /// Parse `--threads` (comma-separated) into the scaling sweep counts.
+    /// An empty list (or all-zero) means "no sweep".
+    pub fn resolved_threads(&self) -> Result<Vec<usize>, String> {
+        let mut out = Vec::new();
+        for s in self.threads.split(',') {
+            let t = s.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let n: usize = t
+                .parse()
+                .map_err(|_| format!("invalid --threads component '{t}'"))?;
+            if n > 0 {
+                out.push(n);
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// `muster` subcommand: see `energy::run_muster`. Diagnosis-only — produces the

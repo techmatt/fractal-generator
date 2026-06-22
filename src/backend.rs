@@ -89,19 +89,40 @@ pub enum TrapShape {
 }
 
 impl Trap {
-    /// Trap distance and normalized phase of `z` relative to the trap center.
-    /// Phase is `(atan2(Im, Re) / 2π).rem_euclid(1.0)`.
+    /// Trap **distance** of `z` to the shape (no phase). This is the only part
+    /// computed every iteration: the loop tracks the running minimum distance
+    /// (and the minimizing `z`), and the phase is deferred to a single post-loop
+    /// [`phase_at`](Trap::phase_at) call on the captured minimizer.
+    ///
+    /// The per-iteration `atan2` the combined eval used to do dominated the
+    /// kernel (~88%) yet its result was consumed only at the one trap-minimizing
+    /// iteration — computed ~100× more often than used. Splitting distance from
+    /// phase removes it from the hot loop.
     #[inline]
-    fn eval(&self, zr: f64, zi: f64) -> (f64, f64) {
+    fn eval_dist(&self, zr: f64, zi: f64) -> f64 {
         let dr = zr - self.center.re;
         let di = zi - self.center.im;
-        let dist = match self.shape {
+        match self.shape {
             TrapShape::Point => (dr * dr + di * di).sqrt(),
             TrapShape::Cross => dr.abs().min(di.abs()),
             TrapShape::Circle => ((dr * dr + di * di).sqrt() - self.radius).abs(),
-        };
-        let phase = (di.atan2(dr) / (2.0 * PI)).rem_euclid(1.0);
-        (dist, phase)
+        }
+    }
+
+    /// Normalized phase `[0,1)` of `z − center`: `(atan2(Im, Re) / 2π).rem_euclid(1.0)`.
+    /// Computed **once**, after the loop, on the captured trap-minimizing `z`.
+    ///
+    /// Byte-identical to the old inline phase: `dr`/`di` are re-derived here from
+    /// the captured `zr`/`zi` by the same deterministic subtraction, and `atan2`
+    /// is a pure function of its input bits — so a post-loop call on the captured
+    /// minimizer returns the exact bits the inline call returned at that
+    /// iteration. (The only failure mode is capturing the wrong `z`; the loop
+    /// captures it at the identical `<` comparison that selected the minimum.)
+    #[inline]
+    fn phase_at(&self, zr: f64, zi: f64) -> f64 {
+        let dr = zr - self.center.re;
+        let di = zi - self.center.im;
+        (di.atan2(dr) / (2.0 * PI)).rem_euclid(1.0)
     }
 }
 
@@ -137,6 +158,29 @@ pub trait FractalBackend: Sync {
     fn sample(&self, c: Complex<f64>, dc: Complex<f64>) -> PixelSample;
 }
 
+/// Trap-phase computation strategy — a `sample_flags` const-generic selector.
+/// All three produce **bit-identical** `PixelSample`s (the phase `atan2` is a
+/// pure function of its input bits, and all three store the phase of the same
+/// trap-minimizing iteration); they differ only in *when*, and how often, the
+/// `atan2` runs. The trait `sample` (the real render path) uses
+/// [`PHASE_GATED`]; the others exist for the `profile` ceiling sub-ablation.
+///
+/// Measured ranking (decoration + interior workloads, 12 threads): GATED is
+/// fastest. EVERY (the pre-change baseline) wastes an `atan2` on every iteration
+/// though the result is consumed only at the trap minimum. DEFER removes the
+/// per-iteration `atan2` but is *slower than GATED* — capturing the minimizing
+/// `z` keeps two extra f64s live across the register-starved hot loop, and that
+/// spill cost exceeds the handful of `atan2`s GATED still pays on min-updates.
+/// Gating (compute the `atan2` only on a trap-min improvement) gets the win
+/// without the extra live state.
+pub const PHASE_GATED: u8 = 0;
+/// Capture the minimizing `z`, compute one `atan2` after the loop. Slower than
+/// [`PHASE_GATED`] (extra live state); kept only for the profile comparison.
+pub const PHASE_DEFER: u8 = 1;
+/// Compute the `atan2` every iteration (the pre-change baseline). The profile
+/// ceiling reference: GATED's speedup is measured against this.
+pub const PHASE_EVERY: u8 = 2;
+
 /// Plain `f64` escape-time backend. Uses `c`, ignores `dc`.
 pub struct F64Backend {
     maxiter: u32,
@@ -154,9 +198,36 @@ impl F64Backend {
     }
 }
 
-impl FractalBackend for F64Backend {
+impl F64Backend {
+    /// Per-iteration kernel, generic over which **bookkeeping** channels are
+    /// computed. The core (`z² + c`, `|z|²` bailout test, iteration count, smooth
+    /// value at escape) is always present; the three flags gate the work coloring
+    /// *may* read but a given config may not:
+    ///  - `DE` — the `dz` derivative recurrence + the escape-time `exterior_de`.
+    ///  - `TRAP` — the orbit-trap distance/phase min-tracking.
+    ///  - `ATOM` — the atom-domain closest-approach tracking (navigation-only;
+    ///    no coloring path reads it).
+    ///
+    /// These are **const** generics so each combination monomorphizes to true
+    /// dead-code-eliminated machine code, and `profile`'s ablation combos give
+    /// the genuine "what if we never computed this" cost, not a runtime-branch
+    /// approximation. Disabled channels leave their `PixelSample` fields at the
+    /// inert defaults (`de = 0`, `trap_min = ∞`, `atom_* = 0/∞`).
+    ///
+    /// `PHASE` selects the trap-phase strategy ([`PHASE_GATED`] /
+    /// [`PHASE_DEFER`] / [`PHASE_EVERY`]) — all bit-identical (see those consts
+    /// and [`Trap::phase_at`]); production (`sample`) uses `PHASE_GATED`, the
+    /// others let `profile` size the win against the per-iteration baseline.
     #[inline]
-    fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
+    pub fn sample_flags<
+        const TRAP: bool,
+        const ATOM: bool,
+        const DE: bool,
+        const PHASE: u8,
+    >(
+        &self,
+        c: Complex<f64>,
+    ) -> PixelSample {
         // Canonical loop shared with the perturbation backend (minus δ/m/Z, using
         // z directly), so both agree on classification, smooth value, DE, and
         // the set of orbit points that feed the trap.
@@ -166,17 +237,25 @@ impl FractalBackend for F64Backend {
         let mut dzi = 0.0f64;
         let mut n = 0u32;
         let mut trap_min = f64::INFINITY;
-        let mut trap_phase = 0.0f64;
+        let mut trap_phase = 0.0f64; // GATED/EVERY write in-loop; DEFER writes post-loop.
+        // Captured trap-minimizing full value (DEFER only; read post-loop).
+        let mut trap_zr = 0.0f64;
+        let mut trap_zi = 0.0f64;
         // Atom domain: closest approach of the full value to the origin (n ≥ 1).
         let mut atom_min2 = f64::INFINITY;
         let mut atom_period = 0u32;
 
+        let escaped;
+        let smooth_iter;
+        let de;
         loop {
             // dz_{n+1} = 2·z_n·dz_n + 1 (z still holds z_n from the prior step).
-            let ndzr = 2.0 * (zr * dzr - zi * dzi) + 1.0;
-            let ndzi = 2.0 * (zr * dzi + zi * dzr);
-            dzr = ndzr;
-            dzi = ndzi;
+            if DE {
+                let ndzr = 2.0 * (zr * dzr - zi * dzi) + 1.0;
+                let ndzi = 2.0 * (zr * dzi + zi * dzr);
+                dzr = ndzr;
+                dzi = ndzi;
+            }
 
             // z = z^2 + c
             let nzr = zr * zr - zi * zi + c.re;
@@ -186,41 +265,73 @@ impl FractalBackend for F64Backend {
             n += 1;
 
             let zmag2 = zr * zr + zi * zi;
-            let (d, ph) = self.trap.eval(zr, zi);
-            if d < trap_min {
-                trap_min = d;
-                trap_phase = ph;
+            if TRAP {
+                let d = self.trap.eval_dist(zr, zi);
+                // PHASE selects when the (identical) phase atan2 runs; all const,
+                // so only the chosen arm survives monomorphization.
+                if PHASE == PHASE_EVERY {
+                    let ph = self.trap.phase_at(zr, zi); // every iteration (baseline)
+                    if d < trap_min {
+                        trap_min = d;
+                        trap_phase = ph;
+                    }
+                } else if PHASE == PHASE_GATED {
+                    if d < trap_min {
+                        trap_min = d;
+                        trap_phase = self.trap.phase_at(zr, zi); // only on a min improvement
+                    }
+                } else if d < trap_min {
+                    // PHASE_DEFER: capture the minimizer, atan2 once post-loop.
+                    trap_min = d;
+                    trap_zr = zr;
+                    trap_zi = zi;
+                }
             }
-            if zmag2 < atom_min2 {
+            if ATOM && zmag2 < atom_min2 {
                 atom_min2 = zmag2;
                 atom_period = n;
             }
 
             if n >= self.maxiter {
-                return PixelSample {
-                    escaped: false,
-                    smooth_iter: 0.0,
-                    de: 0.0,
-                    trap_min,
-                    trap_phase,
-                    glitched: false,
-                    atom_period,
-                    atom_min: atom_min2.sqrt(),
-                };
+                escaped = false;
+                smooth_iter = 0.0;
+                de = 0.0;
+                break;
             }
             if zmag2 > self.bailout2 {
-                return PixelSample {
-                    escaped: true,
-                    smooth_iter: smooth(n, zmag2),
-                    de: exterior_de(dzr, dzi, zmag2),
-                    trap_min,
-                    trap_phase,
-                    glitched: false,
-                    atom_period,
-                    atom_min: atom_min2.sqrt(),
-                };
+                escaped = true;
+                smooth_iter = smooth(n, zmag2);
+                de = if DE { exterior_de(dzr, dzi, zmag2) } else { 0.0 };
+                break;
             }
         }
+
+        // DEFER: one atan2 on the captured minimizer. The `is_finite` guard
+        // reproduces the original default (`trap_phase = 0.0`) for the degenerate
+        // case where the min never updated (`trap_min` stays ∞) — in practice the
+        // first iteration always updates it.
+        if TRAP && PHASE == PHASE_DEFER && trap_min.is_finite() {
+            trap_phase = self.trap.phase_at(trap_zr, trap_zi);
+        }
+
+        PixelSample {
+            escaped,
+            smooth_iter,
+            de,
+            trap_min,
+            trap_phase,
+            glitched: false,
+            atom_period,
+            atom_min: atom_min2.sqrt(),
+        }
+    }
+}
+
+impl FractalBackend for F64Backend {
+    #[inline]
+    fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
+        // The real render path: every channel live, trap phase gated.
+        self.sample_flags::<true, true, true, PHASE_GATED>(c)
     }
 }
 
@@ -264,8 +375,12 @@ impl FractalBackend for JuliaBackend {
         let ci = self.param.im;
         let mut n = 0u32;
         let mut trap_min = f64::INFINITY;
+        // Gated trap phase: the `atan2` runs only on a trap-min improvement (see
+        // `PHASE_GATED` / `Trap::phase_at`), not every iteration.
         let mut trap_phase = 0.0f64;
 
+        let escaped;
+        let smooth_iter;
         loop {
             // z = z² + c
             let nzr = zr * zr - zi * zi + cr;
@@ -275,36 +390,33 @@ impl FractalBackend for JuliaBackend {
             n += 1;
 
             let zmag2 = zr * zr + zi * zi;
-            let (d, ph) = self.trap.eval(zr, zi);
+            let d = self.trap.eval_dist(zr, zi);
             if d < trap_min {
                 trap_min = d;
-                trap_phase = ph;
+                trap_phase = self.trap.phase_at(zr, zi);
             }
 
             if n >= self.maxiter {
-                return PixelSample {
-                    escaped: false,
-                    smooth_iter: 0.0,
-                    de: 0.0,
-                    trap_min,
-                    trap_phase,
-                    glitched: false,
-                    atom_period: 0, // navigation channel unused for Julia
-                    atom_min: f64::INFINITY,
-                };
+                escaped = false;
+                smooth_iter = 0.0;
+                break;
             }
             if zmag2 > self.bailout2 {
-                return PixelSample {
-                    escaped: true,
-                    smooth_iter: smooth(n, zmag2),
-                    de: 0.0, // Julia DE intentionally skipped.
-                    trap_min,
-                    trap_phase,
-                    glitched: false,
-                    atom_period: 0, // navigation channel unused for Julia
-                    atom_min: f64::INFINITY,
-                };
+                escaped = true;
+                smooth_iter = smooth(n, zmag2);
+                break;
             }
+        }
+
+        PixelSample {
+            escaped,
+            smooth_iter,
+            de: 0.0, // Julia DE intentionally skipped.
+            trap_min,
+            trap_phase,
+            glitched: false,
+            atom_period: 0, // navigation channel unused for Julia
+            atom_min: f64::INFINITY,
         }
     }
 }
@@ -411,6 +523,8 @@ impl FractalBackend for PerturbationBackend {
         let mut n = 0u32;
         let mut glitched = false;
         let mut trap_min = f64::INFINITY;
+        // Gated trap phase: the `atan2` runs only on a trap-min improvement (see
+        // `PHASE_GATED` / `Trap::phase_at`), not every iteration.
         let mut trap_phase = 0.0f64;
         // Atom domain: closest approach of the full value Z[m]+δ to the origin.
         // `n` is absolute (a rebase realigns `m`, not the iteration count), so
@@ -418,6 +532,9 @@ impl FractalBackend for PerturbationBackend {
         let mut atom_min2 = f64::INFINITY;
         let mut atom_period = 0u32;
 
+        let escaped;
+        let smooth_iter;
+        let de;
         loop {
             // dz_{n+1} = 2·z_n·dz_n + 1 (full value z still holds z_n; a rebase
             // never touched it, so this is unaffected by rebasing).
@@ -443,10 +560,10 @@ impl FractalBackend for PerturbationBackend {
             zi = z[m].im + di;
             let zmag2 = zr * zr + zi * zi;
 
-            let (d, ph) = self.trap.eval(zr, zi);
+            let d = self.trap.eval_dist(zr, zi);
             if d < trap_min {
                 trap_min = d;
-                trap_phase = ph;
+                trap_phase = self.trap.phase_at(zr, zi);
             }
             if zmag2 < atom_min2 {
                 atom_min2 = zmag2;
@@ -454,30 +571,18 @@ impl FractalBackend for PerturbationBackend {
             }
 
             if n >= self.maxiter {
-                return PixelSample {
-                    escaped: false,
-                    smooth_iter: 0.0,
-                    de: 0.0,
-                    trap_min,
-                    trap_phase,
-                    glitched,
-                    atom_period,
-                    atom_min: atom_min2.sqrt(),
-                };
+                escaped = false;
+                smooth_iter = 0.0;
+                de = 0.0;
+                break;
             }
             if zmag2 > bailout2 {
                 // Escape test + smooth value + DE use the FULL value, so both
                 // backends agree on classification and coloring.
-                return PixelSample {
-                    escaped: true,
-                    smooth_iter: smooth(n, zmag2),
-                    de: exterior_de(dzr, dzi, zmag2),
-                    trap_min,
-                    trap_phase,
-                    glitched,
-                    atom_period,
-                    atom_min: atom_min2.sqrt(),
-                };
+                escaped = true;
+                smooth_iter = smooth(n, zmag2);
+                de = exterior_de(dzr, dzi, zmag2);
+                break;
             }
 
             let dmag2 = dr * dr + di * di;
@@ -495,6 +600,17 @@ impl FractalBackend for PerturbationBackend {
                 di = zi;
                 m = 0;
             }
+        }
+
+        PixelSample {
+            escaped,
+            smooth_iter,
+            de,
+            trap_min,
+            trap_phase,
+            glitched,
+            atom_period,
+            atom_min: atom_min2.sqrt(),
         }
     }
 }
@@ -515,5 +631,60 @@ fn smooth(n: u32, norm_sqr: f64) -> f64 {
         (n + 1) as f64 - log_zn.ln() / std::f64::consts::LN_2
     } else {
         (n + 1) as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn traps() -> [Trap; 3] {
+        [
+            Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 },
+            Trap { shape: TrapShape::Cross, center: Complex::new(0.13, -0.21), radius: 0.5 },
+            Trap { shape: TrapShape::Circle, center: Complex::new(-0.31, 0.42), radius: 0.7 },
+        ]
+    }
+
+    /// All three trap-phase strategies — GATED (production), DEFER, and EVERY
+    /// (the pre-change baseline) — must produce **bit-for-bit** identical
+    /// `PixelSample`s across every trap shape, interior + exterior pixels, and a
+    /// range of `maxiter`. This is the byte-identical gate for the optimization:
+    /// `atan2` is a pure function of its input bits, so changing *when* it runs
+    /// (and storing the phase of the same trap-minimizing iteration) changes
+    /// timing, not output.
+    #[test]
+    fn phase_strategies_are_byte_identical() {
+        let eq = |a: &PixelSample, b: &PixelSample| {
+            a.escaped == b.escaped
+                && a.smooth_iter.to_bits() == b.smooth_iter.to_bits()
+                && a.de.to_bits() == b.de.to_bits()
+                && a.trap_min.to_bits() == b.trap_min.to_bits()
+                && a.trap_phase.to_bits() == b.trap_phase.to_bits()
+                && a.atom_period == b.atom_period
+                && a.atom_min.to_bits() == b.atom_min.to_bits()
+        };
+        for trap in traps() {
+            for &maxiter in &[1u32, 2, 7, 50, 300, 2000] {
+                let b = F64Backend::new(maxiter, 1e6, trap);
+                let n = 80;
+                for iy in 0..n {
+                    let ci = -1.3 + 2.6 * (iy as f64 + 0.5) / n as f64;
+                    for ix in 0..n {
+                        let cr = -2.2 + 3.0 * (ix as f64 + 0.5) / n as f64;
+                        let c = Complex::new(cr, ci);
+                        let every = b.sample_flags::<true, true, true, PHASE_EVERY>(c);
+                        let gated = b.sample_flags::<true, true, true, PHASE_GATED>(c);
+                        let defer = b.sample_flags::<true, true, true, PHASE_DEFER>(c);
+                        assert!(
+                            eq(&every, &gated) && eq(&every, &defer),
+                            "phase strategy mismatch shape={:?} maxiter={maxiter} c=({cr},{ci}): \
+                             every.phase={} gated.phase={} defer.phase={}",
+                            trap.shape, every.trap_phase, gated.trap_phase, defer.trap_phase
+                        );
+                    }
+                }
+            }
+        }
     }
 }

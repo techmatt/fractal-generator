@@ -22,6 +22,7 @@ use fractal_generator::deband;
 use fractal_generator::descend;
 use fractal_generator::energy;
 use fractal_generator::navigate;
+use fractal_generator::profile;
 use fractal_generator::search;
 use fractal_generator::wallpaper;
 use fractal_generator::coloring::ColorParams;
@@ -341,6 +342,7 @@ fn run() -> Result<(), String> {
         Some(Command::Anchor(args)) => energy::run_anchor(args),
         Some(Command::Dedup(args)) => energy::run_dedup(args),
         Some(Command::Muster(args)) => energy::run_muster(args),
+        Some(Command::Profile(args)) => profile::run_profile(args),
         None => run_render(&cli),
     }
 }
