@@ -61,6 +61,16 @@ pub mod hp;
 /// `cargo test --release --lib logpolar_probe -- --ignored --nocapture`.
 #[cfg(test)]
 mod logpolar_probe;
+/// Throwaway diagnostic (characterizer-as-finder: prompt 4). Builds a guard-aware
+/// spiral score S(c) on the precomputed bench field (off-axis Radon oriented-energy
+/// over total, presence-gated), maps it over candidate centers (the decisive
+/// S-field artifact), then hill-climbs it from nucleus and grid seeds to test
+/// whether climbed centers reach the visual spiral eyes. Test-only; reuses
+/// `logpolar_probe`'s sampler/detail/oriented-energy + guards and `symmetry_probe`'s
+/// bench. Run explicitly:
+/// `cargo test --release --lib hubfind_probe -- --ignored --nocapture`.
+#[cfg(test)]
+mod hubfind_probe;
 /// Throwaway diagnostic (location-source base-rate probe). Test-only: compiled
 /// solely under `cargo test`, never into the production binary. Run explicitly:
 /// `cargo test --release --lib location_probe -- --ignored --nocapture`.

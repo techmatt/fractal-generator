@@ -76,8 +76,8 @@ const JUNC_CAP: usize = 2;
 const JUNC_MAX_PAIR_FRAC: f64 = 0.45;
 
 // --- log-polar analysis grid -------------------------------------------------
-const NU: usize = 200; // radial samples (u = log r)
-const NV: usize = 512; // angular samples (v = θ)
+pub(crate) const NU: usize = 200; // radial samples (u = log r)
+pub(crate) const NV: usize = 512; // angular samples (v = θ)
 /// The two (r_min, r_max) bands in **pixels** about the center — a scale choice
 /// and a measure-trap, so we SHOW two rather than hardcode one. r_min skips the
 /// saturated interior; r_max stays inside the frame for a near-center anchor.
@@ -89,10 +89,10 @@ const BANDS: [(f64, f64); 2] = [(4.0, 90.0), (10.0, 260.0)];
 const SD_SMALL: f64 = 1.0;
 const SD_BIG: f64 = 48.0;
 /// Radon slope scan for pitch (slope = d(iv)/d(iu) in grid-index units).
-const N_SLOPE: usize = 161;
+pub(crate) const N_SLOPE: usize = 161;
 /// Below this structure-presence the band is a flat/saturated plateau — the
 /// autocorrelations self-correlate to ~1 and are NOT a real symmetry signal.
-const PRESENCE_FLOOR: f64 = 0.02;
+pub(crate) const PRESENCE_FLOOR: f64 = 0.02;
 /// `A(2π/n)` must clear this for n to count as a genuine fold (so a 4-fold isn't
 /// reported as merely 2-fold). Below it, the fold falls back to the argmax.
 const FOLD_THRESH: f64 = 0.8;
@@ -178,18 +178,18 @@ fn run() -> Result<(), String> {
 // ===========================================================================
 
 #[derive(Clone)]
-struct Center {
+pub(crate) struct Center {
     /// Sub-pixel image location (log-polar is acutely center-sensitive — keep the
     /// Newton-refined location, do NOT round to the pixel grid).
-    fx: f64,
-    fy: f64,
-    kind: &'static str, // "hub" | "junc" (display tag only; the signature classifies)
-    label: String,
-    period: u32, // 0 for junctions
+    pub(crate) fx: f64,
+    pub(crate) fy: f64,
+    pub(crate) kind: &'static str, // "hub" | "junc" (display tag only; the signature classifies)
+    pub(crate) label: String,
+    pub(crate) period: u32, // 0 for junctions
 }
 
 #[derive(Clone)]
-struct Nuc {
+pub(crate) struct Nuc {
     period: u32,
     fx: f64,
     fy: f64,
@@ -198,7 +198,7 @@ struct Nuc {
 
 /// Full f64 render (all channels, incl. atom-domain) at the bench center. The
 /// nucleus finder needs `atom_min`; the smooth scalar is taken from the same buffer.
-fn render_full(center: Complex<f64>, fw: f64) -> render::SampleBuffer {
+pub(crate) fn render_full(center: Complex<f64>, fw: f64) -> render::SampleBuffer {
     let prec = hp::prec_bits(RW, fw);
     let cre = BigFloat::from_f64(center.re, prec);
     let cim = BigFloat::from_f64(center.im, prec);
@@ -210,7 +210,7 @@ fn render_full(center: Complex<f64>, fw: f64) -> render::SampleBuffer {
 /// locations. Reuses the parked navigation primitives as a scoring field (none is
 /// chased). Mirrors `focus_heatmaps::confirmed_nuclei` but keeps the **sub-pixel**
 /// location instead of rounding to a display pixel.
-fn nuclei(center: Complex<f64>, fw: f64, buf: &render::SampleBuffer) -> Vec<Nuc> {
+pub(crate) fn nuclei(center: Complex<f64>, fw: f64, buf: &render::SampleBuffer) -> Vec<Nuc> {
     let prec = hp::prec_bits(RW, fw) + 32;
     let cre = BigFloat::from_f64(center.re, prec);
     let cim = BigFloat::from_f64(center.im, prec);
@@ -257,7 +257,7 @@ fn nuclei(center: Complex<f64>, fw: f64, buf: &render::SampleBuffer) -> Vec<Nuc>
 /// `PEAK_DIV_RADIUS_FRAC` of the frame width). Junction candidates = midpoints of
 /// nearby kept-hub pairs. No hub/junction pre-classification beyond the display
 /// tag — the characterizer's signature is what actually decides.
-fn centers(nucs: &[Nuc]) -> Vec<Center> {
+pub(crate) fn centers(nucs: &[Nuc]) -> Vec<Center> {
     let min_sep = PEAK_DIV_RADIUS_FRAC * RW as f64;
     let sep2 = min_sep * min_sep;
     // greedy by weight (lowest period first), farthest-point suppressed
@@ -320,18 +320,18 @@ fn centers(nucs: &[Nuc]) -> Vec<Center> {
 // Log-polar sampler + detail field
 // ===========================================================================
 
-struct LogPolar {
-    l: Vec<f64>, // raw smooth scalar sampled on the polar grid (NU rows × NV cols)
-    d: Vec<f64>, // unit-RMS detail (band-pass) field
+pub(crate) struct LogPolar {
+    pub(crate) l: Vec<f64>, // raw smooth scalar sampled on the polar grid (NU rows × NV cols)
+    pub(crate) d: Vec<f64>, // unit-RMS detail (band-pass) field
     /// Structure-presence: band-pass RMS / L's value spread. Near 0 ⇒ the band is
     /// a flat/saturated interior plateau, so the (unit-normalized) autocorrelations
     /// self-correlate to ~1 and MUST NOT be read as a real hub. The honest "flat→0".
-    presence: f64,
+    pub(crate) presence: f64,
 }
 
 /// Bilinearly sample `field` onto the polar grid about `(fx,fy)`: row `iu` = log r
 /// over `[ln rmin, ln rmax]`, col `iv` = θ over `[0, 2π)`. Row-major `iu*NV + iv`.
-fn logpolar_sample(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f64, rmax: f64) -> LogPolar {
+pub(crate) fn logpolar_sample(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f64, rmax: f64) -> LogPolar {
     let lr0 = rmin.ln();
     let lr1 = rmax.ln();
     let mut l = vec![0.0; NU * NV];
@@ -410,32 +410,32 @@ fn blur_uv(src: &[f64], sigma: f64) -> Vec<f64> {
 // Readouts
 // ===========================================================================
 
-struct Readout {
-    l: Vec<f64>,
-    d: Vec<f64>,
+pub(crate) struct Readout {
+    pub(crate) l: Vec<f64>,
+    pub(crate) d: Vec<f64>,
     /// Structure-presence (see `LogPolar`); below `PRESENCE_FLOOR` the readouts are
     /// flat-plateau artifacts, not real symmetry.
-    presence: f64,
+    pub(crate) presence: f64,
     /// Radon oriented-energy peak strength (hub/spiral coherence).
-    hubness: f64,
+    pub(crate) hubness: f64,
     /// Physical pitch dθ/d(log r) at the dominant slope (0 = pure radial arms).
-    pitch: f64,
-    radon: Vec<f64>, // oriented-energy vs slope index
-    ang: Vec<f64>,   // angular autocorr A(Δ), Δ index 0..NV
+    pub(crate) pitch: f64,
+    pub(crate) radon: Vec<f64>, // oriented-energy vs slope index
+    pub(crate) ang: Vec<f64>,   // angular autocorr A(Δ), Δ index 0..NV
     /// Min of A(Δ) over Δ∈[NV/48, NV/2] (past the main lobe). A genuine discrete
     /// fold dips low here; if it stays high the field is rotationally ~invariant
     /// (a minibrot's concentric contours) — fold/R₂/R₄ are then meaningless.
-    ang_trough: f64,
-    r2: f64,         // A(π)
-    r4: f64,         // A(π/2)
-    fold: u32,       // best n in {2,3,4,5,6,8} by A(2π/n)
-    fold_score: f64,
-    rad: Vec<f64>,   // radial autocorr R(Δu), lag 0..NU/2
-    ratio: f64,      // self-similar scaling ratio e^{Δu*} at the radial peak
-    scale_strength: f64,
+    pub(crate) ang_trough: f64,
+    pub(crate) r2: f64,         // A(π)
+    pub(crate) r4: f64,         // A(π/2)
+    pub(crate) fold: u32,       // best n in {2,3,4,5,6,8} by A(2π/n)
+    pub(crate) fold_score: f64,
+    pub(crate) rad: Vec<f64>,   // radial autocorr R(Δu), lag 0..NU/2
+    pub(crate) ratio: f64,      // self-similar scaling ratio e^{Δu*} at the radial peak
+    pub(crate) scale_strength: f64,
 }
 
-fn compute_readout(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f64, rmax: f64) -> Readout {
+pub(crate) fn compute_readout(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f64, rmax: f64) -> Readout {
     let lp = logpolar_sample(field, w, h, fx, fy, rmin, rmax);
     let ang = angular_autocorr(&lp.d);
     let rad = radial_autocorr(&lp.d, NU / 2);
@@ -598,7 +598,7 @@ fn radial_autocorr(d: &[f64], maxlag: usize) -> Vec<f64> {
 /// `iv = c + s·iu` (c = `(iv − s·iu) mod NV`), oriented energy = `Σ_c P_s(c)² /
 /// (Σ D² · NU)`. A straight pitched diagonal (log-spiral arm) concentrates energy
 /// → a peak at its slope. Returns `(best slope index, peak strength, full curve)`.
-fn radon_pitch(d: &[f64], slopes: &[f64]) -> (usize, f64, Vec<f64>) {
+pub(crate) fn radon_pitch(d: &[f64], slopes: &[f64]) -> (usize, f64, Vec<f64>) {
     let e: f64 = d.iter().map(|x| x * x).sum::<f64>().max(1e-30);
     let curve: Vec<f64> = slopes
         .par_iter()
@@ -686,7 +686,7 @@ fn pass(b: bool) -> &'static str {
 /// Honesty tag on a readout: `[FLAT]` if there's no structure (plateau), `[RADIAL]`
 /// if the angular autocorr never dips (rotationally invariant — a minibrot's
 /// concentric contours, where a discrete fold / R₂ / R₄ is meaningless).
-fn trust_flag(ro: &Readout) -> &'static str {
+pub(crate) fn trust_flag(ro: &Readout) -> &'static str {
     if ro.presence < PRESENCE_FLOOR {
         " [FLAT]"
     } else if ro.ang_trough > RADIAL_TROUGH {
@@ -698,7 +698,7 @@ fn trust_flag(ro: &Readout) -> &'static str {
 
 /// Build a `gs×gs` analytic field from `f(r, θ)` about the grid center; the
 /// immediate center (r<rmin guard) is zeroed.
-fn synth<F: Fn(f64, f64) -> f64 + Sync>(gs: usize, f: F) -> Vec<f64> {
+pub(crate) fn synth<F: Fn(f64, f64) -> f64 + Sync>(gs: usize, f: F) -> Vec<f64> {
     let c = (gs as f64 - 1.0) * 0.5;
     (0..gs * gs)
         .into_par_iter()
@@ -826,14 +826,14 @@ fn process_bench(b: &sp::Bench, pal_seed: &Palette, pal_seq: &Palette, pal_div: 
 }
 
 /// The green radial-autocorr marker at the detected self-similar lag.
-fn scale_marks(ro: &Readout, ku: f64) -> Vec<(usize, Rgb<u8>)> {
+pub(crate) fn scale_marks(ro: &Readout, ku: f64) -> Vec<(usize, Rgb<u8>)> {
     let lag = (ro.ratio.ln() / ku).round() as usize;
     vec![(lag.min(NU / 2), Rgb([120, 255, 120]))]
 }
 
 /// One candidate's display block: [L strip · D strip · A(Δ) curve · radial curve],
 /// titled with the scalar scores.
-fn candidate_block(
+pub(crate) fn candidate_block(
     title: &str,
     ro: &Readout,
     pal_seq: &Palette,
@@ -918,7 +918,7 @@ fn reference_panel(pal_seq: &Palette, pal_div: &Palette) -> Result<(), String> {
     Ok(())
 }
 
-fn load_luma(path: &str) -> Option<(Vec<f64>, usize, usize)> {
+pub(crate) fn load_luma(path: &str) -> Option<(Vec<f64>, usize, usize)> {
     let img = image::open(path).ok()?.to_rgb8();
     let (w, h) = (img.width() as usize, img.height() as usize);
     let lum: Vec<f64> = img
@@ -932,7 +932,7 @@ fn load_luma(path: &str) -> Option<(Vec<f64>, usize, usize)> {
 // Visualization (self-contained — generic tiles, strips, curves)
 // ===========================================================================
 
-fn lut_rgb(pal: &Palette, t: f64) -> Rgb<u8> {
+pub(crate) fn lut_rgb(pal: &Palette, t: f64) -> Rgb<u8> {
     let lin = pal.lookup_linear(t.clamp(0.0, 1.0));
     Rgb([
         (linear_to_srgb(lin[0]) * 255.0 + 0.5) as u8,
@@ -941,7 +941,7 @@ fn lut_rgb(pal: &Palette, t: f64) -> Rgb<u8> {
     ])
 }
 
-fn colorize(field: &[f64], w: usize, h: usize, vmin: f64, vmax: f64, pal: &Palette) -> RgbImage {
+pub(crate) fn colorize(field: &[f64], w: usize, h: usize, vmin: f64, vmax: f64, pal: &Palette) -> RgbImage {
     let span = (vmax - vmin).max(1e-12);
     let mut img = RgbImage::new(w as u32, h as u32);
     for (i, px) in img.pixels_mut().enumerate() {
@@ -1014,7 +1014,7 @@ fn put(img: &mut RgbImage, x: i64, y: i64, c: Rgb<u8>) {
     }
 }
 
-fn downscale_rgb(src: &RgbImage, dw: u32, dh: u32) -> RgbImage {
+pub(crate) fn downscale_rgb(src: &RgbImage, dw: u32, dh: u32) -> RgbImage {
     let (sw, sh) = (src.width(), src.height());
     if dw == sw && dh == sh {
         return src.clone();
@@ -1044,7 +1044,7 @@ fn downscale_rgb(src: &RgbImage, dw: u32, dh: u32) -> RgbImage {
     out
 }
 
-fn titled(img: RgbImage, title: &str) -> RgbImage {
+pub(crate) fn titled(img: RgbImage, title: &str) -> RgbImage {
     let w = img.width();
     let mut out = RgbImage::from_pixel(w.max(8), img.height() + TITLE_H, BG);
     probe::blit(&mut out, &img, 0, TITLE_H);
@@ -1052,13 +1052,13 @@ fn titled(img: RgbImage, title: &str) -> RgbImage {
     out
 }
 
-fn banner(width: u32, text: &str) -> RgbImage {
+pub(crate) fn banner(width: u32, text: &str) -> RgbImage {
     let mut img = RgbImage::from_pixel(width.max(8), 18, Rgb([10, 10, 12]));
     font::draw_text(&mut img, &text.to_uppercase(), 4, 4, 1, Rgb([255, 230, 150]), true);
     img
 }
 
-fn hstack(tiles: &[RgbImage]) -> RgbImage {
+pub(crate) fn hstack(tiles: &[RgbImage]) -> RgbImage {
     let width: u32 = tiles.iter().map(|t| t.width()).sum::<u32>() + PAD * (tiles.len() as u32 + 1);
     let height = tiles.iter().map(|t| t.height()).max().unwrap_or(0) + 2 * PAD;
     let mut img = RgbImage::from_pixel(width, height, BG);
@@ -1070,7 +1070,7 @@ fn hstack(tiles: &[RgbImage]) -> RgbImage {
     img
 }
 
-fn vstack(tiles: &[RgbImage]) -> RgbImage {
+pub(crate) fn vstack(tiles: &[RgbImage]) -> RgbImage {
     let width = tiles.iter().map(|t| t.width()).max().unwrap_or(0) + 2 * PAD;
     let height: u32 = tiles.iter().map(|t| t.height()).sum::<u32>() + PAD * (tiles.len() as u32 + 1);
     let mut img = RgbImage::from_pixel(width, height, BG);
@@ -1083,7 +1083,7 @@ fn vstack(tiles: &[RgbImage]) -> RgbImage {
 }
 
 /// A ring (radius `r` px) + center dot at `(cx,cy)` with a dark halo, clipped.
-fn draw_marker(img: &mut RgbImage, cx: f64, cy: f64, r: f64, col: Rgb<u8>) {
+pub(crate) fn draw_marker(img: &mut RgbImage, cx: f64, cy: f64, r: f64, col: Rgb<u8>) {
     let x0 = (cx - r - 2.0).floor() as i64;
     let x1 = (cx + r + 2.0).ceil() as i64;
     let y0 = (cy - r - 2.0).floor() as i64;
@@ -1107,7 +1107,7 @@ fn draw_marker(img: &mut RgbImage, cx: f64, cy: f64, r: f64, col: Rgb<u8>) {
     put(img, cx as i64, cy as i64, col);
 }
 
-fn save(img: &RgbImage, path: &str) -> Result<(), String> {
+pub(crate) fn save(img: &RgbImage, path: &str) -> Result<(), String> {
     crate::ensure_parent_dir(path)?;
     img.save(path).map_err(|e| format!("save {path}: {e}"))
 }
@@ -1126,7 +1126,7 @@ fn bilin(f: &[f64], w: usize, h: usize, x: f64, y: f64) -> f64 {
     a * (1.0 - ty) + b * ty
 }
 
-fn pctl(f: &[f64], q: f64) -> f64 {
+pub(crate) fn pctl(f: &[f64], q: f64) -> f64 {
     let mut v: Vec<f64> = f.iter().cloned().filter(|x| x.is_finite()).collect();
     if v.is_empty() {
         return 0.0;
