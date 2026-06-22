@@ -35,6 +35,12 @@ pub mod cli;
 pub mod coherence;
 pub mod coloring;
 pub mod corpus;
+/// Throwaway diagnostic (detail-clause coverage bench: spread vs coverage
+/// measures against Matt's CUT-vs-sparse labels). Test-only, compiled solely
+/// under `cargo test`. Run explicitly:
+/// `cargo test --release --lib detail_clause_bench -- --ignored --nocapture`.
+#[cfg(test)]
+mod detail_clause_bench;
 pub mod deband;
 pub mod descend;
 pub mod energy;
@@ -54,6 +60,7 @@ mod location_probe_probe1;
 pub mod navigate;
 pub mod palette;
 pub mod palette_io;
+pub mod palette_pick;
 pub mod probe;
 pub mod profile;
 pub mod reject_corridor;

@@ -286,6 +286,74 @@ pub enum Command {
     /// sweep (wall-clock / speedup / efficiency vs 1 thread) over the iteration
     /// pass. Release-build only. Changes no render behavior; picks no optimization.
     Profile(ProfileArgs),
+    /// Diagnosis-only audit of the `generate` accept-band detail-floor: draw with
+    /// a fresh seed, log EVERY draw (full screen vector + reject clause + per-clause
+    /// margins), and render a keeper-res contact sheet of the un-eyeballed SPRD
+    /// corridor (interior-ok, not-flat, straddling `spread_min`) marked CUT/KEEP,
+    /// plus a few flat / interior-black bulk reps. Reuses `generate`'s screen + band
+    /// verbatim; changes no band default, builds no new metric.
+    RejectCorridor(RejectCorridorArgs),
+    /// Diagnostic palette favorite-picker: iterate one fixed dense field (the
+    /// seahorse-valley spiral) ONCE and re-shade it across N palettes sampled
+    /// (fixed seed) from the survivor colormap library, into one labeled contact
+    /// sheet. Diagnosis-only — no band, no scoring, no render-path change; Matt
+    /// picks. Sheet + reproducibility legend land under `data/palette_pick/`.
+    PalettePick(PalettePickArgs),
+}
+
+/// `palette-pick` subcommand: see `palette_pick::run_palette_pick`. Reproducible
+/// for a fixed `--seed`; the field is shallow (f64 cheap-regime, asserted by the
+/// auto backend staying f64).
+#[derive(Args, Debug)]
+pub struct PalettePickArgs {
+    /// Field center, real part — the handoff's preferred palette-reading spiral.
+    #[arg(long, default_value = "-0.7453", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Field center, imaginary part.
+    #[arg(long, default_value = "0.1127", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane. Default frames a dense spiral; shrink it
+    /// (or move the center) if the density read says the field is flat.
+    #[arg(long, default_value_t = 0.012)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// Per-tile width in pixels (height follows 16:9). Modest diagnostic size.
+    #[arg(long, default_value_t = 320)]
+    pub tile_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) per tile.
+    #[arg(long, default_value_t = 1)]
+    pub supersample: u32,
+
+    /// Number of palettes to sample from the library.
+    #[arg(long, default_value_t = 100)]
+    pub count: usize,
+
+    /// SplitMix64 seed for the deterministic palette sample (reproducible).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Grid columns (default ≈ √N).
+    #[arg(long)]
+    pub cols: Option<usize>,
+
+    /// Survivor colormap library (JSON array of name/source/stops objects).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Output directory for the sheet + reproducibility legend (outside `out/`).
+    #[arg(long, default_value = "data/palette_pick")]
+    pub out_dir: String,
 }
 
 /// `profile` subcommand: see `profile::run_profile`. Measure-only — phase
@@ -2125,6 +2193,137 @@ impl GenerateArgs {
 
     /// Effective accept band: each clause overridden by its flag if present, else
     /// the centralized `generate::AcceptBand` default (FLAG: one-place retune).
+    pub fn band(&self) -> crate::generate::AcceptBand {
+        let d = crate::generate::AcceptBand::default();
+        crate::generate::AcceptBand {
+            spread_min: self.spread_min.unwrap_or(d.spread_min),
+            interior_max: self.interior_max.unwrap_or(d.interior_max),
+            esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
+        }
+    }
+}
+
+/// `reject-corridor` subcommand: see `reject_corridor::run_reject_corridor`.
+/// Diagnosis-only audit of the `generate` accept-band detail-floor. Shares
+/// `generate`'s regime (box / fw-range / screen / band) so the corridor is
+/// defined against the same boundary `generate` ships; only the seed differs by
+/// default (fresh seed → reject draws `generate` never logged). Renders the
+/// corridor at keeper resolution under the same preview palette.
+#[derive(Args, Debug)]
+pub struct RejectCorridorArgs {
+    /// Total draws to screen (all logged, kept or not). Fresh seed below, so this
+    /// is a new draw stream from `generate`'s run0/run1.
+    #[arg(long, default_value_t = 2000)]
+    pub draws: usize,
+
+    /// SplitMix64 seed — distinct from `generate`'s default so the rejects logged
+    /// here are a fresh stream (run1 logged keepers only).
+    #[arg(long, default_value_t = 20_260_623)]
+    pub seed: u64,
+
+    /// Sampling box `re_lo,re_hi,im_lo,im_hi` (matches `generate`).
+    #[arg(long = "box", default_value = "-2.0,0.7,-1.2,1.2", allow_hyphen_values = true)]
+    pub box_bounds: String,
+
+    /// Log-uniform frame-width range, low edge (matches `generate`).
+    #[arg(long, default_value_t = 0.003)]
+    pub fw_lo: f64,
+
+    /// Log-uniform frame-width range, high edge (matches `generate`).
+    #[arg(long, default_value_t = 0.05)]
+    pub fw_hi: f64,
+
+    /// Cheap-screen render width in px (height follows 16:9; ss1). Every draw.
+    #[arg(long, default_value_t = 320)]
+    pub screen_width: u32,
+
+    /// Maximum iterations for the screen + corridor renders (matches `generate`).
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Escape radius.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Corridor lower spread edge ("not-flat" floor — the confirmed bad-sparse
+    /// SPRD ceiling). Draws below this are the *flat* bulk.
+    #[arg(long, default_value_t = 24.0)]
+    pub corridor_lo: f64,
+
+    /// Corridor upper spread edge (the confirmed good-anchor SPRD floor). Draws
+    /// above this are clear anchors, not corridor.
+    #[arg(long, default_value_t = 85.0)]
+    pub corridor_hi: f64,
+
+    /// Max corridor tiles to render (evenly sampled by spread across the corridor
+    /// if more are found). The all-draw log keeps every corridor draw regardless.
+    #[arg(long, default_value_t = 48)]
+    pub max_corridor: usize,
+
+    /// Representatives to render per bulk bucket (flat, interior-black).
+    #[arg(long, default_value_t = 3)]
+    pub bulk_reps: usize,
+
+    /// Accept-band override: spread floor (default from `generate::AcceptBand`).
+    /// This is the live floor the corridor's CUT/KEEP split is drawn against.
+    #[arg(long)]
+    pub spread_min: Option<f64>,
+
+    /// Accept-band override: interior (max-iter) fraction cap.
+    #[arg(long)]
+    pub interior_max: Option<f64>,
+
+    /// Accept-band override: escape-median smooth-iter floor.
+    #[arg(long)]
+    pub esc_median_min: Option<f64>,
+
+    /// Corridor / bulk thumbnail width in px (height follows 16:9).
+    #[arg(long, default_value_t = 256)]
+    pub thumb_width: u32,
+
+    /// Corridor contact-sheet grid columns.
+    #[arg(long, default_value_t = 8)]
+    pub cols: usize,
+
+    /// Preview colormap name (from `data/palettes/clean_colormaps.json`); default
+    /// cubehelix — same preview palette as `generate`.
+    #[arg(long, default_value = "cubehelix")]
+    pub palette: String,
+
+    /// Output directory (`draws.jsonl`, `manifest.json`, `corridor_sheet.png`,
+    /// `bulk_sheet.png`). Outside `out/` — the all-draw log is the durable artifact.
+    #[arg(long, default_value = "data/generated/reject_corridor")]
+    pub out_dir: String,
+}
+
+impl RejectCorridorArgs {
+    /// Parse `--box` (`re_lo,re_hi,im_lo,im_hi`) into bounds (same shape as
+    /// `GenerateArgs::resolved_box`).
+    pub fn resolved_box(&self) -> Result<(f64, f64, f64, f64), String> {
+        let p: Vec<&str> = self.box_bounds.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!(
+                "invalid --box '{}', expected re_lo,re_hi,im_lo,im_hi",
+                self.box_bounds
+            ));
+        }
+        let parse = |s: &str, what: &str| -> Result<f64, String> {
+            s.trim()
+                .parse()
+                .map_err(|_| format!("invalid --box {what} in '{}'", self.box_bounds))
+        };
+        let re_lo = parse(p[0], "re_lo")?;
+        let re_hi = parse(p[1], "re_hi")?;
+        let im_lo = parse(p[2], "im_lo")?;
+        let im_hi = parse(p[3], "im_hi")?;
+        if re_hi <= re_lo || im_hi <= im_lo {
+            return Err(format!("--box bounds must be lo < hi in '{}'", self.box_bounds));
+        }
+        Ok((re_lo, re_hi, im_lo, im_hi))
+    }
+
+    /// Effective accept band (each clause flag-overridable; default = the band
+    /// `generate` ships). The corridor is sliced against this same boundary.
     pub fn band(&self) -> crate::generate::AcceptBand {
         let d = crate::generate::AcceptBand::default();
         crate::generate::AcceptBand {
