@@ -1,0 +1,63 @@
+corpus: 746 signatures (descriptor is a keeper-only feature, not a gate)
+generate: target K=50 keepers, seed 20260622, screen 320x180 ss1, keepers 1280x720 ss2, max-draws 25000
+box re[-2,0.7] im[-1.2,1.2]  fw log-uniform [0.003,0.05] (geo-center ~ 0.0122)
+band: spread>=8 AND interior<=90% AND esc_median>=3
+  keeper 0000 @ draw 2 c=(-0.75477,-0.06516) fw=0.0075 int=5% spread=300 med=49 sparse_p99 nn=1.809
+  keeper 0001 @ draw 13 c=(-1.04800,-0.25375) fw=0.0037 int=0% spread=178 med=52 sparse_p95 nn=0.914
+  keeper 0002 @ draw 21 c=(0.35380,-0.36313) fw=0.0469 int=42% spread=328 med=35 sparse_p96 nn=2.000
+  keeper 0003 @ draw 31 c=(-0.66295,-0.37542) fw=0.0191 int=0% spread=168 med=21 sparse_p98 nn=2.102
+  keeper 0004 @ draw 34 c=(0.35103,0.09083) fw=0.0373 int=53% spread=299 med=32 sparse_p98 nn=1.465
+  keeper 0005 @ draw 40 c=(0.39024,0.59550) fw=0.0379 int=0% spread=24 med=16 sparse_p99 nn=0.266
+  keeper 0006 @ draw 41 c=(-0.30425,-0.62685) fw=0.0036 int=0% spread=333 med=46 sparse_p99 nn=1.570
+  keeper 0007 @ draw 44 c=(-0.04640,-0.99577) fw=0.0288 int=1% spread=15 med=14 sparse_p100 nn=0.422
+  keeper 0008 @ draw 55 c=(-0.15981,-0.89914) fw=0.0247 int=0% spread=30 med=23 sparse_p99 nn=0.094
+  keeper 0009 @ draw 91 c=(-0.19703,-0.82302) fw=0.0059 int=0% spread=9 med=27 sparse_p100 nn=0.242
+  keeper 0010 @ draw 132 c=(-0.54527,0.49138) fw=0.0244 int=23% spread=448 med=59 sparse_p93 nn=1.340
+  keeper 0011 @ draw 133 c=(-0.52133,-0.69664) fw=0.0133 int=0% spread=20 med=16 sparse_p100 nn=0.438
+  keeper 0012 @ draw 141 c=(0.31245,-0.41750) fw=0.0197 int=73% spread=662 med=89 sparse_p99 nn=2.395
+  keeper 0013 @ draw 150 c=(0.42345,0.34887) fw=0.0342 int=9% spread=85 med=32 sparse_p95 nn=1.000
+  keeper 0014 @ draw 154 c=(-1.40527,0.00058) fw=0.0045 int=1% spread=86 med=63 sparse_p93 nn=0.539
+  keeper 0015 @ draw 161 c=(-0.64758,-0.43304) fw=0.0497 int=43% spread=234 med=38 sparse_p97 nn=1.215
+  keeper 0016 @ draw 172 c=(-0.52679,-0.52699) fw=0.0346 int=32% spread=291 med=50 sparse_p95 nn=1.676
+  keeper 0017 @ draw 199 c=(-0.24056,0.71536) fw=0.0123 int=0% spread=56 med=27 sparse_p97 nn=0.473
+  keeper 0018 @ draw 223 c=(-0.61592,0.45739) fw=0.0036 int=0% spread=113 med=45 sparse_p96 nn=1.516
+  keeper 0019 @ draw 225 c=(-0.79225,-0.13370) fw=0.0295 int=69% spread=471 med=80 sparse_p98 nn=1.855
+  keeper 0020 @ draw 228 c=(0.39657,0.24405) fw=0.0211 int=0% spread=44 med=19 sparse_p99 nn=0.379
+  keeper 0021 @ draw 243 c=(-1.38267,-0.07635) fw=0.0033 int=0% spread=20 med=23 sparse_p100 nn=0.445
+  keeper 0022 @ draw 263 c=(-0.00623,-0.66458) fw=0.0409 int=0% spread=83 med=18 sparse_p99 nn=1.121
+  keeper 0023 @ draw 270 c=(-0.10443,0.84842) fw=0.0282 int=84% spread=441 med=84 sparse_p99 nn=1.273
+  keeper 0024 @ draw 280 c=(-1.77593,0.00540) fw=0.0106 int=16% spread=86 med=28 sparse_p99 nn=0.973
+  keeper 0025 @ draw 290 c=(-0.46572,0.59142) fw=0.0064 int=1% spread=160 med=73 sparse_p84 nn=1.199
+  keeper 0026 @ draw 291 c=(-0.10917,0.90169) fw=0.0491 int=3% spread=57 med=25 sparse_p97 nn=0.672
+  keeper 0027 @ draw 299 c=(0.03077,-0.80952) fw=0.0063 int=0% spread=23 med=22 sparse_p99 nn=0.414
+  keeper 0028 @ draw 340 c=(0.39224,-0.22509) fw=0.0266 int=72% spread=446 med=89 sparse_p98 nn=1.543
+  keeper 0029 @ draw 349 c=(-1.17409,-0.27992) fw=0.0264 int=0% spread=31 med=22 sparse_p99 nn=0.152
+  keeper 0030 @ draw 371 c=(0.13739,-0.58447) fw=0.0131 int=63% spread=755 med=188 sparse_p95 nn=3.078
+  keeper 0031 @ draw 376 c=(0.23973,0.52996) fw=0.0296 int=61% spread=376 med=39 sparse_p99 nn=1.258
+  keeper 0032 @ draw 378 c=(0.01230,0.62908) fw=0.0271 int=85% spread=733 med=132 sparse_p99 nn=1.465
+  keeper 0033 @ draw 393 c=(-0.38531,0.65909) fw=0.0037 int=0% spread=67 med=46 sparse_p94 nn=0.836
+  keeper 0034 @ draw 398 c=(0.36672,0.30210) fw=0.0080 int=35% spread=630 med=104 sparse_p94 nn=1.586
+  keeper 0035 @ draw 439 c=(-1.16532,-0.20661) fw=0.0180 int=0% spread=26 med=28 sparse_p100 nn=0.492
+  keeper 0036 @ draw 464 c=(0.18458,-0.60514) fw=0.0169 int=0% spread=20 med=14 sparse_p100 nn=0.164
+  keeper 0037 @ draw 466 c=(0.40292,0.30975) fw=0.0247 int=5% spread=109 med=37 sparse_p90 nn=1.426
+  keeper 0038 @ draw 467 c=(0.45600,0.24426) fw=0.0453 int=0% spread=18 med=9 sparse_p100 nn=0.430
+  keeper 0039 @ draw 488 c=(-1.76021,-0.00833) fw=0.0140 int=83% spread=386 med=62 sparse_p99 nn=1.180
+  keeper 0040 @ draw 490 c=(-1.40418,0.14558) fw=0.0219 int=0% spread=13 med=14 sparse_p100 nn=0.562
+  keeper 0041 @ draw 515 c=(-0.41744,0.60446) fw=0.0183 int=0% spread=174 med=60 sparse_p75 nn=1.203
+  keeper 0042 @ draw 516 c=(-0.52691,0.70028) fw=0.0060 int=0% spread=19 med=19 sparse_p100 nn=0.465
+  keeper 0043 @ draw 519 c=(-0.57991,0.49630) fw=0.0104 int=0% spread=83 med=29 sparse_p96 nn=1.184
+  keeper 0044 @ draw 527 c=(-1.36241,-0.05174) fw=0.0101 int=0% spread=41 med=29 sparse_p99 nn=0.207
+  keeper 0045 @ draw 535 c=(0.35034,-0.07483) fw=0.0056 int=8% spread=277 med=78 sparse_p80 nn=1.484
+  keeper 0046 @ draw 543 c=(-0.07468,-0.85213) fw=0.0367 int=3% spread=84 med=23 sparse_p98 nn=0.855
+  keeper 0047 @ draw 555 c=(-0.71638,-0.34890) fw=0.0455 int=0% spread=102 med=33 sparse_p94 nn=1.195
+  keeper 0048 @ draw 570 c=(0.29895,0.61466) fw=0.0160 int=0% spread=23 med=13 sparse_p99 nn=0.332
+  keeper 0049 @ draw 579 c=(0.36794,0.45125) fw=0.0473 int=0% spread=9 med=10 sparse_p100 nn=0.422
+keeper sheet: data/generated/run0\keeper_sheet.png (50 tiles)
+=== generate ===
+seed=20260622  K=50 keepers
+draws=580  accept_rate=8.6%  draws-per-keeper~11.6
+scale-range: fw log-uniform [0.003,0.05] (geo-center ~ 0.0122)
+band used: spread>=8 AND interior<=90% AND esc_median>=3
+rejects: interior_black=129 instant_escape=28 flat=373
+locations: data/generated/run0\locations.jsonl
+manifest : data/generated/run0\manifest.json

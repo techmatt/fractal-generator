@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>palette extractor — eval</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0e0f13; color:#e7e7ea;
+         font:14px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  header { padding:22px 28px; border-bottom:1px solid #23252e; }
+  header h1 { margin:0; font-size:18px; font-weight:600; letter-spacing:.02em; }
+  header p { margin:6px 0 0; color:#8a8d99; }
+  main { padding:24px 28px; display:flex; flex-direction:column; gap:30px; }
+  .card { background:#15171d; border:1px solid #23252e; border-radius:12px;
+           padding:18px 18px 22px; }
+  .hd { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+  .hd h2 { margin:0; font-size:16px; }
+  .meta { display:flex; gap:8px; flex-wrap:wrap; }
+  .badge { background:#1d2029; border:1px solid #2c2f3a; color:#b8bbc7;
+            padding:3px 9px; border-radius:999px; font-size:12px; }
+  .badge b { color:#fff; }
+  .badge.mirror { background:#3a2a12; border-color:#6b4a18; color:#f4c98a; }
+  .badge.native { background:#123524; border-color:#1f6b46; color:#8af4c2; }
+  .strip img { width:100%; height:48px; display:block; border-radius:6px;
+                image-rendering:pixelated; }
+  .row { display:grid; gap:14px; margin-top:14px; }
+  .row.two { grid-template-columns:1fr 1fr; }
+  .row.three { grid-template-columns:1fr 1fr 1fr; }
+  figure { margin:0; }
+  figure img { width:100%; display:block; border-radius:8px; border:1px solid #23252e; }
+  figcaption { color:#8a8d99; font-size:12px; margin-top:6px; }
+  .mag { color:#ff5cff; }
+  .src { color:#5c5f6b; font-size:11px; margin-top:14px; word-break:break-all; }
+  @media (max-width:760px) { .row.two,.row.three { grid-template-columns:1fr; } }
+</style></head>
+<body>
+<header>
+  <h1>palette extractor — eval</h1>
+  <p>2 image(s) · spiral render at (-0.7453, 0.1127) · coverage ε=0.05
+     · palette = cyclic OKLab LUT from extracted stops</p>
+</header>
+<main>
+    <section class="card">
+      <div class="hd">
+        <h2>magic-mushroom-25</h2>
+        <div class="meta">
+          <span class="badge native">native loop</span>
+          <span class="badge">coverage <b>62.1%</b></span>
+          <span class="badge">max-step 0.0012</span>
+          <span class="badge">mean-step 0.0012</span>
+          <span class="badge">endpoint-gap 0.0897</span>
+          <span class="badge">ridge 1449</span>
+        </div>
+      </div>
+
+      <div class="strip">
+        <img src="magic-mushroom-25/palette.png" alt="palette strip">
+      </div>
+
+      <div class="row two">
+        <figure><img src="magic-mushroom-25/original.png"><figcaption>original</figcaption></figure>
+        <figure><img src="magic-mushroom-25/coverage.png">
+          <figcaption>coverage — <span class="mag">magenta</span> = uncovered (ε=0.05); 61.9% on this view</figcaption></figure>
+      </div>
+
+      <div class="row three">
+        <figure><img src="magic-mushroom-25/mandel_0.5x.png"><figcaption>spiral · 0.5× rate</figcaption></figure>
+        <figure><img src="magic-mushroom-25/mandel_1.0x.png"><figcaption>spiral · 1.0× rate</figcaption></figure>
+        <figure><img src="magic-mushroom-25/mandel_1.5x.png"><figcaption>spiral · 1.5× rate</figcaption></figure>
+      </div>
+      <div class="src">C:\Users\techm\Desktop\Wallpapers\magic-mushroom-25.jpg</div>
+    </section>
+    <section class="card">
+      <div class="hd">
+        <h2>nova-25</h2>
+        <div class="meta">
+          <span class="badge mirror">mirrored</span>
+          <span class="badge">coverage <b>98.8%</b></span>
+          <span class="badge">max-step 0.0076</span>
+          <span class="badge">mean-step 0.0076</span>
+          <span class="badge">endpoint-gap 0.8845</span>
+          <span class="badge">ridge 767</span>
+        </div>
+      </div>
+
+      <div class="strip">
+        <img src="nova-25/palette.png" alt="palette strip">
+      </div>
+
+      <div class="row two">
+        <figure><img src="nova-25/original.png"><figcaption>original</figcaption></figure>
+        <figure><img src="nova-25/coverage.png">
+          <figcaption>coverage — <span class="mag">magenta</span> = uncovered (ε=0.05); 98.9% on this view</figcaption></figure>
+      </div>
+
+      <div class="row three">
+        <figure><img src="nova-25/mandel_0.5x.png"><figcaption>spiral · 0.5× rate</figcaption></figure>
+        <figure><img src="nova-25/mandel_1.0x.png"><figcaption>spiral · 1.0× rate</figcaption></figure>
+        <figure><img src="nova-25/mandel_1.5x.png"><figcaption>spiral · 1.5× rate</figcaption></figure>
+      </div>
+      <div class="src">C:\Users\techm\Desktop\Wallpapers\nova-25.jpg</div>
+    </section>
+</main>
+</body></html>

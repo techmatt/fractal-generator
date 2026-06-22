@@ -16,7 +16,6 @@ use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
 use fractal_generator::coherence;
 use fractal_generator::corpus;
-use fractal_generator::deband;
 use fractal_generator::descend;
 use fractal_generator::energy;
 use fractal_generator::generate;
@@ -344,7 +343,6 @@ fn run() -> Result<(), String> {
         Some(Command::Corpus(args)) => corpus::run_corpus(args),
         Some(Command::Wallpaper(args)) => wallpaper::run_wallpaper(args),
         Some(Command::Cohere(args)) => coherence::run_cohere(args),
-        Some(Command::Deband(args)) => deband::run_deband(args),
         Some(Command::Cover(args)) => coherence::run_cover(args),
         Some(Command::Buffet(args)) => buffet::run_buffet(args),
         Some(Command::Calibrate(args)) => energy::run_calibrate(args),

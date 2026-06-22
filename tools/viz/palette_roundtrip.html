@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Palette round-trip comparison</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    background: #111;
+    color: #ccc;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── left list ── */
+  #sidebar {
+    width: 220px;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #2a2a2a;
+    overflow: hidden;
+  }
+
+  #sidebar h1 {
+    font-size: 12px;
+    font-weight: 600;
+    color: #eee;
+    padding: 12px 12px 8px;
+    border-bottom: 1px solid #2a2a2a;
+  }
+
+  #palette-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+
+  .pal-item {
+    padding: 7px 12px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-left: 3px solid transparent;
+  }
+
+  .pal-item:hover { background: #1e1e1e; }
+  .pal-item.active { border-left-color: #7a9fff; background: #1a1f2e; }
+
+  .pal-item .pal-name { font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pal-item .pal-cov { font-size: 11px; color: #666; }
+  .pal-item.error-item .pal-name { color: #8a5555; }
+
+  /* ── right detail ── */
+  #main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  #main.empty { align-items: center; justify-content: center; color: #444; }
+
+  .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+
+  /* render thumbnail */
+  #render-img {
+    max-width: 480px;
+    width: 100%;
+    border-radius: 5px;
+    display: block;
+  }
+
+  /* strips */
+  .strip-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; }
+  .strip-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #555; }
+  .strip-canvas { height: 32px; width: 100%; border-radius: 3px; display: block; }
+
+  /* scatter panels */
+  #scatter-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .scatter-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .scatter-panel .panel-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: #555;
+    text-align: center;
+  }
+
+  .scatter-canvas {
+    background: #161616;
+    border-radius: 4px;
+    display: block;
+    border: 1px solid #2a2a2a;
+  }
+
+  /* legend */
+  #legend {
+    display: flex;
+    gap: 18px;
+    font-size: 11px;
+    color: #888;
+    flex-wrap: wrap;
+  }
+
+  .legend-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    vertical-align: middle;
+    margin-right: 5px;
+  }
+
+  /* detail meta */
+  #detail-header { display: flex; flex-direction: column; gap: 4px; }
+  #detail-name { font-size: 15px; font-weight: 600; color: #eee; }
+  #detail-meta { font-size: 12px; color: #666; display: flex; gap: 16px; }
+
+  #error-box {
+    background: #2a1a1a; border: 1px solid #5a2a2a; border-radius: 4px;
+    padding: 10px 12px; font-size: 11px; color: #c88;
+    white-space: pre-wrap; font-family: monospace;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Round-trip palettes</h1>
+  <div id="palette-list"></div>
+</div>
+
+<div id="main" class="empty">
+  <span>Select a palette</span>
+</div>
+
+<script>
+const MANIFEST_PATH = "../../data/palette_roundtrip/manifest.json";
+
+// point cloud colors (opaque hex for canvas)
+const COL_LUT     = "#5a9fff";   // blue  — full colormap LUT
+const COL_PIXELS  = "#888888";   // gray  — rendered pixels
+const COL_EXTRACT = "#e07040";   // amber — extracted curve
+
+let manifest = null;
+let runCache = {};   // name → loaded data.json
+
+// ── load manifest ─────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const r = await fetch(MANIFEST_PATH);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    manifest = await r.json();
+  } catch(e) {
+    document.getElementById("palette-list").innerHTML =
+      `<div style="padding:12px;color:#c88;font-size:11px;">
+        Failed to load manifest:<br>${e.message}<br><br>
+        Run build_roundtrip_manifest.py first.
+      </div>`;
+    return;
+  }
+  buildList();
+}
+
+function buildList() {
+  const list = document.getElementById("palette-list");
+  list.innerHTML = "";
+  for (const e of manifest.entries) {
+    const div = document.createElement("div");
+    div.className = "pal-item" + (e.error ? " error-item" : "");
+    div.dataset.name = e.name;
+    const cov = e.coverage !== null ? `${(e.coverage*100).toFixed(1)}% coverage` : "error";
+    div.innerHTML = `<span class="pal-name">${e.name}</span><span class="pal-cov">${cov}</span>`;
+    div.addEventListener("click", () => showEntry(e));
+    list.appendChild(div);
+  }
+}
+
+// ── show entry ────────────────────────────────────────────────────────────────
+async function showEntry(entry) {
+  document.querySelectorAll(".pal-item").forEach(el =>
+    el.classList.toggle("active", el.dataset.name === entry.name));
+
+  const main = document.getElementById("main");
+  main.className = "";
+  main.innerHTML = "";
+
+  // header
+  const hdr = document.createElement("div");
+  hdr.id = "detail-header";
+  const cov = entry.coverage !== null ? `${(entry.coverage*100).toFixed(1)}%` : "—";
+  const nat = entry.native === true ? "native" : entry.native === false ? "mirror-closed" : "—";
+  hdr.innerHTML = `
+    <div id="detail-name">${entry.name}</div>
+    <div id="detail-meta">
+      <span>Coverage: ${cov}</span>
+      <span>${nat}</span>
+    </div>`;
+  main.appendChild(hdr);
+
+  if (entry.error) {
+    const err = document.createElement("pre");
+    err.id = "error-box";
+    err.textContent = entry.error;
+    main.appendChild(err);
+    return;
+  }
+
+  // load run data
+  let data = runCache[entry.name];
+  if (!data) {
+    try {
+      const r = await fetch(entry.data_json);
+      data = await r.json();
+      runCache[entry.name] = data;
+    } catch(e) {
+      main.appendChild(Object.assign(document.createElement("pre"), {
+        id: "error-box", textContent: "Could not load data.json: " + e.message
+      }));
+      return;
+    }
+  }
+
+  // render image + strips row
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const img = document.createElement("img");
+  img.id = "render-img";
+  img.src = entry.render;
+  img.alt = entry.name;
+  row.appendChild(img);
+
+  const stripsCol = document.createElement("div");
+  stripsCol.style.cssText = "display:flex;flex-direction:column;gap:10px;flex:1;min-width:200px;";
+
+  stripsCol.appendChild(makeStripGroup("Full colormap (LUT)", data.lut_points, COL_LUT, true));
+  stripsCol.appendChild(makeStripGroup("Extracted palette", data.extracted_stops, COL_EXTRACT, false));
+
+  // coverage bar
+  const covGroup = document.createElement("div");
+  covGroup.className = "strip-group";
+  const covLabel = document.createElement("div");
+  covLabel.className = "strip-label";
+  covLabel.textContent = "Coverage";
+  const covCanvas = document.createElement("canvas");
+  covCanvas.className = "strip-canvas";
+  covCanvas.width = 600; covCanvas.height = 32;
+  drawCoverageBar(covCanvas, entry.coverage);
+  covGroup.appendChild(covLabel);
+  covGroup.appendChild(covCanvas);
+  stripsCol.appendChild(covGroup);
+
+  row.appendChild(stripsCol);
+  main.appendChild(row);
+
+  // legend
+  const legend = document.createElement("div");
+  legend.id = "legend";
+  legend.innerHTML = `
+    <span><span class="legend-dot" style="background:${COL_LUT}"></span>LUT samples (full palette)</span>
+    <span><span class="legend-dot" style="background:${COL_PIXELS}"></span>Rendered pixels</span>
+    <span><span class="legend-dot" style="background:${COL_EXTRACT}"></span>Extracted curve</span>`;
+  main.appendChild(legend);
+
+  // scatter panels
+  const scatterRow = document.createElement("div");
+  scatterRow.id = "scatter-row";
+
+  const panels = [
+    { label: "a vs L",  xKey: "a", yKey: "L",  xRange: [-0.4, 0.4], yRange: [0, 1] },
+    { label: "b vs L",  xKey: "b", yKey: "L",  xRange: [-0.4, 0.4], yRange: [0, 1] },
+    { label: "b vs a",  xKey: "a", yKey: "b",  xRange: [-0.4, 0.4], yRange: [-0.4, 0.4] },
+  ];
+
+  const SZ = 220;  // canvas size px
+
+  for (const p of panels) {
+    const panel = document.createElement("div");
+    panel.className = "scatter-panel";
+    const lbl = document.createElement("div");
+    lbl.className = "panel-label";
+    lbl.textContent = p.label;
+    const canvas = document.createElement("canvas");
+    canvas.className = "scatter-canvas";
+    canvas.width = SZ; canvas.height = SZ;
+
+    drawScatter(canvas, p, [
+      { points: data.lut_points,      color: COL_LUT,    r: 2.5, alpha: 0.8 },
+      { points: data.pixel_points,    color: COL_PIXELS, r: 1.5, alpha: 0.25 },
+      { points: data.extracted_stops, color: COL_EXTRACT,r: 2.5, alpha: 0.9 },
+    ]);
+
+    panel.appendChild(lbl);
+    panel.appendChild(canvas);
+    scatterRow.appendChild(panel);
+  }
+
+  main.appendChild(scatterRow);
+}
+
+// ── drawing helpers ───────────────────────────────────────────────────────────
+function oklab2rgb(L, a, b) {
+  const l_ = L + 0.3963377774*a + 0.2158037573*b;
+  const m_ = L - 0.1055613458*a - 0.0638541728*b;
+  const s_ = L - 0.0894841775*a - 1.2914855480*b;
+  const l3=l_*l_*l_, m3=m_*m_*m_, s3=s_*s_*s_;
+  const r =  4.0767416621*l3 - 3.3077115913*m3 + 0.2309699292*s3;
+  const g = -1.2684380046*l3 + 2.6097574011*m3 - 0.3413193965*s3;
+  const bv= -0.0041960863*l3 - 0.7034186147*m3 + 1.7076147010*s3;
+  const gc = v => v <= 0.0031308 ? 12.92*v : 1.055*Math.pow(Math.max(v,0),1/2.4)-0.055;
+  return [Math.round(Math.min(1,Math.max(0,gc(r)))*255),
+          Math.round(Math.min(1,Math.max(0,gc(g)))*255),
+          Math.round(Math.min(1,Math.max(0,gc(bv)))*255)];
+}
+
+function makeStripGroup(label, stops, fallbackColor, usePaletteColors) {
+  const group = document.createElement("div");
+  group.className = "strip-group";
+  const lbl = document.createElement("div");
+  lbl.className = "strip-label";
+  lbl.textContent = label;
+  const canvas = document.createElement("canvas");
+  canvas.className = "strip-canvas";
+  canvas.width = 600; canvas.height = 32;
+  if (!stops || stops.length === 0) {
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#2a2a2a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#555";
+    ctx.font = "11px system-ui";
+    ctx.fillText("no data", 8, 20);
+  } else if (usePaletteColors) {
+    drawPaletteStrip(canvas, stops);
+  } else {
+    drawPaletteStrip(canvas, stops);
+  }
+  group.appendChild(lbl);
+  group.appendChild(canvas);
+  return group;
+}
+
+function drawPaletteStrip(canvas, stops) {
+  if (!stops || stops.length === 0) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const sorted = [...stops].sort((a,b) => (a.t??0)-(b.t??0));
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  for (const s of sorted) {
+    const L = s.L ?? s[0] ?? 0.5;
+    const a = s.a ?? s[1] ?? 0;
+    const b = s.b ?? s[2] ?? 0;
+    const [r,g,bv] = oklab2rgb(L, a, b);
+    const t = Math.min(1, Math.max(0, s.t ?? s.position ?? 0));
+    grad.addColorStop(t, `rgb(${r},${g},${bv})`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawCoverageBar(canvas, coverage) {
+  if (coverage === null) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(0,0,W,H);
+  const covW = Math.round(coverage * W);
+  ctx.fillStyle = "#3a7a50";
+  ctx.fillRect(0, H*0.2, covW, H*0.6);
+  ctx.fillStyle = "#7a3060";
+  ctx.fillRect(covW, H*0.2, W-covW, H*0.6);
+  ctx.fillStyle = "#ccc";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "left";
+  ctx.fillText(`${(coverage*100).toFixed(1)}%`, 6, H-6);
+  ctx.textAlign = "right";
+  ctx.fillText(`${(100-coverage*100).toFixed(1)}% uncovered`, W-6, H-6);
+}
+
+function drawScatter(canvas, panel, clouds) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const PAD = 24;
+
+  ctx.fillStyle = "#161616";
+  ctx.fillRect(0, 0, W, H);
+
+  // axes
+  ctx.strokeStyle = "#2a2a2a";
+  ctx.lineWidth = 1;
+
+  const [xMin, xMax] = panel.xRange;
+  const [yMin, yMax] = panel.yRange;
+
+  function toCanvas(x, y) {
+    return [
+      PAD + (x - xMin) / (xMax - xMin) * (W - 2*PAD),
+      H - PAD - (y - yMin) / (yMax - yMin) * (H - 2*PAD),
+    ];
+  }
+
+  // zero lines
+  const [zx, zy] = toCanvas(0, 0);
+  ctx.beginPath(); ctx.moveTo(zx, PAD); ctx.lineTo(zx, H-PAD); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD, zy); ctx.lineTo(W-PAD, zy); ctx.stroke();
+
+  // axis labels
+  ctx.fillStyle = "#444";
+  ctx.font = "10px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText(panel.xKey, W/2, H-4);
+  ctx.save();
+  ctx.translate(10, H/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText(panel.yKey, 0, 0);
+  ctx.restore();
+
+  // range ticks
+  ctx.fillStyle = "#333";
+  ctx.font = "9px system-ui";
+  for (const v of [xMin, 0, xMax]) {
+    const [cx] = toCanvas(v, yMin);
+    ctx.textAlign = "center";
+    ctx.fillText(v.toFixed(1), cx, H-PAD+10);
+  }
+  for (const v of [yMin, (yMin+yMax)/2, yMax]) {
+    const [,cy] = toCanvas(xMin, v);
+    ctx.textAlign = "right";
+    ctx.fillText(v.toFixed(1), PAD-3, cy+3);
+  }
+
+  // draw clouds in order (pixels first so LUT/extracted are on top)
+  for (const cloud of clouds) {
+    const col = cloud.color;
+    const r = cloud.r;
+    const alpha = cloud.alpha;
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = col;
+
+    for (const pt of cloud.points) {
+      const x = pt[panel.xKey] ?? pt.a ?? 0;
+      const y = pt[panel.yKey] ?? pt.L ?? 0;
+      if (x < xMin || x > xMax || y < yMin || y > yMax) continue;
+      const [cx, cy] = toCanvas(x, y);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+// ── boot ──────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
