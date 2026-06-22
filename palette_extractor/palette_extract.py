@@ -130,28 +130,60 @@ def _knn_graph(P: np.ndarray, k: int) -> csr_matrix:
     return G.maximum(G.T)
 
 
-def extract_spine(P: np.ndarray, mass: np.ndarray, k: int,
-                  trim_delta: float) -> np.ndarray:
-    """Order the dominant ridge into a single open principal curve via
-    MST + two-sweep tree diameter, then trim over-budget sparse tips."""
-    G = _knn_graph(P, k)
-    _, cc = connected_components(G, directed=False)
-    big = np.argmax(np.bincount(cc, weights=mass))
-    sel = cc == big
-    Pb, Gb = P[sel], G[sel][:, sel]
-
-    T = minimum_spanning_tree(Gb)
-    T = T.maximum(T.T)
+def _mst_diameter(Pb: np.ndarray, Gb: csr_matrix) -> np.ndarray:
+    """MST + two-sweep tree-diameter -> ordered spine points."""
+    T = minimum_spanning_tree(Gb); T = T.maximum(T.T)
     far, _ = dijkstra(T, directed=False, indices=0, return_predecessors=True)
     u = int(np.argmax(far))
     dist_u, pred = dijkstra(T, directed=False, indices=u, return_predecessors=True)
     v = int(np.argmax(dist_u))
-
     path = [v]
     while path[-1] != u and path[-1] >= 0:
         path.append(int(pred[path[-1]]))
-    spine = Pb[np.array(path[::-1])]
+    return Pb[np.array(path[::-1])]
 
+
+def _extent(Pc: np.ndarray) -> float:
+    """Radius of gyration in OKLab = sqrt(total variance). 'Spanned color space':
+    rewards reach, not path length (arc) and not filled volume."""
+    return float(np.sqrt(((Pc - Pc.mean(0)) ** 2).sum(1).mean()))
+
+
+def extract_spine(P: np.ndarray, mass: np.ndarray, k: int, trim_delta: float,
+                  min_component_nodes: int | None = None, verbose: bool = True) -> np.ndarray:
+    """Order the dominant ridge into a single open principal curve.
+    Component selection = max spanned color-space extent (gyration), gated by a
+    node-count support floor — NOT largest mass (which collapses onto flat dark
+    regions) and NOT arc length (which a noisy compact blob inflates)."""
+    if min_component_nodes is None:
+        min_component_nodes = k + 1
+    G = _knn_graph(P, k)
+    _, cc = connected_components(G, directed=False)
+
+    best_spine, best_ext, rows = None, -1.0, []
+    for c in np.unique(cc):
+        sel = cc == c
+        if int(sel.sum()) < min_component_nodes:
+            continue
+        Pc = P[sel]
+        spine_c = _mst_diameter(Pc, G[sel][:, sel])
+        ext = _extent(Pc)
+        rows.append((int(c), int(sel.sum()), float(mass[sel].sum()), ext, float(Pc[:, 0].mean())))
+        if ext > best_ext:
+            best_ext, best_spine = ext, spine_c
+
+    if best_spine is None:                       # degenerate fallback: all specks
+        sel = cc == np.argmax(np.bincount(cc, weights=mass))
+        best_spine = _mst_diameter(P[sel], G[sel][:, sel])
+
+    if verbose and rows:
+        rows.sort(key=lambda r: -r[3])
+        print("  component selection (chosen = max spanned extent / gyration):")
+        for ci, nn, m, e, ml in rows:
+            print(f"    comp{ci:3d} nodes={nn:5d} mass={m:12.0f} extent={e:.4f} "
+                  f"meanL={ml:.3f}" + ("  <- chosen" if e == best_ext else ""))
+
+    spine = best_spine
     # trim leading/trailing nodes joined by an over-budget (sparse) jump
     step = np.linalg.norm(np.diff(spine, axis=0), axis=1)
     lo, hi = 0, len(spine) - 1

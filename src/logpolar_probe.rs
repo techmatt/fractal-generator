@@ -96,6 +96,12 @@ const PRESENCE_FLOOR: f64 = 0.02;
 /// `A(2π/n)` must clear this for n to count as a genuine fold (so a 4-fold isn't
 /// reported as merely 2-fold). Below it, the fold falls back to the argmax.
 const FOLD_THRESH: f64 = 0.8;
+/// If A(Δ) never dips below this past the main lobe, the field is rotationally
+/// ~invariant (no discrete fold) — flag `[RADIAL]`, don't report a fold.
+const RADIAL_TROUGH: f64 = 0.6;
+/// Center-jitter coarse search half-extent as a fraction of r_max — applied only
+/// to the eyeballed reference centers, never the sub-pixel nucleus centers.
+const REF_JITTER_FRAC: f64 = 0.18;
 
 // --- display -----------------------------------------------------------------
 const DISP_W: u32 = 460;
@@ -416,6 +422,10 @@ struct Readout {
     pitch: f64,
     radon: Vec<f64>, // oriented-energy vs slope index
     ang: Vec<f64>,   // angular autocorr A(Δ), Δ index 0..NV
+    /// Min of A(Δ) over Δ∈[NV/48, NV/2] (past the main lobe). A genuine discrete
+    /// fold dips low here; if it stays high the field is rotationally ~invariant
+    /// (a minibrot's concentric contours) — fold/R₂/R₄ are then meaningless.
+    ang_trough: f64,
     r2: f64,         // A(π)
     r4: f64,         // A(π/2)
     fold: u32,       // best n in {2,3,4,5,6,8} by A(2π/n)
@@ -441,6 +451,8 @@ fn compute_readout(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f6
 
     let r2 = ang[NV / 2];
     let r4 = ang[NV / 4];
+    let trough_min = (NV / 48).max(2);
+    let ang_trough = (trough_min..=NV / 2).map(|l| ang[l]).fold(f64::INFINITY, f64::min);
     // Fold = the LARGEST n whose A(2π/n) clears the threshold (an n-fold pattern is
     // also n/2-fold, so a plain argmax of A(2π/n) ties n vs 2n; the *fundamental*
     // fold is the finest one that still holds). Fall back to argmax if none clears.
@@ -473,6 +485,7 @@ fn compute_readout(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f6
         pitch,
         radon,
         ang,
+        ang_trough,
         r2,
         r4,
         fold,
@@ -481,6 +494,59 @@ fn compute_readout(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f6
         ratio,
         scale_strength,
     }
+}
+
+/// Single-lag angular autocorrelation (cheap — used by the center-jitter search).
+fn a_at_lag(d: &[f64], lag: usize) -> f64 {
+    let e: f64 = d.iter().map(|x| x * x).sum::<f64>().max(1e-30);
+    let mut acc = 0.0;
+    for iu in 0..NU {
+        let base = iu * NV;
+        for iv in 0..NV {
+            acc += d[base + iv] * d[base + (iv + lag) % NV];
+        }
+    }
+    acc / e
+}
+
+/// Cheap sharpness objective at a center (Radon hub-ness + the strongest fold
+/// autocorrelation), used to refine an **approximate** center against log-polar's
+/// acute center-sensitivity. 0 when the band is a flat plateau.
+fn sharpness_at(field: &[f64], w: usize, h: usize, fx: f64, fy: f64, rmin: f64, rmax: f64) -> f64 {
+    let lp = logpolar_sample(field, w, h, fx, fy, rmin, rmax);
+    if lp.presence < PRESENCE_FLOOR {
+        return 0.0;
+    }
+    let smax = 2.0 * NV as f64 / NU as f64;
+    let slopes: Vec<f64> = (0..N_SLOPE).map(|i| -smax + 2.0 * smax * i as f64 / (N_SLOPE - 1) as f64).collect();
+    let (_, hub, _) = radon_pitch(&lp.d, &slopes);
+    let fold_a = [NV / 2, NV / 3, NV / 4, NV / 6].iter().map(|&l| a_at_lag(&lp.d, l)).fold(f64::NEG_INFINITY, f64::max);
+    hub + fold_a.max(0.0)
+}
+
+/// One grid pass: ±`ext` about `(cx,cy)` in `step` increments, returns the
+/// best `(fx, fy, score)` by `sharpness_at`.
+fn grid_pass(field: &[f64], w: usize, h: usize, cx: f64, cy: f64, ext: f64, step: f64, rmin: f64, rmax: f64) -> (f64, f64, f64) {
+    let n = (ext / step).round() as i64;
+    let pts: Vec<(f64, f64)> = (-n..=n)
+        .flat_map(|jy| (-n..=n).map(move |jx| (cx + jx as f64 * step, cy + jy as f64 * step)))
+        .collect();
+    pts.par_iter()
+        .map(|&(x, y)| (x, y, sharpness_at(field, w, h, x, y, rmin, rmax)))
+        .reduce(|| (cx, cy, f64::NEG_INFINITY), |a, b| if b.2 > a.2 { b } else { a })
+}
+
+/// Two-stage (coarse → fine), image-scale-aware center refinement about an
+/// approximate center, maximizing `sharpness_at`. For nucleus centers this is
+/// skipped (already sub-pixel); used for the eyeballed reference centers, whose
+/// error can be tens of px at full image resolution.
+fn refine_center(field: &[f64], w: usize, h: usize, fx0: f64, fy0: f64, rmin: f64, rmax: f64) -> (f64, f64, bool) {
+    let coarse_ext = (REF_JITTER_FRAC * rmax).max(8.0);
+    let coarse_step = (coarse_ext / 8.0).max(1.0);
+    let (cx, cy, _) = grid_pass(field, w, h, fx0, fy0, coarse_ext, coarse_step, rmin, rmax);
+    let (fx, fy, _) = grid_pass(field, w, h, cx, cy, coarse_step, (coarse_step / 4.0).max(1.0), rmin, rmax);
+    let moved = (fx - fx0).hypot(fy - fy0) > 1.0;
+    (fx, fy, moved)
 }
 
 /// Angular autocorrelation `A(Δ) = Σ D·D(u, v+Δ) / Σ D²`, cyclic in v. `A(0)=1`.
@@ -617,10 +683,14 @@ fn pass(b: bool) -> &'static str {
     }
 }
 
-/// "[FLAT]" tag when structure-presence is below the floor (readouts untrustworthy).
-fn flat_flag(presence: f64) -> &'static str {
-    if presence < PRESENCE_FLOOR {
+/// Honesty tag on a readout: `[FLAT]` if there's no structure (plateau), `[RADIAL]`
+/// if the angular autocorr never dips (rotationally invariant — a minibrot's
+/// concentric contours, where a discrete fold / R₂ / R₄ is meaningless).
+fn trust_flag(ro: &Readout) -> &'static str {
+    if ro.presence < PRESENCE_FLOOR {
         " [FLAT]"
+    } else if ro.ang_trough > RADIAL_TROUGH {
+        " [RADIAL]"
     } else {
         ""
     }
@@ -677,11 +747,15 @@ fn process_bench(b: &sp::Bench, pal_seed: &Palette, pal_seq: &Palette, pal_div: 
     let mut overlay = downscale_rgb(&preview, big_w, big_h);
     let sc = big_w as f64 / RW as f64;
     for cn in &cents {
-        let col = if cn.kind == "hub" { Rgb([255, 70, 70]) } else { Rgb([90, 160, 255]) };
-        draw_marker(&mut overlay, cn.fx * sc, cn.fy * sc, 7.0, col);
-        font::draw_text(&mut overlay, &cn.label, (cn.fx * sc + 8.0) as u32, (cn.fy * sc - 4.0) as u32, 1, col, true);
+        let col = if cn.kind == "hub" { Rgb([255, 60, 60]) } else { Rgb([80, 170, 255]) };
+        let (cx, cy) = (cn.fx * sc, cn.fy * sc);
+        draw_marker(&mut overlay, cx, cy, 13.0, col);
+        font::draw_text(&mut overlay, &cn.label, (cx + 15.0).max(0.0) as u32, (cy - 6.0).max(0.0) as u32, 2, col, true);
     }
     let overlay = titled(overlay, &format!("{} smooth + nucleus centers (red=hub H#, blue=junc J#)  [land on visual hubs?]", b.name));
+    // Standalone full-size overlay for the step-0 finder check (the composite panel
+    // shrinks it too far to judge whether centers land on the visual hubs).
+    save(&overlay, &format!("{OUT_DIR}/{}/overlay.png", b.name))?;
 
     // --- reflection (consumed, not rebuilt) ---
     let tf = sp::structure_tensor(&scalar, w, h, sp::SCALES[0].0, sp::SCALES[0].1);
@@ -702,14 +776,14 @@ fn process_bench(b: &sp::Bench, pal_seed: &Palette, pal_seq: &Palette, pal_div: 
         for (bi, &(rmin, rmax_px)) in BANDS.iter().enumerate() {
             let ro = compute_readout(&scalar, w, h, cn.fx, cn.fy, rmin, rmax_px);
             eprintln!(
-                "      {} {} band{} (r {:.0}-{:.0}px): presence {:.3}{} hubness {:.3} pitch {:+.2} | fold {} (A={:.2}) R2 {:.2} R4 {:.2} | scale x{:.3} ({:.2})",
-                b.name, cn.label, bi, rmin, rmax_px, ro.presence, flat_flag(ro.presence), ro.hubness, ro.pitch, ro.fold, ro.fold_score, ro.r2, ro.r4, ro.ratio, ro.scale_strength
+                "      {} {} band{} (r {:.0}-{:.0}px): presence {:.3} trough {:.2}{} hubness {:.3} pitch {:+.2} | fold {} (A={:.2}) R2 {:.2} R4 {:.2} | scale x{:.3} ({:.2})",
+                b.name, cn.label, bi, rmin, rmax_px, ro.presence, ro.ang_trough, trust_flag(&ro), ro.hubness, ro.pitch, ro.fold, ro.fold_score, ro.r2, ro.r4, ro.ratio, ro.scale_strength
             );
             let ku = (rmax_px.ln() - rmin.ln()) / (NU - 1) as f64;
             let mark_rad = scale_marks(&ro, ku);
             let title = format!(
                 "{} ({}, P{}) band{} r{:.0}-{:.0}px | pres {:.2}{} hub {:.2} pitch {:+.2} fold {} R2 {:.2} R4 {:.2} x{:.2}",
-                cn.label, cn.kind, cn.period, bi, rmin, rmax_px, ro.presence, flat_flag(ro.presence), ro.hubness, ro.pitch, ro.fold, ro.r2, ro.r4, ro.ratio
+                cn.label, cn.kind, cn.period, bi, rmin, rmax_px, ro.presence, trust_flag(&ro), ro.hubness, ro.pitch, ro.fold, ro.r2, ro.r4, ro.ratio
             );
             band_rows.push(candidate_block(&title, &ro, pal_seq, pal_div, &mark_ang, &mark_rad));
             if bi == 0 {
@@ -803,17 +877,21 @@ fn reference_panel(pal_seq: &Palette, pal_div: &Palette) -> Result<(), String> {
             continue;
         };
         any = true;
-        let fx = fcx * w as f64;
-        let fy = fcy * h as f64;
-        let (rmin, rmax) = (6.0, (w.min(h) as f64) * 0.45);
+        let fx0 = fcx * w as f64;
+        let fy0 = fcy * h as f64;
+        let (rmin, rmax) = (6.0, (w.min(h) as f64) * 0.32);
+        // The reference centers are human-eyeballed; log-polar is acutely
+        // center-sensitive, so refine with a sub-pixel-grid jitter search.
+        let (fx, fy, moved) = refine_center(&lum, w, h, fx0, fy0, rmin, rmax);
         let ro = compute_readout(&lum, w, h, fx, fy, rmin, rmax);
         let ku = (rmax.ln() - rmin.ln()) / (NU - 1) as f64;
         eprintln!(
-            "  ref {name} [SANITY ONLY, palette-contaminated]: center frac ({fcx},{fcy})  presence {:.3}{} hubness {:.3} pitch {:+.2} fold {} R2 {:.3} R4 {:.3} x{:.3}  ({expect})",
-            ro.presence, flat_flag(ro.presence), ro.hubness, ro.pitch, ro.fold, ro.r2, ro.r4, ro.ratio
+            "  ref {name} [SANITY ONLY, palette-contaminated]: center frac ({fcx},{fcy})→px({fx:.0},{fy:.0}){}  presence {:.3} trough {:.2}{} hubness {:.3} pitch {:+.2} fold {} R2 {:.3} R4 {:.3} x{:.3}  ({expect})",
+            if moved { " [jitter-refined]" } else { "" },
+            ro.presence, ro.ang_trough, trust_flag(&ro), ro.hubness, ro.pitch, ro.fold, ro.r2, ro.r4, ro.ratio
         );
         let block = candidate_block(
-            &format!("{name} [SANITY] pres {:.2}{} hub {:.2} pitch {:+.2} fold {} R2 {:.2} R4 {:.2}", ro.presence, flat_flag(ro.presence), ro.hubness, ro.pitch, ro.fold, ro.r2, ro.r4),
+            &format!("{name} [SANITY] pres {:.2}{} hub {:.2} pitch {:+.2} fold {} R2 {:.2} R4 {:.2}", ro.presence, trust_flag(&ro), ro.hubness, ro.pitch, ro.fold, ro.r2, ro.r4),
             &ro,
             pal_seq,
             pal_div,
@@ -1013,7 +1091,7 @@ fn draw_marker(img: &mut RgbImage, cx: f64, cy: f64, r: f64, col: Rgb<u8>) {
     for y in y0..=y1 {
         for x in x0..=x1 {
             let d = (((x as f64 - cx).powi(2)) + ((y as f64 - cy).powi(2))).sqrt();
-            if (d - r).abs() <= 1.6 {
+            if (d - r).abs() <= 2.4 {
                 put(img, x, y, Rgb([0, 0, 0]));
             }
         }
@@ -1021,7 +1099,7 @@ fn draw_marker(img: &mut RgbImage, cx: f64, cy: f64, r: f64, col: Rgb<u8>) {
     for y in y0..=y1 {
         for x in x0..=x1 {
             let d = (((x as f64 - cx).powi(2)) + ((y as f64 - cy).powi(2))).sqrt();
-            if (d - r).abs() <= 0.8 {
+            if (d - r).abs() <= 1.3 {
                 put(img, x, y, col);
             }
         }
