@@ -28,8 +28,8 @@ use image::RgbImage;
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{FractalBackend, PixelSample};
-use crate::coloring::{self, ColorParams};
+use crate::backend::{F64Backend, FractalBackend, PixelSample, PHASE_GATED};
+use crate::coloring::{self, ChannelSet, ColorParams};
 use crate::palette::{linear_to_srgb, Palette};
 
 /// Everything needed to place pixels in the complex plane.
@@ -76,7 +76,69 @@ impl SampleBuffer {
 /// Stage 1 — iterate the backend over the supersampled grid and cache samples.
 /// This is the only stage that touches the backend; everything downstream is
 /// pure over the returned buffer.
+///
+/// Uses the trait `sample` (every channel live), so it is the path for the
+/// perturbation and Julia backends, `navigate`, `probe`, and `profile`. The
+/// render/sheet driver routes the **f64** backend through
+/// [`iterate_samples_f64`] instead, which computes only the channels the
+/// colorer reads.
 pub fn iterate_samples(backend: &dyn FractalBackend, frame: &Frame, ss: u32) -> SampleBuffer {
+    iterate_grid(frame, ss, |c, dc| backend.sample(c, dc))
+}
+
+/// Stage 1, **channel-intent dispatch** for the f64 backend (render/sheet only).
+///
+/// Monomorphizes the f64 kernel to exactly the channels `channels` says the
+/// colorer reads — `trap` (orbit-trap distance/phase + its `eval_dist`) and `de`
+/// (the distance estimate + its `dz` recurrence) are computed only when set, and
+/// fully dead-code-eliminated otherwise. `ATOM` is always `false` here: no
+/// coloring path reads the atom-domain channel, so the render path realizes the
+/// atom strip for free (the trait `sample` used by `navigate` is untouched).
+///
+/// The `(trap, de)` match is total, so every config maps to a concrete
+/// monomorphization; [`crate::coloring::required_channels`] is conservative, so
+/// an unrecognized mode resolves to all-on (correct-but-slow). Trap phase is
+/// always [`PHASE_GATED`] — the production strategy, identical to the trait path.
+pub fn iterate_samples_f64(
+    backend: &F64Backend,
+    frame: &Frame,
+    ss: u32,
+    channels: ChannelSet,
+) -> SampleBuffer {
+    match (channels.trap, channels.de) {
+        (true, true) => {
+            iterate_grid(frame, ss, |c, _dc| {
+                backend.sample_flags::<true, false, true, PHASE_GATED>(c)
+            })
+        }
+        (true, false) => {
+            iterate_grid(frame, ss, |c, _dc| {
+                backend.sample_flags::<true, false, false, PHASE_GATED>(c)
+            })
+        }
+        (false, true) => {
+            iterate_grid(frame, ss, |c, _dc| {
+                backend.sample_flags::<false, false, true, PHASE_GATED>(c)
+            })
+        }
+        (false, false) => {
+            iterate_grid(frame, ss, |c, _dc| {
+                backend.sample_flags::<false, false, false, PHASE_GATED>(c)
+            })
+        }
+    }
+}
+
+/// Shared supersampled-grid iteration: the `dc`-from-pixel-geometry rule and row
+/// parallelism live here once, so the trait path ([`iterate_samples`]) and the
+/// f64 channel-dispatch path ([`iterate_samples_f64`]) produce identical geometry
+/// and differ only in the per-subpixel sampler closure. `sample(c, dc)` receives
+/// the absolute coordinate `c = center + dc` (read only by the f64 backend) and
+/// the pixel offset `dc` (the only coordinate perturbation needs).
+fn iterate_grid<F>(frame: &Frame, ss: u32, sample: F) -> SampleBuffer
+where
+    F: Fn(Complex<f64>, Complex<f64>) -> PixelSample + Sync,
+{
     let w = frame.out_width;
     let h = frame.out_height;
     let s = ss.max(1);
@@ -104,7 +166,7 @@ pub fn iterate_samples(backend: &dyn FractalBackend, frame: &Frame, ss: u32) -> 
                 let dc_re = (px / sub_w_f - 0.5) * fw;
                 let dc = Complex::new(dc_re, dc_im);
                 let c = center + dc; // only the f64 backend reads this
-                row.push(backend.sample(c, dc));
+                row.push(sample(c, dc));
             }
             row
         })

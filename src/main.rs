@@ -11,9 +11,7 @@ use std::time::Instant;
 use clap::Parser;
 use num_complex::Complex;
 
-use fractal_generator::backend::{
-    F64Backend, FractalBackend, JuliaBackend, PerturbationBackend, Trap,
-};
+use fractal_generator::backend::{F64Backend, JuliaBackend, PerturbationBackend, Trap};
 use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
 use fractal_generator::coherence;
@@ -25,7 +23,7 @@ use fractal_generator::navigate;
 use fractal_generator::profile;
 use fractal_generator::search;
 use fractal_generator::wallpaper;
-use fractal_generator::coloring::ColorParams;
+use fractal_generator::coloring::{self, ChannelSet, ColorParams};
 use fractal_generator::hp;
 use fractal_generator::palette::{builtin, Palette};
 use fractal_generator::palette_io::{load_palette, load_palette_file};
@@ -49,7 +47,12 @@ struct Iterated {
 
 /// Build the frame + backend for a location and iterate the supersampled grid
 /// once. Shared by render and sheet so both set up identically.
-fn iterate_location(loc: &LocationArgs) -> Result<Iterated, String> {
+///
+/// `channels` is the colorer's channel-intent (from
+/// [`coloring::required_channels`]): the **f64** backend iterates only those
+/// channels via [`render::iterate_samples_f64`]. The perturbation and Julia
+/// paths ignore it and use the all-on trait `sample` (untouched).
+fn iterate_location(loc: &LocationArgs, channels: ChannelSet) -> Result<Iterated, String> {
     let height = loc.resolved_height()?;
     if loc.width == 0 {
         return Err("--width must be > 0".into());
@@ -122,7 +125,10 @@ fn iterate_location(loc: &LocationArgs) -> Result<Iterated, String> {
         );
     }
 
-    let (backend, backend_name, ref_report): (Box<dyn FractalBackend>, &str, Option<(f64, usize)>) =
+    // Build the perturbation reference up front (f64 has none). The f64 backend
+    // is built inside the iterate branch below so it can take the channel-intent
+    // dispatch; perturbation always uses the all-on trait path.
+    let (pb, backend_name, ref_report): (Option<PerturbationBackend>, &str, Option<(f64, usize)>) =
         if use_perturb {
             let t = Instant::now();
             let pb = PerturbationBackend::new(
@@ -135,13 +141,9 @@ fn iterate_location(loc: &LocationArgs) -> Result<Iterated, String> {
             );
             let ref_secs = t.elapsed().as_secs_f64();
             let len = pb.ref_len();
-            (Box::new(pb), "perturbation", Some((ref_secs, len)))
+            (Some(pb), "perturbation", Some((ref_secs, len)))
         } else {
-            (
-                Box::new(F64Backend::new(loc.maxiter, loc.bailout, trap)),
-                "f64",
-                None,
-            )
+            (None, "f64", None)
         };
 
     eprintln!(
@@ -161,7 +163,13 @@ fn iterate_location(loc: &LocationArgs) -> Result<Iterated, String> {
     }
 
     let t0 = Instant::now();
-    let buf = render::iterate_samples(&*backend, &frame, loc.supersample);
+    let buf = if let Some(pb) = &pb {
+        render::iterate_samples(pb, &frame, loc.supersample)
+    } else {
+        // f64: compute only the channels the colorer reads (atom always off).
+        let backend = F64Backend::new(loc.maxiter, loc.bailout, trap);
+        render::iterate_samples_f64(&backend, &frame, loc.supersample, channels)
+    };
     let iter_secs = t0.elapsed().as_secs_f64();
 
     if buf.glitched_pixels > 0 {
@@ -195,13 +203,13 @@ fn color_params(shade: &ShadeArgs) -> ColorParams {
 }
 
 fn run_render(cli: &Cli) -> Result<(), String> {
-    let it = iterate_location(&cli.location)?;
+    let params = color_params(&cli.shade);
+    let it = iterate_location(&cli.location, coloring::required_channels(&params))?;
     let palette = load_palette(
         &cli.palette.palette,
         cli.palette.palette_entry.as_deref(),
         cli.palette.palette_reverse,
     )?;
-    let params = color_params(&cli.shade);
 
     let t1 = Instant::now();
     let img = render::shade_and_downsample(
@@ -296,8 +304,8 @@ fn run_sheet(args: &SheetArgs) -> Result<(), String> {
         param_im: "0".into(),
     };
 
-    let it = iterate_location(&loc)?;
     let params = color_params(&args.shade);
+    let it = iterate_location(&loc, coloring::required_channels(&params))?;
 
     let t1 = Instant::now();
     let (grid, legend) =

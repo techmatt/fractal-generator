@@ -88,6 +88,40 @@ pub struct ColorParams {
     pub mark_glitches: bool,
 }
 
+/// The optional `PixelSample` channels a given coloring config actually reads.
+/// Drives the render-path kernel dispatch ([`crate::render::iterate_samples_f64`]):
+/// a channel **not** in the set is never computed — the kernel monomorphization
+/// elides it entirely. `escaped`/`smooth_iter` are core (always computed) and not
+/// represented; `atom_*` is navigation-only and read by no coloring path, so the
+/// render dispatch always disables it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelSet {
+    /// Orbit-trap distance + phase (`trap_min`, `trap_phase`).
+    pub trap: bool,
+    /// Distance estimate (`de`) + its `dz` derivative recurrence.
+    pub de: bool,
+}
+
+/// **Single source of truth** for which optional channels a coloring config
+/// reads — derived from a full audit of every `PixelSample` field [`shade`]
+/// consumes. A channel is required if **any** consumer reads it; both interior
+/// and exterior paths are covered, since a mode that reads a skipped channel
+/// would render corrupt:
+///  - `trap_min`/`trap_phase` (`trap`): the [`ColorChannel::Trap`] exterior
+///    channel **and** the [`InteriorMode::Trap`] interior fill.
+///  - `de` (`de`): the [`ColorChannel::De`] exterior channel **and** the
+///    DE-shade overlay ([`ColorParams::de_shade`]), both exterior reads.
+///
+/// Conservative by construction: the `matches!` arms below name exactly the
+/// modes that *omit* a channel, so any future channel/interior variant defaults
+/// to **requiring** the channel (all-on is correct-but-slow, never fast-but-wrong).
+pub fn required_channels(params: &ColorParams) -> ChannelSet {
+    let trap = matches!(params.channel, ColorChannel::Trap)
+        || matches!(params.interior, InteriorMode::Trap);
+    let de = matches!(params.channel, ColorChannel::De) || params.de_shade.is_some();
+    ChannelSet { trap, de }
+}
+
 /// Map a sample to linear-light RGB. Output is averaged in linear light by the
 /// render stage, then sRGB-encoded for the PNG. `pixel_spacing` is the frame
 /// constant used to normalize the raw DE into pixel units.
