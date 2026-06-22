@@ -25,16 +25,19 @@
 //! identical — same three `unit()` draws per candidate, same `screen_stats`,
 //! same band).
 //!
-//! ## FLAG — band not yet eye-validated
+//! ## Accept band — retuned against run0 hand-labels
 //!
-//! The accept band (`spread ≥ 8 ∧ interior ≤ 90% ∧ esc_median ≥ 3`) is carried
-//! forward **unchanged from probe 1, but its decision boundary has not been
-//! eyeballed** — only the uncontroversial rejects were ever rendered. The band
-//! is therefore a **single, named, centralized [`AcceptBand`]** read in one
-//! place (never inlined magic numbers), and each keeper persists the **per-clause
-//! pass margin** (`spread − min`, `interior_max − interior`, `esc_median − min`),
-//! so a later boundary-validation pass can pull straddlers straight from the log
-//! and retune `AcceptBand` (via its flags) without touching sampler structure.
+//! The accept band (`spread ≥ 50 ∧ interior ≤ 40% ∧ esc_median ≥ 3`) was
+//! **retuned against Matt's eye-labels on run0's 50 keepers** (band-retune pass),
+//! replacing probe 1's un-eyeballed `8 / 90% / 3`. Two-sided: `interior ≤ 40%`
+//! encodes the mostly-black rule; `spread ≥ 50` cuts the thin-filament sparse
+//! class (it lands in the confirmed gap between the bad-sparse SPRD ceiling ≈23
+//! and the good-anchor SPRD floor ≈86), losing zero good anchors. The band stays
+//! a **single, named, centralized [`AcceptBand`]** read in one place (never
+//! inlined magic numbers), and each keeper persists the **per-clause pass margin**
+//! (`spread − min`, `interior_max − interior`, `esc_median − min`), so the next
+//! batch can be straddler-audited from the log and re-retuned (via flags) without
+//! touching sampler structure. Thresholds are fit to 50 frames — re-check per batch.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -74,18 +77,18 @@ const KEEP_SS: u32 = 2;
 /// Equal per-scale EMD weights — the `calibrate` default. Matches probe 1.
 const WEIGHTS: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 
-/// One fixed neutral wide-range colormap (palette held out — structure-finding
-/// is palette-independent; the 3-palette labeling unit is a downstream stage).
-/// Viridis: perceptually uniform, near-monotone luminance. Matches probe 1.
-const COLORMAP: &str = "viridis";
+/// The preview colormap is a *flag* (`--palette`, default `cubehelix`), not a
+/// constant — structure-finding is palette-independent, so the single-tile
+/// preview palette is purely cosmetic (the 3-palette labeling unit is a
+/// downstream stage). Resolved once, in `run_generate`. The colormaps live in:
 const COLORMAPS_PATH: &str = "data/palettes/clean_colormaps.json";
 
 // --- the accept band (FLAG: centralized; not yet eye-validated) --------------
 
 /// The cheap-screen keeper decision boundary — the **single, named, centralized**
-/// definition (FLAG: carried unchanged from probe 1; its boundary has not been
-/// eyeballed). A later boundary-validation pass retunes *only* this (via the
-/// `generate` band flags), never inlined numbers.
+/// definition (retuned against run0 hand-labels; see module doc). Re-retuning
+/// touches *only* this default (via the `generate` band flags), never inlined
+/// numbers.
 ///
 /// Two-sided: a low/flat side (spread floor + escape-median floor) rejects flat
 /// exterior / instant-escape / filament-graze; a high side (interior cap) rejects
@@ -102,11 +105,17 @@ pub struct AcceptBand {
 }
 
 impl Default for AcceptBand {
-    /// Probe-1 values, carried forward unchanged (see FLAG).
+    /// Retuned against Matt's eye-labels on run0's 50 keepers (band-retune pass).
+    /// Two-sided: `interior_max` encodes Matt's 40%-black rule; `spread_min`
+    /// sits in the confirmed gap (bad-sparse ceiling SPRD≈23, good-anchor floor
+    /// SPRD≈86) at 50, cutting the thin-filament class while keeping branching
+    /// structure and every good anchor. `esc_median_min` unchanged (inactive on
+    /// run0; kept as a far-exterior/instant-escape backstop). Flags still
+    /// override each clause. Fit to 50 frames — re-check on each new batch.
     fn default() -> Self {
         Self {
-            spread_min: 8.0,
-            interior_max: 0.90,
+            spread_min: 50.0,
+            interior_max: 0.40,
             esc_median_min: 3.0,
         }
     }
@@ -115,21 +124,22 @@ impl Default for AcceptBand {
 /// The result of testing one screen against the band: the accept verdict, the
 /// failed-clause names (empty ⇒ accepted), the priority-ordered primary mode, and
 /// the per-clause pass margins (positive ⇒ passed that clause by this much).
-struct BandVerdict {
-    accepted: bool,
-    primary: &'static str,
+pub(crate) struct BandVerdict {
+    pub(crate) accepted: bool,
+    pub(crate) primary: &'static str,
     /// `spread − spread_min` (native smooth-iter units).
-    spread_margin: f64,
+    pub(crate) spread_margin: f64,
     /// `interior_max − interior_frac` (fraction; ×100 for the documented "90−%").
-    interior_margin: f64,
+    pub(crate) interior_margin: f64,
     /// `esc_median − esc_median_min` (native smooth-iter units).
-    esc_median_margin: f64,
+    pub(crate) esc_median_margin: f64,
 }
 
 impl AcceptBand {
     /// Test a screen's three scalars against the band. The *only* place the band
-    /// is read (FLAG: one-place decision boundary).
-    fn test(&self, interior_frac: f64, spread: f64, esc_median: f64) -> BandVerdict {
+    /// is read (FLAG: one-place decision boundary). Shared with `reject_corridor`,
+    /// which reclassifies every draw against this same band.
+    pub(crate) fn test(&self, interior_frac: f64, spread: f64, esc_median: f64) -> BandVerdict {
         let mut failed: Vec<&'static str> = Vec::new();
         if interior_frac > self.interior_max {
             failed.push("interior_black");
@@ -163,8 +173,9 @@ impl AcceptBand {
 }
 
 /// Low fixed coloring density (same as probe 1): ~1 gradient cycle / 250
-/// smooth-iter, so value→color reads as structure, not palette churn.
-fn color_params() -> ColorParams {
+/// smooth-iter, so value→color reads as structure, not palette churn. Shared
+/// with `reject_corridor` so its tiles shade exactly like keeper previews.
+pub(crate) fn color_params() -> ColorParams {
     ColorParams {
         density: 0.004,
         offset: 0.0,
@@ -179,24 +190,25 @@ fn color_params() -> ColorParams {
 }
 
 /// Escape-iteration distribution across one frame (escaped pixels only).
-/// Identical shape to probe 1's `EscDist`.
+/// Identical shape to probe 1's `EscDist`. Shared with `reject_corridor` (its
+/// all-draw log dumps the same vector for every draw, kept or not).
 #[derive(Clone)]
-struct EscDist {
-    count: usize,
-    mean: f64,
-    median: f64,
-    std: f64,
-    skew: f64,
-    min: f64,
-    p5: f64,
-    p25: f64,
-    p75: f64,
-    p95: f64,
-    max: f64,
+pub(crate) struct EscDist {
+    pub(crate) count: usize,
+    pub(crate) mean: f64,
+    pub(crate) median: f64,
+    pub(crate) std: f64,
+    pub(crate) skew: f64,
+    pub(crate) min: f64,
+    pub(crate) p5: f64,
+    pub(crate) p25: f64,
+    pub(crate) p75: f64,
+    pub(crate) p95: f64,
+    pub(crate) max: f64,
     /// Spread = p95 − p5.
-    spread: f64,
+    pub(crate) spread: f64,
     /// Fixed-bin histogram (fractions of escaped pixels), `ESC_HIST_BINS` long.
-    hist: Vec<f64>,
+    pub(crate) hist: Vec<f64>,
 }
 
 /// A persisted keeper: the full per-image log vector (over-logged — the bias
@@ -253,10 +265,12 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
     crate::ensure_parent_dir(thumbs_dir.join("x"))?;
 
     // Held-out colormap (reuse the probe colormap loader).
+    // The only place the preview palette is read (single read site). Default
+    // cubehelix; any name in `clean_colormaps.json` works via `--palette`.
     let cm_text = std::fs::read_to_string(COLORMAPS_PATH)
         .map_err(|e| format!("read {COLORMAPS_PATH}: {e}"))?;
-    let stops = load_colormap(&cm_text, COLORMAP)?;
-    let palette = Palette::from_srgb8_stops(COLORMAP, &stops, false);
+    let stops = load_colormap(&cm_text, &args.palette)?;
+    let palette = Palette::from_srgb8_stops(args.palette.clone(), &stops, false);
     let params = color_params();
     let trap = Trap {
         shape: TrapShape::Point,
@@ -460,8 +474,12 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
 
 /// Cheap screen stats straight off the sample buffer: interior fraction + the
 /// full escape-iteration distribution (moments + fixed-bin histogram). Identical
-/// to probe 1's `screen_stats` (so the keeper stream reproduces).
-fn screen_stats(samples: &[crate::backend::PixelSample], maxiter: u32) -> (f64, EscDist) {
+/// to probe 1's `screen_stats` (so the keeper stream reproduces). Shared with
+/// `reject_corridor`.
+pub(crate) fn screen_stats(
+    samples: &[crate::backend::PixelSample],
+    maxiter: u32,
+) -> (f64, EscDist) {
     let mut esc: Vec<f64> = Vec::with_capacity(samples.len());
     let mut interior = 0usize;
     for s in samples {
@@ -675,7 +693,7 @@ fn build_manifest(
         s,
         "  \"keeper_render\": {{ \"w\": {KEEP_W}, \"h\": {KEEP_H}, \"ss\": {KEEP_SS} }},"
     );
-    let _ = writeln!(s, "  \"colormap\": \"{COLORMAP}\",");
+    let _ = writeln!(s, "  \"colormap\": {},", probe::js(&args.palette));
     s.push_str("  \"color\": { \"channel\": \"smooth\", \"density\": 0.004, \"offset\": 0.0, \"interior\": \"black\" },\n");
     s.push_str("  \"palette\": \"held out (structure-finding only; 3-palette labeling is downstream)\",\n");
     let _ = writeln!(
@@ -685,7 +703,7 @@ fn build_manifest(
     );
     let _ = writeln!(
         s,
-        "  \"accept_band\": {{ \"spread_min\": {}, \"interior_max\": {}, \"esc_median_min\": {}, \"note\": \"FLAG: carried unchanged from probe 1; decision boundary NOT yet eye-validated; centralized for one-place retune; per-clause margins logged per keeper\" }},",
+        "  \"accept_band\": {{ \"spread_min\": {}, \"interior_max\": {}, \"esc_median_min\": {}, \"note\": \"retuned against run0 hand-labels (two-sided: interior<=40% + spread floor in confirmed 23..86 gap); centralized one-place default, flag-overridable; per-clause margins logged per keeper; fit to 50 frames, re-check per batch\" }},",
         band.spread_min, band.interior_max, band.esc_median_min
     );
     s.push_str("  \"descriptor\": \"keeper-only feature (energy s16 sparse + nn_emd to corpus); NOT a gate\",\n");

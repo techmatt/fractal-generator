@@ -56,6 +56,7 @@ pub mod palette;
 pub mod palette_io;
 pub mod probe;
 pub mod profile;
+pub mod reject_corridor;
 pub mod render;
 pub mod search;
 pub mod sheet;

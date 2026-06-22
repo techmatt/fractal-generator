@@ -2054,8 +2054,8 @@ pub struct GenerateArgs {
     #[arg(long, default_value_t = 1e6)]
     pub bailout: f64,
 
-    /// Accept-band override: middle-90% smooth-iter spread floor (FLAG: the
-    /// deferred boundary retune; default = probe-1 `AcceptBand`).
+    /// Accept-band override: middle-90% smooth-iter spread floor (default from
+    /// the label-retuned `AcceptBand`).
     #[arg(long)]
     pub spread_min: Option<f64>,
 
@@ -2084,6 +2084,12 @@ pub struct GenerateArgs {
     /// keeper-only descriptor feature.
     #[arg(long, default_value = "data/calibration/energy_calibration.json")]
     pub artifact: String,
+
+    /// Preview colormap name (from `data/palettes/clean_colormaps.json`) for the
+    /// keeper thumbnails/sheet only — purely cosmetic, structure-finding is
+    /// palette-independent and the 3-palette labeling stage is downstream.
+    #[arg(long, default_value = "cubehelix")]
+    pub palette: String,
 
     /// Output directory for the batch (`locations.jsonl`, `manifest.json`,
     /// `keeper_sheet.png`, `thumbs/`). Outside `out/` — a durable location store.
