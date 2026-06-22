@@ -39,3 +39,4 @@ __pycache__/
 # per-dir/per-file entries (/renders, /descend_strip_panels, *_stdout.txt, …).
 /out/*
 !/out/.gitkeep
+/data
