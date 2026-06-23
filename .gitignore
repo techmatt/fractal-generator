@@ -28,7 +28,8 @@ target
 
 # Python palette-library prototype: harvested third-party .ugr/.map collections
 # are local working inputs only — never redistribute (see palette_lib/REPORT.md).
-# Clean colormap-derived palettes (data/palettes/clean_colormaps.json) ARE committed.
+# The colormap-derived palette library (clean/quarantined/log) IS committed; see
+# the /data negations below.
 /palette_cache/
 __pycache__/
 *.pyc
@@ -39,4 +40,12 @@ __pycache__/
 # per-dir/per-file entries (/renders, /descend_strip_panels, *_stdout.txt, …).
 /out/*
 !/out/.gitkeep
-/data
+# data/ is disposable by default, EXCEPT the committed colormap-derived palette
+# library (reproducible from palette_lib/build_sheet.py — see CLAUDE.md
+# "Persistent-store convention").
+/data/*
+!/data/palettes/
+/data/palettes/*
+!/data/palettes/clean_colormaps.json
+!/data/palettes/quarantined_colormaps.json
+!/data/palettes/quarantine_log.json
