@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import coloring, field
+from .classify import classify_palette, criterion_text
 from .download import harvest_gnofract4d
 from .importer import build_library
 from .sampler import Sampler
@@ -83,6 +84,70 @@ def build_sheet(nu, interior, palettes, title):
     return sheet
 
 
+def persist_clean_library(clean):
+    """Classify every colormap-derived palette and persist the durable split.
+
+    Folds the eye-validated quarantine (`classify.py`) into the harvest pipeline
+    so a rebuild *reproduces* the hand-verified library instead of clobbering it:
+      - survivors  -> data/palettes/clean_colormaps.json  (each carries the
+        `cycle` + `mirror_needed` label inline; the Rust loaders ignore extra
+        per-entry keys, so this is byte-shape-safe).
+      - quarantined -> data/palettes/quarantined_colormaps.json  (moved, not
+        deleted; carries its metrics for audit).
+      - all -> data/palettes/quarantine_log.json  (criterion + per-palette
+        metrics for the full set — the reproducible audit trail).
+
+    Order follows the importer's survivor order, so the survivor file matches the
+    prior hand pass and a re-run is byte-for-byte identical (idempotent).
+    """
+    metrics = [(p, classify_palette(p["stops"])) for p in clean]
+    survivors = [(p, c) for p, c in metrics if not c["quarantine"]]
+    quarantined = [(p, c) for p, c in metrics if c["quarantine"]]
+
+    (DATA / "clean_colormaps.json").write_text(
+        json.dumps(
+            [{"name": p["name"], "source": p["source"], "stops": p["stops"],
+              "cycle": c["cycle"], "mirror_needed": c["mirror_needed"]}
+             for p, c in survivors],
+            indent=1),
+        encoding="utf-8",
+    )
+    (DATA / "quarantined_colormaps.json").write_text(
+        json.dumps(
+            [{"name": p["name"], "source": p["source"], "stops": p["stops"],
+              "seam": c["seam"], "internal_max_step": c["internal_max_step"],
+              "n_jump": c["n_jump"], "max_stop_step": c["max_stop_step"],
+              "mean_stop_step": c["mean_stop_step"]}
+             for p, c in quarantined],
+            indent=1),
+        encoding="utf-8",
+    )
+    n_cyc = sum(1 for _, c in survivors if c["cycle"] == "cyclic")
+    log = {
+        "criterion": criterion_text(),
+        "counts": {
+            "total": len(metrics),
+            "survivors": len(survivors),
+            "quarantined": len(quarantined),
+            "sequential_survivors": len(survivors) - n_cyc,
+            "cyclic_survivors": n_cyc,
+        },
+        "palettes": [
+            {"name": p["name"], "source": p["source"],
+             "seam": c["seam"], "internal_max_step": c["internal_max_step"],
+             "n_jump": c["n_jump"], "max_stop_step": c["max_stop_step"],
+             "mean_stop_step": c["mean_stop_step"],
+             "quarantined": c["quarantine"], "cycle": c["cycle"]}
+            for p, c in metrics
+        ],
+    }
+    (DATA / "quarantine_log.json").write_text(json.dumps(log, indent=1), encoding="utf-8")
+    print(f"[clean] {len(survivors)} survivors "
+          f"({n_cyc} cyclic / {len(survivors) - n_cyc} sequential), "
+          f"{len(quarantined)} quarantined -> data/palettes/")
+    return [p for p, _ in survivors], [p for p, _ in quarantined]
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     DATA.mkdir(parents=True, exist_ok=True)
@@ -92,14 +157,10 @@ def main():
     library, report = build_library(harvest)
 
     # Committable clean artifact: colormap-derived palettes only (no harvested
-    # colors) -> data/palettes/clean_colormaps.json.
+    # colors), classified + split into survivors / quarantined (durable, see
+    # persist_clean_library).
     clean = [p for p in library if p["source"] in ("matplotlib", "colorcet", "cmasher")]
-    (DATA / "clean_colormaps.json").write_text(
-        json.dumps([{"name": p["name"], "source": p["source"], "stops": p["stops"]} for p in clean]),
-        encoding="utf-8",
-    )
-    print(f"[clean] wrote {len(clean)} colormap-derived palettes to "
-          f"data/palettes/clean_colormaps.json")
+    persist_clean_library(clean)
 
     # 3. Sampler: uniform-over-library distribution (the exposed knob).
     sampler = Sampler(library)
