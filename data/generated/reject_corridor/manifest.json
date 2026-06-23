@@ -1,0 +1,17 @@
+{
+  "subcommand": "reject-corridor",
+  "purpose": "diagnosis-only audit of the generate accept-band detail-floor (spread_min clause); no band change, no new metric",
+  "seed": 20260623,
+  "draws": 6000,
+  "box": { "re_lo": -2, "re_hi": 0.7, "im_lo": -1.2, "im_hi": 1.2 },
+  "frame_width_range": { "lo": 0.003, "hi": 0.05, "sampling": "log-uniform", "geo_center": 0.012247448713915891 },
+  "maxiter": 1000,
+  "bailout": 1000000,
+  "screen": { "w": 320, "h": 180, "ss": 1 },
+  "keeper_render": { "w": 1280, "h": 720, "ss": 2 },
+  "palette": "cubehelix",
+  "accept_band": { "spread_min": 50, "interior_max": 0.4, "esc_median_min": 3, "note": "same band generate ships; not modified here" },
+  "corridor": { "lo": 24, "hi": 85, "definition": "interior<=interior_max AND esc_median>=esc_median_min AND spread in [lo,hi]", "floor": 50, "max_render": 48 },
+  "buckets": { "interior_black": 1400, "instant_escape": 210, "flat": 4185, "corridor": 117, "anchor": 88 },
+  "corridor_render": { "total": 117, "rendered": 48, "cut": 26, "keep": 22 }
+}
