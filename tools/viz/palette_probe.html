@@ -1,0 +1,192 @@
+<!doctype html><html><head><meta charset="utf-8"><title>palette universality probe</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#0e0f13;color:#ccc;margin:0;padding:0}
+header{position:sticky;top:0;background:#12141a;border-bottom:1px solid #23252e;padding:10px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;z-index:5}
+h1{font-size:15px;margin:0;color:#eee}
+.spacer{flex:1}
+.counts{color:#888;font-size:12px}
+.counts b{color:#cdd}
+.keep{color:#5ec07a}.cut{color:#e06a6a}.undec{color:#e0b24a}
+.note{color:#666;font-size:11px;max-width:560px}
+button{font:inherit;background:#1c1f29;color:#cdd;border:1px solid #2c2f3a;border-radius:4px;padding:4px 10px;cursor:pointer}
+button:hover{background:#262a36}
+#loader{padding:30px;max-width:760px}
+code{color:#9bb}
+main{padding:14px}
+.card{border:1px solid #23252e;border-radius:6px;background:#101218;margin-bottom:12px;overflow:hidden;scroll-margin-top:64px}
+.card.keep{border-color:#2f6b43;background:#0f150f}
+.card.cut{border-color:#7a2f2f;background:#150f0f}
+.card.focus{outline:2px solid #4a7adf;outline-offset:-2px}
+.chead{display:flex;align-items:center;gap:14px;padding:7px 12px;border-bottom:1px solid #1c1f29;flex-wrap:wrap}
+.pname{font-size:14px;font-weight:bold;color:#eee}
+.crate{font-size:11.5px;color:#9aa}
+.crate .bad{color:#e06a6a;font-weight:bold}
+.crate .ok{color:#5ec07a}
+.cyc{font-size:10px;color:#778;border:1px solid #2c2f3a;border-radius:3px;padding:0 5px}
+.verdict{margin-left:auto;font-size:12px;font-weight:bold}
+.verdict.keep{color:#5ec07a}.verdict.cut{color:#e06a6a}.verdict.undec{color:#666}
+.row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:6px}
+.shot{position:relative;border:1px solid #23252e;border-radius:4px;overflow:hidden;background:#000;cursor:zoom-in}
+.shot img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+.shot .loc{position:absolute;left:0;bottom:0;font-size:9.5px;color:#9aa;background:rgba(0,0,0,.62);padding:0 5px;border-top-right-radius:4px}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.93);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out;flex-direction:column;gap:10px}
+#lightbox img{max-width:96vw;max-height:88vh;border:1px solid #333}
+#lightbox .lbcap{color:#aaa;font-size:12px;text-align:center;max-width:90vw}
+kbd{background:#23252e;border:1px solid #333;border-radius:3px;padding:0 5px;color:#cdd}
+</style></head><body>
+<header>
+  <h1>palette universality probe</h1>
+  <span class="counts" id="counts"></span>
+  <span class="spacer"></span>
+  <button id="export">export verdict ▾</button>
+  <span class="note"><kbd>k</kbd> keep · <kbd>c</kbd> cut · <kbd>u</kbd> undecide (auto-advance) · click a render to zoom · sorted worst-first by corpus not-bad rate</span>
+</header>
+
+<div id="loader">
+  <p>Loading <code>../../data/palette_probe/probe_index.json</code> …</p>
+  <p class="note" id="loader-msg"></p>
+  <p>If opened via <code>file://</code> with fetch blocked, pick the index file:</p>
+  <p>index: <input id="load-index" type="file" accept=".json"></p>
+</div>
+
+<main id="app" style="display:none"></main>
+<div id="lightbox"><img id="lbimg" alt=""><div class="lbcap" id="lbcap"></div></div>
+
+<script>
+const ROOT='../../';
+const INDEX_URL=ROOT+'data/palette_probe/probe_index.json';
+const IMGDIR=ROOT+'data/palette_probe/';
+let DATA=null, LOCS=[], PALS=[];
+let verdict={};   // name -> 'keep' | 'cut'
+let focusIdx=0;
+
+function pct(r){return (r===null||r===undefined||Number.isNaN(r))?'n/a':(r*100).toFixed(0)+'%';}
+
+function start(){
+  LOCS=DATA.locations||[];
+  PALS=DATA.palettes||[];
+  if(!PALS.length){document.getElementById('loader-msg').textContent='no palettes in index';return;}
+  document.getElementById('loader').style.display='none';
+  document.getElementById('app').style.display='block';
+  build();
+  setFocus(0);
+  updateCounts();
+}
+
+function imgSrc(loc,pal){return IMGDIR+loc.tag+'_'+pal.safe+'.jpg';}
+
+function build(){
+  const app=document.getElementById('app'); app.innerHTML='';
+  PALS.forEach((p,i)=>{
+    const card=document.createElement('div');
+    card.className='card'; card.id='card-'+i; card.dataset.i=i;
+    const rateBad = (p.corpus_notbad_rate!==null && p.corpus_notbad_rate<0.34);
+    const rateCls = rateBad?'bad':'ok';
+    const cyc = p.mirror_needed?'seq':'cyc';
+    let shots='';
+    LOCS.forEach(loc=>{
+      shots+=`<div class="shot" data-pal="${i}" data-loc="${loc.tag}">`+
+             `<img loading="lazy" src="${imgSrc(loc,p)}" alt="${loc.tag} ${p.name}">`+
+             `<div class="loc">${loc.tag} ${loc.composition}</div></div>`;
+    });
+    card.innerHTML=
+      `<div class="chead">`+
+        `<span class="pname">${p.name}</span>`+
+        `<span class="cyc">${cyc}</span>`+
+        `<span class="crate">corpus <span class="${rateCls}">${pct(p.corpus_notbad_rate)}</span> not-bad / ${p.corpus_n}</span>`+
+        `<span class="verdict undec" id="vd-${i}">—</span>`+
+      `</div>`+
+      `<div class="row">${shots}</div>`;
+    app.appendChild(card);
+  });
+  // image zoom
+  app.querySelectorAll('.shot').forEach(s=>{
+    s.onclick=()=>{
+      const pi=+s.dataset.pal, lt=s.dataset.loc;
+      const p=PALS[pi], loc=LOCS.find(l=>l.tag===lt);
+      document.getElementById('lbimg').src=imgSrc(loc,p);
+      document.getElementById('lbcap').textContent=
+        `${p.name} · loc ${loc.tag} ${loc.composition} · corpus ${pct(p.corpus_notbad_rate)} not-bad/${p.corpus_n} · cx ${(+loc.cx).toFixed(8)} cy ${(+loc.cy).toFixed(8)} fw ${(+loc.fw).toExponential(2)}`;
+      document.getElementById('lightbox').style.display='flex';
+    };
+  });
+  // focus on card click (header area)
+  app.querySelectorAll('.card').forEach(c=>{
+    c.querySelector('.chead').onclick=e=>{if(e.target.tagName!=='BUTTON')setFocus(+c.dataset.i);};
+  });
+}
+
+function setFocus(i){
+  i=Math.max(0,Math.min(PALS.length-1,i));
+  document.querySelectorAll('.card.focus').forEach(c=>c.classList.remove('focus'));
+  focusIdx=i;
+  const card=document.getElementById('card-'+i);
+  if(card){card.classList.add('focus');card.scrollIntoView({block:'center',behavior:'smooth'});}
+}
+
+function setVerdict(i,v){
+  const p=PALS[i];
+  if(verdict[p.name]===v){delete verdict[p.name];v=null;}
+  else verdict[p.name]=v;
+  const card=document.getElementById('card-'+i);
+  const vd=document.getElementById('vd-'+i);
+  card.classList.remove('keep','cut');
+  vd.classList.remove('keep','cut','undec');
+  if(v==='keep'){card.classList.add('keep');vd.classList.add('keep');vd.textContent='KEEP';}
+  else if(v==='cut'){card.classList.add('cut');vd.classList.add('cut');vd.textContent='CUT';}
+  else{vd.classList.add('undec');vd.textContent='—';}
+  updateCounts();
+}
+
+function updateCounts(){
+  let keep=0,cut=0;
+  for(const v of Object.values(verdict)){if(v==='keep')keep++;else if(v==='cut')cut++;}
+  const undec=PALS.length-keep-cut;
+  document.getElementById('counts').innerHTML=
+    `<span class="keep">keep ${keep}</span> · <span class="cut">cut ${cut}</span> · <span class="undec">undecided ${undec}</span> of ${PALS.length}`;
+}
+
+window.addEventListener('keydown',e=>{
+  if(document.getElementById('lightbox').style.display==='flex'){
+    if(e.key==='Escape')document.getElementById('lightbox').style.display='none';
+    return;
+  }
+  if(e.key==='k'||e.key==='K'){setVerdict(focusIdx,'keep');setFocus(focusIdx+1);}
+  else if(e.key==='c'||e.key==='C'){setVerdict(focusIdx,'cut');setFocus(focusIdx+1);}
+  else if(e.key==='u'||e.key==='U'){setVerdict(focusIdx,null);setFocus(focusIdx+1);}
+  else if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();setFocus(focusIdx+1);}
+  else if(e.key==='ArrowUp'){e.preventDefault();setFocus(focusIdx-1);}
+});
+
+document.getElementById('lightbox').onclick=()=>document.getElementById('lightbox').style.display='none';
+
+document.getElementById('export').onclick=()=>{
+  const keep=[],del=[];
+  PALS.forEach(p=>{
+    const v=verdict[p.name];
+    if(v==='cut')del.push(p.name); else keep.push(p.name); // undecided defaults to keep (conservative)
+  });
+  const out={
+    note:'palette universality probe verdict — delete = universally-bad even on label-3 locations; undecided defaults to keep (conservative)',
+    seed:DATA.seed, n_locations:LOCS.length, locations:LOCS.map(l=>l.tag),
+    keep, delete:del,
+    verdicts:verdict
+  };
+  const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='palette_verdict.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+};
+
+function fetchJSON(url){return fetch(url).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();});}
+fetchJSON(INDEX_URL).then(d=>{DATA=d;start();})
+  .catch(err=>{document.getElementById('loader-msg').textContent='auto-load failed ('+err.message+') — use the picker below.';});
+document.getElementById('load-index').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader(); r.onload=()=>{try{DATA=JSON.parse(r.result);start();}catch(x){document.getElementById('loader-msg').textContent='parse error: '+x;}};
+  r.readAsText(f);
+};
+</script>
+</body></html>

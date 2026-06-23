@@ -21,9 +21,11 @@ use fractal_generator::corpus;
 use fractal_generator::descend;
 use fractal_generator::energy;
 use fractal_generator::generate;
+use fractal_generator::maxiter_diag;
 use fractal_generator::navigate;
 use fractal_generator::palette_pick;
 use fractal_generator::palette_score;
+use fractal_generator::palette_probe;
 use fractal_generator::present;
 use fractal_generator::profile;
 use fractal_generator::reject_corridor;
@@ -365,6 +367,8 @@ fn run() -> Result<(), String> {
         Some(Command::AaStudy(args)) => aa_study::run_aa_study(args),
         Some(Command::AaFilter(args)) => aa_filter::run_aa_filter(args),
         Some(Command::RenderOne(args)) => render_one::run_render_one(args),
+        Some(Command::MaxiterDiag(args)) => maxiter_diag::run_maxiter_diag(args),
+        Some(Command::PaletteProbe(args)) => palette_probe::run_palette_probe(args),
         None => run_render(&cli),
     }
 }

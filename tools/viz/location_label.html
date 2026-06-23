@@ -29,9 +29,13 @@ aside{width:300px;flex:none;max-height:86vh;overflow:auto;border:1px solid #1c1f
 .cell.s1 .tag{color:#e06a6a}.cell.s2 .tag{color:#e0b24a}.cell.s3 .tag{color:#5ec07a}
 .cell.s1{border-color:#5a2c2c}.cell.s2{border-color:#5a4a2c}.cell.s3{border-color:#2c5a3a}
 .hint{color:#777;font-size:11px;max-width:560px;text-align:center}
+#stage img{cursor:zoom-in}
 #loader{padding:30px;max-width:680px}
 input[type=file]{font:inherit}
 code{color:#9bb}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out;flex-direction:column;gap:10px}
+#lightbox img{max-width:96vw;max-height:88vh;border:1px solid #333}
+#lightbox .lbcap{color:#aaa;font-size:12px;text-align:center;max-width:90vw}
 </style></head><body>
 <header>
   <h1>location label</h1>
@@ -43,7 +47,7 @@ code{color:#9bb}
 </header>
 
 <div id="loader">
-  <p>Loading <code>../../data/label_crops/loose0/loose0/manifest.json</code> …</p>
+  <p>Loading <code>../../data/label_crops/loose0_v3/manifest.json</code> …</p>
   <p class="hint" id="loader-msg"></p>
   <p>If it didn't load (opened via <code>file://</code> with fetch blocked), pick the manifest manually:</p>
   <input id="load-manifest" type="file" accept=".json">
@@ -54,8 +58,10 @@ code{color:#9bb}
     <img id="cur-img" alt="">
     <div class="meta">
       <span class="cap" id="cap-loc"></span>
+      <span class="cap" id="cap-seed"></span>
       <span class="cap" id="cap-comp"></span>
       <span class="cap" id="cap-pal"></span>
+      <span class="cap" id="cap-occ"></span>
       <span class="cur-score" id="cur-score"></span>
     </div>
     <div class="score-btns">
@@ -67,11 +73,13 @@ code{color:#9bb}
   </div>
   <aside><div class="grid" id="overview"></div></aside>
 </main>
+<div id="lightbox"><img id="lbimg" alt=""><div class="lbcap" id="lbcap"></div></div>
 
 <script>
 const LS_KEY='location_label_v1';
 const ROOT='../../';                 // tools/viz/ -> repo root
-const MANIFEST_URL=ROOT+'data/label_crops/loose0/loose0/manifest.json';
+const BATCH_DIR='data/label_crops/loose0_v3';   // switch the batch here
+const MANIFEST_URL=ROOT+BATCH_DIR+'/manifest.json';
 const SHUFFLE_SEED=0xC0FFEE;
 let ROWS=[];                         // presentation-ordered, deduped crops
 let scores=loadScores();             // { composite_key: 1|2|3 }
@@ -151,8 +159,11 @@ function show(){
   document.getElementById('cur-img').src=imgSrc(r);
   document.getElementById('cur-img').alt=keyOf(r);
   document.getElementById('cap-loc').textContent=`${cur+1}/${ROWS.length} · loc ${r.draw_index}`;
+  document.getElementById('cap-seed').textContent='seed '+r.seed_index;
   document.getElementById('cap-comp').textContent=r.composition;
   document.getElementById('cap-pal').textContent=r.palette;
+  document.getElementById('cap-occ').textContent=r.occupancy!==undefined?('occ '+(+r.occupancy).toFixed(3)):'occ ?';
+  if(lbOpen)syncLightbox();              // keep zoom view on the current crop when advancing
   const s=scores[keyOf(r)];
   const lbl={1:'bad',2:'okay',3:'good'};
   const sc=document.getElementById('cur-score');
@@ -173,9 +184,26 @@ function nextUnscored(){
   for(let k=1;k<=ROWS.length;k++){const i=(cur+k)%ROWS.length; if(!scores[keyOf(ROWS[i])]){cur=i;show();return;}}
 }
 
+// --- lightbox: click the stage crop to zoom fit-to-viewport, click/Esc to dismiss ---
+// Labeling-while-open is preserved: 1/2/3 still label & advance, and the lightbox
+// re-syncs to the newly-advanced crop (via show()). Esc only closes the lightbox.
+let lbOpen=false;
+function syncLightbox(){
+  const r=ROWS[cur];
+  document.getElementById('lbimg').src=imgSrc(r);
+  const lbl={1:'bad',2:'okay',3:'good'}, s=scores[keyOf(r)];
+  document.getElementById('lbcap').textContent=
+    `${cur+1}/${ROWS.length} · loc ${r.draw_index} · seed ${r.seed_index} · ${r.composition} · ${r.palette} · occ ${(+r.occupancy).toFixed(3)} · ${s?('label '+s+' · '+lbl[s]):'unlabeled'}`;
+}
+function openLightbox(){ lbOpen=true; syncLightbox(); document.getElementById('lightbox').style.display='flex'; }
+function closeLightbox(){ lbOpen=false; document.getElementById('lightbox').style.display='none'; }
+document.getElementById('cur-img').onclick=openLightbox;
+document.getElementById('lightbox').onclick=closeLightbox;
+
 document.querySelectorAll('.score-btns button').forEach(b=>b.onclick=()=>setScore(+b.dataset.s));
 window.addEventListener('keydown',e=>{
   if(document.getElementById('app').style.display==='none')return;
+  if(e.key==='Escape'){ if(lbOpen)closeLightbox(); return; }
   if(e.key==='1'||e.key==='2'||e.key==='3'){setScore(+e.key);e.preventDefault();}
   else if(e.key==='ArrowRight')move(1);
   else if(e.key==='ArrowLeft')move(-1);

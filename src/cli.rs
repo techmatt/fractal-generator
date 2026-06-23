@@ -335,6 +335,26 @@ pub enum Command {
     /// the bare render path's fast-preview defaults are untouched. Shallow f64 by
     /// construction (asserted).
     RenderOne(RenderOneArgs),
+    /// Diagnosis-only iteration-cap escalation harness. Auto-selects the
+    /// worst-offender crops (grayest spiral cores) from a `present` manifest +
+    /// the standard test location, renders each at the locked wallpaper quality
+    /// (grid ss4 + Lanczos-3) across an escalating `maxiter` series, and reports
+    /// per (crop × cap) the residual pinned-at-cap fraction + wall-time, an HTML
+    /// escalation sheet, residual-vs-`frame_width` (depth question), occupancy
+    /// drift, a cost multiplier, and — at the auto-detected knee cap — the
+    /// no-escape-fraction distribution grounding the new black gate. Reuses
+    /// `energy.rs` + the `render-one` path; picks nothing. Stable output under
+    /// `data/calibration/maxiter_diag/` (not `out/`). Shallow f64 (asserted).
+    MaxiterDiag(MaxiterDiagArgs),
+    /// Palette universality probe: pick N label-3 ("great") locations at random
+    /// (fixed seed) from the `loose0_v3` labels+manifest, iterate each ONCE at the
+    /// `render-one` quality path (grid ss4 + Lanczos-3), and recolor across the
+    /// full score-3 palette pool — so universally-bad palettes (bad even on a
+    /// proven-good structure) can be spotted and cut. Emits the JPG crops +
+    /// `probe_index.json` (palettes carry their corpus not-bad rate, sorted
+    /// worst-first) under `data/palette_probe/`. The viewer
+    /// (`tools/viz/palette_probe.html`) writes the verdict; this picks nothing.
+    PaletteProbe(PaletteProbeArgs),
 }
 
 /// Sub-pixel sample placement for `render-one` (maps to [`crate::render::SubsamplePattern`]).
@@ -449,13 +469,131 @@ pub struct RenderOneArgs {
     #[arg(long, value_enum, default_value_t = FilterChoice::Lanczos3)]
     pub filter: FilterChoice,
 
-    /// Maximum iterations before a pixel is treated as interior.
-    #[arg(long, default_value_t = 2000)]
+    /// Maximum iterations / orbit cap ("max_orbit"). Raised 2000 → 10000 (the
+    /// `maxiter-blackgate` pass): the escalation sheet showed loose0's spiral
+    /// cores resolve by ~8–10k (the residual pinned-at-cap fraction asymptotes —
+    /// what remains is genuine minibrot interior no cap reclaims). 10000 sits past
+    /// the knee for the loose0 fw range at ~3× the cap-2000 cost on interior-heavy
+    /// frames, near-free on filament frames.
+    #[arg(long, default_value_t = 10000)]
     pub maxiter: u32,
 
     /// SplitMix64 seed (consumed only by `--pattern jitter`).
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
+}
+
+/// `maxiter-diag` subcommand: see `maxiter_diag::run_maxiter_diag`. Diagnosis-only
+/// iteration-cap escalation harness. All caps/crops/resolution overridable; the
+/// defaults reproduce the loose0_v3 worst-offender escalation.
+#[derive(Args, Debug)]
+pub struct MaxiterDiagArgs {
+    /// `present` manifest mined for worst-offender crops (highest recorded
+    /// `black_fraction` per seed × composition — the grayest spiral cores).
+    #[arg(long, default_value = "data/label_crops/loose0_v3/manifest.json")]
+    pub manifest: String,
+
+    /// Number of worst-offender crops to escalate (the test location is appended).
+    #[arg(long, default_value_t = 3)]
+    pub offenders: usize,
+
+    /// Escalating iteration-cap series (comma-separated).
+    #[arg(long, default_value = "2000,8000,32000,128000")]
+    pub caps: String,
+
+    /// Render width in px (height follows 16:9). The locked quality is otherwise
+    /// fixed: grid ss4 + Lanczos-3 (the `render-one` path).
+    #[arg(long, default_value_t = 1280)]
+    pub width: u32,
+
+    /// Linear supersample factor (the lock: 4 → 16 spp).
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Palette name, looked up in `--colormaps` (selective-mirror load).
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Standard test location (minibrot eye), real part. Matches `render-one`.
+    #[arg(long, default_value = "-0.746339", allow_hyphen_values = true)]
+    pub test_cx: String,
+
+    /// Standard test location, imaginary part.
+    #[arg(long, default_value = "0.112242", allow_hyphen_values = true)]
+    pub test_cy: String,
+
+    /// Standard test location, frame width.
+    #[arg(long, default_value_t = 0.000583)]
+    pub test_fw: f64,
+
+    /// Knee-detection epsilon: the first cap past which the max-over-crops residual
+    /// change drops below this is the provisional knee.
+    #[arg(long, default_value_t = 0.02)]
+    pub knee_eps: f32,
+
+    /// Number of manifest crops re-rendered (cheap gate res) at the knee cap to
+    /// report the no-escape-fraction distribution. `0` skips gate calibration.
+    #[arg(long, default_value_t = 80)]
+    pub gate_sample: usize,
+
+    /// Stable output directory (not under `out/`).
+    #[arg(long, default_value = "data/calibration/maxiter_diag/")]
+    pub out_dir: String,
+}
+
+/// `palette-probe` subcommand: see `palette_probe::run_palette_probe`. Picks N
+/// label-3 locations at random (fixed seed) from the labels+manifest, iterates
+/// each once at the render-one quality path, and recolors across the full score-3
+/// palette pool. Shallow f64 by construction (asserted per location).
+#[derive(Args, Debug)]
+pub struct PaletteProbeArgs {
+    /// Location labels (the `draw|comp|palette` → label-1/2/3 map).
+    #[arg(long, default_value = "labels/location_labels.json")]
+    pub labels: String,
+
+    /// `present` manifest the labels were drawn against (recovers crop geometry).
+    #[arg(long, default_value = "data/label_crops/loose0_v3/manifest.json")]
+    pub manifest: String,
+
+    /// Palette pool to recolor across (the score-3 survivors).
+    #[arg(long, default_value = "data/palettes/score3_colormaps.json")]
+    pub colormaps: String,
+
+    /// Number of distinct label-3 locations to sample (uses all if fewer exist).
+    #[arg(long, default_value_t = 5)]
+    pub n_locations: usize,
+
+    /// SplitMix64 seed for the location pick (logged; fixed for reproducibility).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Output width in px (height follows 16:9). Probe crops are 1280×720.
+    #[arg(long, default_value_t = 1280)]
+    pub width: u32,
+
+    /// Output height in px.
+    #[arg(long, default_value_t = 720)]
+    pub height: u32,
+
+    /// Linear supersample factor (the lock: 4 → 16 spp).
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Maximum iterations / orbit cap (the present/render-one current default).
+    #[arg(long, default_value_t = 10000)]
+    pub maxiter: u32,
+
+    /// JPEG quality for the output crops.
+    #[arg(long, default_value_t = 90)]
+    pub jpg_quality: u8,
+
+    /// Stable output directory (not under `out/`).
+    #[arg(long, default_value = "data/palette_probe/")]
+    pub out_dir: String,
 }
 
 /// `aa-filter` subcommand: see `aa_filter::run_aa_filter`. One fixed view + cyclic
@@ -2492,8 +2630,12 @@ pub struct PresentArgs {
     #[arg(long, default_value_t = false)]
     pub all_compositions: bool,
 
-    /// Maximum iterations for both cheap-screen and full-resolution renders.
-    #[arg(long, default_value_t = 1000)]
+    /// Maximum iterations / orbit cap ("max_orbit") for both cheap-screen and
+    /// full-resolution renders. Raised 1000 → 10000 (the `maxiter-blackgate`
+    /// pass): resolves spiral cores so the black gate sees true interior, not
+    /// under-iterated pixels. The gate (`BLACK_THRESH`) is calibrated against
+    /// the no-escape distribution at this cap.
+    #[arg(long, default_value_t = 10000)]
     pub maxiter: u32,
 
     /// SplitMix64 seed for reproducible palette selection.

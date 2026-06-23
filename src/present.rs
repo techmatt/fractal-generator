@@ -3,7 +3,7 @@
 //! Takes a `locations.jsonl` from a `generate` run and produces presentation-ready
 //! crops. For each seed, tries three composition offsets at cheap 320×180 resolution,
 //! picks the one with the lowest black fraction (non-escaped pixel fraction), gates on
-//! < 40% black, then renders the accepted composition at full resolution across
+//! ≤ 30% black (see `BLACK_THRESH`), then renders the accepted composition at full resolution across
 //! `--palettes-per-crop` random palettes sampled from the colormap library.
 //!
 //! Black fraction is computed from raw `PixelSample` escape status — interior pixels
@@ -56,8 +56,14 @@ const CHEAP_W: u32 = 320;
 const CHEAP_H: u32 = 180;
 const CHEAP_SS: u32 = 1;
 
-/// Gate: discard seed if best composition has black fraction >= this.
-const BLACK_THRESH: f32 = 0.40;
+/// Gate: discard a (seed × composition) crop when its no-escape (black) fraction
+/// is **> this**. Tightened 0.40 → 0.30 (the `maxiter-blackgate` pass) once the
+/// iteration cap was raised: raising `maxiter` lowers the no-escape fraction
+/// (spiral-core pixels formerly pinned at the cap now escape), so a 0.30 ceiling
+/// on the high-iter renders rejects genuinely interior-dominated crops without
+/// losing the resolved-core frames. Calibrated on the cap-raised no-escape
+/// distribution (see `maxiter-diag`'s gate-calibration report).
+const BLACK_THRESH: f32 = 0.30;
 
 /// Thumbnail width for the contact sheet (height 16:9).
 const SHEET_THUMB_W: u32 = 240;

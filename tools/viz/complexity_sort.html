@@ -1,0 +1,148 @@
+<!doctype html><html><head><meta charset="utf-8"><title>loose0 complexity sort — calibration</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#0e0f13;color:#ccc;margin:0;padding:0}
+header{position:sticky;top:0;background:#12141a;border-bottom:1px solid #23252e;padding:10px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;z-index:5}
+h1{font-size:15px;margin:0;color:#eee}
+.spacer{flex:1}
+.counts{color:#888;font-size:12px}
+.counts b{color:#cdd}
+.kept{color:#5ec07a}.rej{color:#e06a6a}
+.slider-wrap{display:flex;align-items:center;gap:10px}
+input[type=range]{width:320px}
+.thr{color:#e0b24a;font-weight:bold;min-width:64px;display:inline-block}
+.note{color:#666;font-size:11px;max-width:640px}
+#loader{padding:30px;max-width:720px}
+code{color:#9bb}
+main{padding:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.cell{position:relative;border:1px solid #23252e;border-radius:5px;overflow:hidden;background:#000;cursor:pointer}
+.cell img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+.cell .cap{padding:3px 6px;font-size:10.5px;color:#9aa;line-height:1.35;background:#12141a;border-top:1px solid #1c1f29}
+.cell .cap .pal{color:#778}
+.cell .sc{position:absolute;left:0;top:0;font-size:12px;font-weight:bold;padding:1px 6px;background:rgba(0,0,0,.7);color:#e0b24a;border-bottom-right-radius:4px}
+.cell.reject{opacity:.32}
+.cell.reject .sc{color:#e06a6a}
+.cell.reject::after{content:"REJECT";position:absolute;right:0;top:0;font-size:9px;font-weight:bold;color:#e06a6a;background:rgba(0,0,0,.7);padding:1px 5px;border-bottom-left-radius:4px}
+.cell.boundary{outline:2px solid #e0b24a;outline-offset:-2px}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out;flex-direction:column;gap:10px}
+#lightbox img{max-width:96vw;max-height:88vh;border:1px solid #333}
+#lightbox .lbcap{color:#aaa;font-size:12px;text-align:center;max-width:90vw}
+</style></head><body>
+<header>
+  <h1>complexity sort</h1>
+  <div class="slider-wrap">
+    threshold <input type="range" id="thr" min="0" max="1" step="0.001" value="0">
+    <span class="thr" id="thrval">0.000</span>
+  </div>
+  <span class="counts" id="counts"></span>
+  <span class="spacer"></span>
+  <span class="note">sorted boring→busy · drag until the reject block = crops you'd call bad · click a thumb to zoom</span>
+</header>
+
+<div id="loader">
+  <p>Loading <code>../../data/label_crops/loose0/loose0/manifest.json</code> + <code>complexity_scores.json</code> …</p>
+  <p class="note" id="loader-msg"></p>
+  <p>If opened via <code>file://</code> with fetch blocked, pick both files:</p>
+  <p>manifest: <input id="load-manifest" type="file" accept=".json"></p>
+  <p>scores: <input id="load-scores" type="file" accept=".json"></p>
+</div>
+
+<main id="app" style="display:none"><div class="grid" id="grid"></div></main>
+<div id="lightbox"><img id="lbimg" alt=""><div class="lbcap" id="lbcap"></div></div>
+
+<script>
+const ROOT='../../';
+const MANIFEST_URL=ROOT+'data/label_crops/loose0/loose0/manifest.json';
+const SCORES_URL=ROOT+'data/label_crops/loose0/loose0/complexity_scores.json';
+let ROWS=[];           // {row, score} sorted ascending by score
+let manifestData=null, scoresData=null;
+
+const keyOf=c=>c.draw_index+'|'+c.composition+'|'+c.palette;
+const imgSrc=r=>ROOT+String(r.output).replace(/\\/g,'/');
+
+function tryStart(){
+  if(!manifestData||!scoresData)return;
+  const crops=manifestData.crops||[];
+  const seen=new Set(), uniq=[];
+  for(const c of crops){const k=keyOf(c); if(!seen.has(k)){seen.add(k);uniq.push(c);}}
+  ROWS=[];
+  let missing=0;
+  for(const c of uniq){
+    const s=scoresData[keyOf(c)];
+    if(!s||typeof s.score!=='number'){missing++;continue;}
+    ROWS.push({row:c,score:s.score,mean:s.mean_energy});
+  }
+  ROWS.sort((a,b)=>a.score-b.score);
+  if(!ROWS.length){document.getElementById('loader-msg').textContent='no joined rows (keys mismatch?)';return;}
+  const lo=ROWS[0].score, hi=ROWS[ROWS.length-1].score;
+  const sl=document.getElementById('thr');
+  sl.min=lo.toFixed(3); sl.max=hi.toFixed(3);
+  sl.step=((hi-lo)/400||0.001).toPrecision(2);
+  sl.value=lo;
+  document.getElementById('loader').style.display='none';
+  document.getElementById('app').style.display='block';
+  buildGrid();
+  sl.oninput=applyThreshold;
+  applyThreshold();
+  if(missing)console.warn(missing+' crops had no score');
+}
+
+function buildGrid(){
+  const g=document.getElementById('grid'); g.innerHTML='';
+  ROWS.forEach((r,i)=>{
+    const c=r.row;
+    const d=document.createElement('div');
+    d.className='cell'; d.dataset.i=i; d.dataset.score=r.score;
+    const fw=c.fw!==undefined?(+c.fw).toExponential(1):'?';
+    const intf=c.interior_frac!==undefined?(+c.interior_frac).toFixed(3):'?';
+    const blk=c.black_fraction!==undefined?(+c.black_fraction).toFixed(3):'?';
+    d.innerHTML=
+      `<span class="sc">${r.score.toFixed(3)}</span>`+
+      `<img loading="lazy" src="${imgSrc(c)}" alt="${keyOf(c)}">`+
+      `<div class="cap">draw ${c.draw_index} · seed ${c.seed_index} · ${c.composition}`+
+      `<br><span class="pal">${c.palette}</span>`+
+      `<br>fw ${fw} · int ${intf} · blk ${blk}</div>`;
+    d.onclick=()=>openLightbox(r);
+    g.appendChild(d);
+  });
+}
+
+function applyThreshold(){
+  const t=+document.getElementById('thr').value;
+  document.getElementById('thrval').textContent=t.toFixed(3);
+  const cells=document.getElementById('grid').children;
+  let rej=0, lastRejIdx=-1;
+  for(let i=0;i<ROWS.length;i++){
+    const isRej=ROWS[i].score<t;
+    cells[i].classList.toggle('reject',isRej);
+    cells[i].classList.remove('boundary');
+    if(isRej){rej++;lastRejIdx=i;}
+  }
+  if(lastRejIdx>=0)cells[lastRejIdx].classList.add('boundary');
+  const kept=ROWS.length-rej;
+  document.getElementById('counts').innerHTML=
+    `<span class="kept">kept ${kept}</span> / <span class="rej">rejected ${rej}</span> of ${ROWS.length} · threshold <b>${t.toFixed(3)}</b>`;
+}
+
+function openLightbox(r){
+  const c=r.row;
+  document.getElementById('lbimg').src=imgSrc(c);
+  document.getElementById('lbcap').textContent=
+    `score ${r.score.toFixed(3)} · draw ${c.draw_index} · seed ${c.seed_index} · ${c.composition} · ${c.palette}`;
+  document.getElementById('lightbox').style.display='flex';
+}
+document.getElementById('lightbox').onclick=()=>document.getElementById('lightbox').style.display='none';
+window.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('lightbox').style.display='none';});
+
+function fetchJSON(url){return fetch(url).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();});}
+Promise.all([fetchJSON(MANIFEST_URL),fetchJSON(SCORES_URL)])
+  .then(([m,s])=>{manifestData=m;scoresData=s;tryStart();})
+  .catch(err=>{document.getElementById('loader-msg').textContent='auto-load failed ('+err.message+') — use the pickers below.';});
+
+function pick(el,cb){el.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{cb(JSON.parse(r.result));}catch(x){document.getElementById('loader-msg').textContent='parse error: '+x;}};r.readAsText(f);};}
+pick(document.getElementById('load-manifest'),d=>{manifestData=d;tryStart();});
+pick(document.getElementById('load-scores'),d=>{scoresData=d;tryStart();});
+</script>
+</body></html>

@@ -1,0 +1,55 @@
+maxiter-diag: 4 crops × 4 caps [2000, 8000, 32000, 128000] @ 1280×720 grid ss4 lanczos3
+  [probe: test crop cap 2000 in 1.3s → rough whole-escalation estimate ~210s (3.5 min)]
+  s071_center              cap   2000: residual_pinned 0.3979  occ 0.597  5.4s
+  s071_center              cap   8000: residual_pinned 0.3690  occ 0.601  17.8s
+  s071_center              cap  32000: residual_pinned 0.3629  occ 0.602  61.5s
+  s071_center              cap 128000: residual_pinned 0.3615  occ 0.602  240.2s
+  s076_thirds              cap   2000: residual_pinned 0.3962  occ 0.571  5.1s
+  s076_thirds              cap   8000: residual_pinned 0.3905  occ 0.571  17.6s
+  s076_thirds              cap  32000: residual_pinned 0.3892  occ 0.571  65.4s
+  s076_thirds              cap 128000: residual_pinned 0.3889  occ 0.571  258.8s
+  s184_center              cap   2000: residual_pinned 0.3953  occ 0.582  5.9s
+  s184_center              cap   8000: residual_pinned 0.3895  occ 0.582  19.9s
+  s184_center              cap  32000: residual_pinned 0.3881  occ 0.582  67.6s
+  s184_center              cap 128000: residual_pinned 0.3878  occ 0.582  266.1s
+  test_minibrot_eye        cap   2000: residual_pinned 0.0001  occ 0.661  1.3s
+  test_minibrot_eye        cap   8000: residual_pinned 0.0001  occ 0.661  1.3s
+  test_minibrot_eye        cap  32000: residual_pinned 0.0001  occ 0.661  1.3s
+  test_minibrot_eye        cap 128000: residual_pinned 0.0001  occ 0.661  1.3s
+gate calibration: 80 crops re-rendered @ cap 8000, cheap gate res 320×180 ss1
+
+=== maxiter-diag ===
+
+# residual pinned-at-cap fraction  (and render wall-time, s)
+crop                      fw        | cap2000       | cap8000       | cap32000      | cap128000     
+s071_center               1.33e-2 | 0.3979     5s | 0.3690    18s | 0.3629    61s | 0.3615   240s 
+s076_thirds               1.39e-2 | 0.3962     5s | 0.3905    18s | 0.3892    65s | 0.3889   259s 
+s184_center               7.24e-3 | 0.3953     6s | 0.3895    20s | 0.3881    68s | 0.3878   266s 
+test_minibrot_eye         5.83e-4 | 0.0001     1s | 0.0001     1s | 0.0001     1s | 0.0001     1s 
+
+# depth question — residual pinned vs frame_width (at top cap 128000)
+  fw 1.393e-2  residual 0.3889  s076_thirds
+  fw 1.330e-2  residual 0.3615  s071_center
+  fw 7.242e-3  residual 0.3878  s184_center
+  fw 5.830e-4  residual 0.0001  test_minibrot_eye
+  → if residual-at-top-cap is flat across fw, one FIXED cap covers loose0's range;
+    if it rises as fw shrinks, the cap should scale with zoom depth (see proposal below).
+
+# occupancy drift — old cap 2000 vs new cap 8000 (energy::occupancy, floor 0.01)
+  s071_center               occ 0.597 → 0.601  (Δ +0.003)
+  s076_thirds               occ 0.571 → 0.571  (Δ +0.000)
+  s184_center               occ 0.582 → 0.582  (Δ +0.000)
+  → 0.23 occupancy-gate floor was calibrated at cap 2000; surfaced only, not acted on.
+
+# cost — render-time multiplier of cap 128000 vs cap 2000 (batch-time hit)
+  test/filament (lower bound): 1.25s → 1.27s  = 1.0×
+  worst offender (upper bound, interior-heavy): 50.7×
+
+# black-gate calibration — no-escape fraction @ cap 8000 (80 crops, cheap gate res)
+  new cap : p10 0.000  p50 0.002  p90 0.193  max 0.353
+  old cap : p10 0.000  p50 0.002  p90 0.210  max 0.387  (manifest black_fraction)
+  at new cap: 3/80 crops exceed 0.30 (4%), 0/80 exceed 0.40 — grounds the 0.30 gate.
+wrote data/calibration/maxiter_diag/escalation.html
+wrote data/calibration/maxiter_diag/maxiter_diag.json
+escalation sheet: data/calibration/maxiter_diag/escalation.html
+PROVISIONAL knee cap = 8000 (confirm by eye from the sheet)
