@@ -54,6 +54,48 @@ def oklab_to_srgb(lab: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
+# Failure gate (Phase 2 — eye-set cutoffs over the wallpaper harvest)
+# --------------------------------------------------------------------------- #
+# Cutoffs were set by Matt against the worst-N strips of the 746-image harvest
+# (see prompts/wallpaper_harvest_prompt.md, tools/viz/harvest_gate.html):
+#   low_range  = palette OKLab extent (gyration / color range) below EXTENT_FLOOR
+#   degenerate = palette curve arc-length below ARCLEN_FLOOR
+# A palette is rejected if EITHER fires (the union catches every near-constant
+# map). Coverage is intentionally NOT a quality signal: on real photos image-
+# coverage is legitimately low (a 1-D rope through a 2-D color sheet), so a
+# coverage floor would reject good extractions. `low_coverage` is kept in the
+# vocabulary but not wired.
+EXTENT_FLOOR = 0.05
+ARCLEN_FLOOR = 0.30
+QUALITY_REASONS = ("low_coverage", "low_range", "degenerate")  # vocabulary
+
+
+def gate_quality(extent: float, arclen: float) -> list[str]:
+    """Return the quality_flags list for a palette's (extent, arclen).
+    Empty list == passes the gate. Single source of truth for the harvest
+    classifier, the wired PaletteResult, and the Phase-4 survivor split."""
+    flags = []
+    if extent < EXTENT_FLOOR:
+        flags.append("low_range")
+    if arclen < ARCLEN_FLOOR:
+        flags.append("degenerate")
+    return flags
+
+
+class PaletteRejected(ValueError):
+    """Raised by extract_palette(..., reject=True) when the gate flags a palette."""
+    def __init__(self, flags: list[str], extent: float, arclen: float):
+        self.flags, self.extent, self.arclen = flags, extent, arclen
+        super().__init__(f"palette rejected {flags} (extent={extent:.4f} arclen={arclen:.4f})")
+
+
+def _loop_arclen(stops_lab: np.ndarray) -> float:
+    """Closed-loop OKLab arc length of a stop sequence (palette curve length)."""
+    closed = np.vstack([stops_lab, stops_lab[:1]])
+    return float(np.linalg.norm(np.diff(closed, axis=0), axis=1).sum())
+
+
+# --------------------------------------------------------------------------- #
 # Result container
 # --------------------------------------------------------------------------- #
 
@@ -74,6 +116,11 @@ class PaletteResult:
     dropped_extent: float = 0.0      # OKLab gyration of those dropped voxels
     n_chosen: int = 0                # chosen-component node count
     n_path: int = 0                  # diameter-path node count (pre-trim)
+    # failure gate (Phase 2; additive — to_colormap unchanged, so the emitted
+    # colormap JSON is byte-identical whether or not a palette is flagged)
+    extent: float = 0.0              # palette OKLab gyration (color range)
+    arclen: float = 0.0              # palette curve arc length
+    quality_flags: list = field(default_factory=list)  # [] == passes the gate
 
     def to_colormap(self, name: str) -> dict:
         n = len(self.stops_rgb)
@@ -529,7 +576,12 @@ def extract_palette(
     support_floor: float = 0.0,
     seed: int = 0,
     verbose: bool = True,
+    reject: bool = False,
 ) -> PaletteResult:
+    """Extract one closed palette. `reject=True` (opt-in) raises PaletteRejected
+    when the failure gate (gate_quality) flags the result; the default path is
+    unchanged and always returns the PaletteResult (now carrying extent/arclen/
+    quality_flags as additive fields)."""
     rgb = load_pixels(path, max_samples, seed)
     lab = srgb_to_oklab(rgb)
     cent, mass = density_voxels(lab, voxel_res)
@@ -547,6 +599,12 @@ def extract_palette(
     step = np.linalg.norm(np.diff(closed, axis=0), axis=1)
     coverage = polyline_coverage(lab, loop, coverage_eps)
 
+    extent = _extent(stops_lab)
+    arclen = _loop_arclen(stops_lab)
+    flags = gate_quality(extent, arclen)
+    if reject and flags:
+        raise PaletteRejected(flags, extent, arclen)
+
     return PaletteResult(
         stops_rgb=stops_rgb, stops_lab=stops_lab, closure=closure,
         coverage=coverage, max_step=float(step.max()), mean_step=float(step.mean()),
@@ -556,6 +614,7 @@ def extract_palette(
         dropped_extent=diag.get("dropped_extent", 0.0),
         n_chosen=diag.get("n_chosen", 0),
         n_path=diag.get("n_path", 0),
+        extent=extent, arclen=arclen, quality_flags=flags,
     )
 
 
