@@ -156,6 +156,101 @@ pub fn region_energies(img: &RgbImage) -> Regions {
     std::array::from_fn(|i| pool(&e, WORK_W as usize, WORK_H as usize, SCALE_GRID[i]))
 }
 
+// ===========================================================================
+// Detail-occupancy gate (loose0 calibration; port of score_complexity.py)
+// ===========================================================================
+//
+// The corpus EMD descriptor rewards sparseness (the wrong objective for a
+// sparse-reject floor — see the `energy-metric-nn-rewards-sparse` finding), so
+// the loose0 floor is a *different* reduction of the **same** `edge_energy`
+// primitive: occupancy. Crucially it runs on the image at its **native
+// resolution** — NOT the `WORK_W×WORK_H` canonical resize `region_energies`
+// uses — because the Python calibration that chose the 0.23 floor scored the raw
+// 1280×720 crops. Tile `gx×gy`, take each tile's MEAN edge energy, occupancy =
+// fraction of tiles whose mean exceeds `floor`. A smooth gradient or corner-only
+// detail occupies few tiles; a dense filament field occupies most.
+
+/// Tile grid for the occupancy reduction (1280/32 = 720/18 = 40px tiles).
+pub const OCC_GX: usize = 32;
+pub const OCC_GY: usize = 18;
+/// Per-tile edge-energy floor (OKLab ΔE/px tile mean) that defines "occupied".
+/// This is the calibration's chosen floor — NOT the gate threshold on the
+/// resulting occupancy fraction (that is `present`'s `--occupancy-floor`).
+pub const OCC_FLOOR: f64 = 0.010;
+
+/// Detail occupancy of a colored image at its native resolution: fraction of the
+/// `gx×gy` tiles whose mean `edge_energy` exceeds `floor`. Ragged remainder
+/// rows/cols (`w % gx`, `h % gy`) are dropped, matching the numpy `reshape`
+/// the Python scorer used. Byte-for-byte the same primitive as `edge_energy` /
+/// `srgb8_to_oklab`, so it reproduces `complexity_scores.json`.
+pub fn occupancy(img: &RgbImage, gx: usize, gy: usize, floor: f64) -> f64 {
+    let w = img.width() as usize;
+    let h = img.height() as usize;
+    if w == 0 || h == 0 || gx == 0 || gy == 0 {
+        return 0.0;
+    }
+    let oklab: Vec<[f64; 3]> =
+        img.pixels().map(|p| srgb8_to_oklab([p[0], p[1], p[2]])).collect();
+    let e = edge_energy(&oklab, w, h);
+    let tw = w / gx; // tile width  (px)
+    let th = h / gy; // tile height (px)
+    if tw == 0 || th == 0 {
+        return 0.0;
+    }
+    let mut occupied = 0usize;
+    for ty in 0..gy {
+        for tx in 0..gx {
+            let mut sum = 0.0f64;
+            for yy in 0..th {
+                let row = (ty * th + yy) * w + tx * tw;
+                for xx in 0..tw {
+                    sum += e[row + xx];
+                }
+            }
+            if sum / (tw * th) as f64 > floor {
+                occupied += 1;
+            }
+        }
+    }
+    occupied as f64 / (gx * gy) as f64
+}
+
+/// Per-tile **mean** edge energy of a colored image at its native resolution:
+/// the `gx*gy` row-major tile means, computed with the exact same
+/// `srgb8_to_oklab`/`edge_energy`/tiling primitive as [`occupancy`] — only the
+/// floor reduction is dropped. Used by `present`'s content-centered focus, which
+/// takes the energy-weighted centroid of this grid. Degenerate tilings return an
+/// all-zero `gx*gy` grid (or empty when `gx*gy == 0`).
+pub fn tile_energy(img: &RgbImage, gx: usize, gy: usize) -> Vec<f64> {
+    let w = img.width() as usize;
+    let h = img.height() as usize;
+    if w == 0 || h == 0 || gx == 0 || gy == 0 {
+        return vec![0.0; gx * gy];
+    }
+    let oklab: Vec<[f64; 3]> =
+        img.pixels().map(|p| srgb8_to_oklab([p[0], p[1], p[2]])).collect();
+    let e = edge_energy(&oklab, w, h);
+    let tw = w / gx;
+    let th = h / gy;
+    if tw == 0 || th == 0 {
+        return vec![0.0; gx * gy];
+    }
+    let mut means = vec![0.0f64; gx * gy];
+    for ty in 0..gy {
+        for tx in 0..gx {
+            let mut sum = 0.0f64;
+            for yy in 0..th {
+                let row = (ty * th + yy) * w + tx * tw;
+                for xx in 0..tw {
+                    sum += e[row + xx];
+                }
+            }
+            means[ty * gx + tx] = sum / (tw * th) as f64;
+        }
+    }
+    means
+}
+
 /// Bin a region value under quantile `edges` (`NBINS+1` of them); below `edges[0]`
 /// → bin 0, at/above the top edge → the last bin.
 #[inline]

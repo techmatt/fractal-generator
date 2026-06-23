@@ -2499,6 +2499,36 @@ pub struct PresentArgs {
     /// SplitMix64 seed for reproducible palette selection.
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
+
+    /// Detail-occupancy gate threshold applied **after** full-res iteration and
+    /// **before** palettes: discard the (seed × composition) crop if its
+    /// occupancy (fraction of 32×18 tiles with mean edge energy > 0.010) is below
+    /// this. `0` disables the gate (legacy behaviour). The loose0 calibration
+    /// floor is 0.23.
+    #[arg(long, default_value_t = 0.0)]
+    pub occupancy_floor: f64,
+
+    /// Output image format for emitted crops: `png` or `jpg`.
+    #[arg(long, default_value = "png")]
+    pub format: String,
+
+    /// JPEG quality (1..=100) when `--format jpg`.
+    #[arg(long, default_value_t = 90)]
+    pub jpg_quality: u8,
+
+    /// Write crops directly into `--out-dir` instead of an `<run_stem>/`
+    /// subdirectory (avoids the doubled `loose0/loose0` nesting).
+    #[arg(long, default_value_t = false)]
+    pub flat_out: bool,
+
+    /// Crop focus: `content` = energy-weighted centroid of a cheap edge-energy
+    /// screen over the seed frame (re-frame on where structure actually is, with
+    /// a peak-tile void guard + in-frame clamp); `seed-center` = the raw seed
+    /// center (legacy / comparison fallback). Both focuses are always rendered
+    /// for the side-by-side `focus_compare.html`; this only picks which one the
+    /// emitted batch uses.
+    #[arg(long, default_value = "content")]
+    pub focus: String,
 }
 
 /// `reject-corridor` subcommand: see `reject_corridor::run_reject_corridor`.
