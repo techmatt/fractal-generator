@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AA filter study — box vs Mitchell vs Lanczos (1440p, ss4)</title>
+<style>
+body{background:#111;color:#ddd;font:13px/1.5 system-ui,sans-serif;margin:24px;}
+h1{font-size:18px;} h2{font-size:15px;margin-top:28px;border-bottom:1px solid #333;padding-bottom:4px;}
+.meta{color:#999;}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:8px;}
+.card .lab{font-weight:600;margin-bottom:6px;} .card .sub{color:#9a9a9a;}
+img{display:block;image-rendering:pixelated;background:#000;}
+.thumb img{width:480px;height:auto;image-rendering:auto;}
+code{color:#7fd1b9;}
+</style>
+</head>
+<body>
+<h1>AA filter study — box vs Mitchell vs Lanczos @ 2560×1440, grid ss4 (16 spp)</h1>
+<p class="meta">center <code>-0.746339, 0.112242</code> · frame_width <code>0.000583</code> · maxiter 2000 · palette <code>twilight</code> · single shared iterate <code>4.08s</code> · 1:1 crop 384×384 at (928,464). One render set, three downsample filters over the identical ss4 buffer; the filter only reweights samples already iterated.</p>
+<h2>1:1 crops (the comparison — the filter is sub-pixel)</h2>
+<div class="row">
+  <div class="card"><div class="lab">1. box <span class="sub">· filter 0.25s · total 4.33s</span></div><img src="aa_filter_study/cell1_box_crop.png" width="384" height="384"></div>
+  <div class="card"><div class="lab">2. Mitchell <span class="sub">· filter 0.37s · total 4.45s</span></div><img src="aa_filter_study/cell2_mitchell_crop.png" width="384" height="384"></div>
+  <div class="card"><div class="lab">3. Lanczos-3 <span class="sub">· filter 0.38s · total 4.46s</span></div><img src="aa_filter_study/cell3_lanczos3_crop.png" width="384" height="384"></div>
+</div>
+<h2>Full frames (thumbnails)</h2>
+<div class="row">
+  <div class="card thumb"><div class="lab">1. box <span class="sub">· filter 0.25s · total 4.33s</span></div><img src="aa_filter_study/cell1_box_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_filter_study/cell1_box.png">full 2560×1440 PNG</a></div></div>
+  <div class="card thumb"><div class="lab">2. Mitchell <span class="sub">· filter 0.37s · total 4.45s</span></div><img src="aa_filter_study/cell2_mitchell_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_filter_study/cell2_mitchell.png">full 2560×1440 PNG</a></div></div>
+  <div class="card thumb"><div class="lab">3. Lanczos-3 <span class="sub">· filter 0.38s · total 4.46s</span></div><img src="aa_filter_study/cell3_lanczos3_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_filter_study/cell3_lanczos3.png">full 2560×1440 PNG</a></div></div>
+</div>
+</body>
+</html>

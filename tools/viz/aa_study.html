@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AA study — sample count × placement (1440p)</title>
+<style>
+body{background:#111;color:#ddd;font:13px/1.5 system-ui,sans-serif;margin:24px;}
+h1{font-size:18px;} h2{font-size:15px;margin-top:28px;border-bottom:1px solid #333;padding-bottom:4px;}
+.meta{color:#999;}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:8px;}
+.card .lab{font-weight:600;margin-bottom:6px;} .card .sub{color:#9a9a9a;}
+img{display:block;image-rendering:pixelated;background:#000;}
+.thumb img{width:480px;height:auto;image-rendering:auto;}
+code{color:#7fd1b9;}
+</style>
+</head>
+<body>
+<h1>AA study — antialiasing bake-off @ 2560×1440</h1>
+<p class="meta">center <code>-0.746339, 0.112242</code> · frame_width <code>0.000583</code> · maxiter 2000 · palette <code>twilight</code> · box downsample · 1:1 crop 384×384 at (928,464). Cells 1/4/5 isolate <b>placement</b> at 4&nbsp;spp; 1/2/3 isolate <b>count</b>.</p>
+<h2>1:1 crops (the comparison — AA is sub-pixel)</h2>
+<div class="row">
+  <div class="card"><div class="lab">1. grid ss2 <span class="sub">· 4 spp · 1.24s</span></div><img src="aa_study/cell1_grid_ss2_crop.png" width="384" height="384"></div>
+  <div class="card"><div class="lab">2. grid ss3 <span class="sub">· 9 spp · 2.52s</span></div><img src="aa_study/cell2_grid_ss3_crop.png" width="384" height="384"></div>
+  <div class="card"><div class="lab">3. grid ss4 <span class="sub">· 16 spp · 4.41s</span></div><img src="aa_study/cell3_grid_ss4_crop.png" width="384" height="384"></div>
+  <div class="card"><div class="lab">4. rgss ss2 <span class="sub">· 4 spp · 1.21s</span></div><img src="aa_study/cell4_rgss_ss2_crop.png" width="384" height="384"></div>
+  <div class="card"><div class="lab">5. jitter ss2 <span class="sub">· 4 spp · 1.20s</span></div><img src="aa_study/cell5_jitter_ss2_crop.png" width="384" height="384"></div>
+</div>
+<h2>Full frames (thumbnails)</h2>
+<div class="row">
+  <div class="card thumb"><div class="lab">1. grid ss2 <span class="sub">· 4 spp · 1.24s (iterate 1.13s)</span></div><img src="aa_study/cell1_grid_ss2_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_study/cell1_grid_ss2_spp4.png">full 2560×1440 PNG</a></div></div>
+  <div class="card thumb"><div class="lab">2. grid ss3 <span class="sub">· 9 spp · 2.52s (iterate 2.36s)</span></div><img src="aa_study/cell2_grid_ss3_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_study/cell2_grid_ss3_spp9.png">full 2560×1440 PNG</a></div></div>
+  <div class="card thumb"><div class="lab">3. grid ss4 <span class="sub">· 16 spp · 4.41s (iterate 4.18s)</span></div><img src="aa_study/cell3_grid_ss4_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_study/cell3_grid_ss4_spp16.png">full 2560×1440 PNG</a></div></div>
+  <div class="card thumb"><div class="lab">4. rgss ss2 <span class="sub">· 4 spp · 1.21s (iterate 1.10s)</span></div><img src="aa_study/cell4_rgss_ss2_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_study/cell4_rgss_ss2_spp4.png">full 2560×1440 PNG</a></div></div>
+  <div class="card thumb"><div class="lab">5. jitter ss2 <span class="sub">· 4 spp · 1.20s (iterate 1.10s)</span></div><img src="aa_study/cell5_jitter_ss2_thumb.png"><div class="sub"><a style="color:#7fd1b9" href="aa_study/cell5_jitter_ss2_spp4.png">full 2560×1440 PNG</a></div></div>
+</div>
+</body>
+</html>
