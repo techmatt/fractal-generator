@@ -27,6 +27,7 @@ use fractal_generator::palette_score;
 use fractal_generator::present;
 use fractal_generator::profile;
 use fractal_generator::reject_corridor;
+use fractal_generator::render_one;
 use fractal_generator::search;
 use fractal_generator::wallpaper;
 use fractal_generator::coloring::{self, ChannelSet, ColorParams};
@@ -363,6 +364,7 @@ fn run() -> Result<(), String> {
         Some(Command::PaletteScore(args)) => palette_score::run_palette_score(args),
         Some(Command::AaStudy(args)) => aa_study::run_aa_study(args),
         Some(Command::AaFilter(args)) => aa_filter::run_aa_filter(args),
+        Some(Command::RenderOne(args)) => render_one::run_render_one(args),
         None => run_render(&cli),
     }
 }

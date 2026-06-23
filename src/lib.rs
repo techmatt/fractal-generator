@@ -52,6 +52,7 @@ pub mod probe;
 pub mod profile;
 pub mod reject_corridor;
 pub mod render;
+pub mod render_one;
 pub mod search;
 pub mod sheet;
 pub mod wallpaper;

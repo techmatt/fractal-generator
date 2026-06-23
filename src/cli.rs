@@ -327,6 +327,135 @@ pub enum Command {
     /// Emits `tools/viz/aa_filter_study.html` + a JSON log (stable path, not
     /// `out/`).
     AaFilter(AaFilterArgs),
+    /// Locked wallpaper-render default: render ONE (location × palette) at the
+    /// settled quality — grid ss4 + Lanczos-3 @ 2560×1440 — to a caller-chosen
+    /// stable path, reporting iterate / filter / total wall-clock. An extract of
+    /// the verified `aa-filter` f64 path (selective-mirror palette load, the
+    /// `ss×`-scaled reconstruction filter); the locked defaults live here only, so
+    /// the bare render path's fast-preview defaults are untouched. Shallow f64 by
+    /// construction (asserted).
+    RenderOne(RenderOneArgs),
+}
+
+/// Sub-pixel sample placement for `render-one` (maps to [`crate::render::SubsamplePattern`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum PatternChoice {
+    /// Ordered grid (the lock; byte-identical historical path). Any `ss`.
+    Grid,
+    /// Rotated grid / 4-rooks. **ss2 only.**
+    Rgss,
+    /// Stratified jitter (seeded). Any `ss`.
+    Jitter,
+}
+
+impl PatternChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            PatternChoice::Grid => "grid",
+            PatternChoice::Rgss => "rgss",
+            PatternChoice::Jitter => "jitter",
+        }
+    }
+}
+
+impl From<PatternChoice> for crate::render::SubsamplePattern {
+    fn from(p: PatternChoice) -> Self {
+        match p {
+            PatternChoice::Grid => crate::render::SubsamplePattern::Grid,
+            PatternChoice::Rgss => crate::render::SubsamplePattern::Rgss,
+            PatternChoice::Jitter => crate::render::SubsamplePattern::Jitter,
+        }
+    }
+}
+
+/// Downsample reconstruction filter for `render-one` (maps to [`crate::render::DownsampleFilter`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum FilterChoice {
+    /// Flat `ss×ss` average.
+    Box,
+    /// Mitchell–Netravali cubic.
+    Mitchell,
+    /// Lanczos-3 windowed sinc (the lock).
+    Lanczos3,
+}
+
+impl FilterChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            FilterChoice::Box => "box",
+            FilterChoice::Mitchell => "mitchell",
+            FilterChoice::Lanczos3 => "lanczos3",
+        }
+    }
+}
+
+impl From<FilterChoice> for crate::render::DownsampleFilter {
+    fn from(f: FilterChoice) -> Self {
+        match f {
+            FilterChoice::Box => crate::render::DownsampleFilter::Box,
+            FilterChoice::Mitchell => crate::render::DownsampleFilter::Mitchell,
+            FilterChoice::Lanczos3 => crate::render::DownsampleFilter::Lanczos3,
+        }
+    }
+}
+
+/// `render-one` subcommand: see `render_one::run_render_one`. One location ×
+/// palette at the locked wallpaper quality. Locked defaults (all overridable):
+/// `--width 2560 --height 1440 --ss 4 --pattern grid --filter lanczos3`.
+#[derive(Args, Debug)]
+pub struct RenderOneArgs {
+    /// Frame center, real part (`--cx`) — arbitrary-precision decimal string.
+    #[arg(long = "cx", default_value = "-0.746339", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part (`--cy`) — arbitrary-precision decimal string.
+    #[arg(long = "cy", default_value = "0.112242", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane (`--fw`).
+    #[arg(long = "fw", default_value_t = 0.000583)]
+    pub frame_width: f64,
+
+    /// Palette name, looked up in `--colormaps` (loaded through the selective-mirror
+    /// path, so cyclic and sequential maps both render seam-free).
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Output PNG path — a stable path the caller chooses (not under `out/`).
+    #[arg(long, default_value = "render.png")]
+    pub out: String,
+
+    /// Output width in pixels (the lock: 2560).
+    #[arg(long, default_value_t = 2560)]
+    pub width: u32,
+
+    /// Output height in pixels (the lock: 1440).
+    #[arg(long, default_value_t = 1440)]
+    pub height: u32,
+
+    /// Linear supersampling factor (the lock: 4 → 16 spp).
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Sub-pixel sample placement (the lock: grid).
+    #[arg(long, value_enum, default_value_t = PatternChoice::Grid)]
+    pub pattern: PatternChoice,
+
+    /// Downsample reconstruction filter (the lock: lanczos3).
+    #[arg(long, value_enum, default_value_t = FilterChoice::Lanczos3)]
+    pub filter: FilterChoice,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// SplitMix64 seed (consumed only by `--pattern jitter`).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
 }
 
 /// `aa-filter` subcommand: see `aa_filter::run_aa_filter`. One fixed view + cyclic
