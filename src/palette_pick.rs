@@ -59,7 +59,9 @@ pub fn run_palette_pick(args: &PalettePickArgs) -> Result<(), String> {
         .iter()
         .map(|&i| {
             let cm = &library[i];
-            Palette::from_srgb8_stops(cm.name.clone(), &cm.stops, false)
+            // Selective seam fix: SEQUENTIAL (mirror_needed) maps bake pre-mirrored
+            // (out-and-back); cyclic maps stay single-pass.
+            Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, false, cm.mirror_needed)
         })
         .collect();
 
@@ -179,10 +181,12 @@ pub fn run_palette_pick(args: &PalettePickArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// A colormap parsed out of `clean_colormaps.json`: a name and its sRGB8 stops.
+/// A colormap parsed out of `clean_colormaps.json`: a name, its sRGB8 stops, and
+/// the inline `mirror_needed` classification (SEQUENTIAL → pre-mirror at bake).
 struct Colormap {
     name: String,
     stops: Vec<(f64, [u8; 3])>,
+    mirror_needed: bool,
 }
 
 /// Parse the survivor colormap library: a JSON array of
@@ -203,6 +207,7 @@ fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
         };
         let mut name = None;
         let mut stops_json = None;
+        let mut mirror_needed = false;
         for (k, val) in obj {
             match k.as_str() {
                 "name" => {
@@ -211,6 +216,11 @@ fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
                     }
                 }
                 "stops" => stops_json = Some(val),
+                "mirror_needed" => {
+                    if let Json::Bool(b) = val {
+                        mirror_needed = b;
+                    }
+                }
                 _ => {}
             }
         }
@@ -246,7 +256,7 @@ fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
         if stops.len() < 2 {
             return Err(format!("colormap '{name}': need ≥2 stops, found {}", stops.len()));
         }
-        out.push(Colormap { name, stops });
+        out.push(Colormap { name, stops, mirror_needed });
     }
     Ok(out)
 }
@@ -448,6 +458,26 @@ mod tests {
         assert_eq!(cms[0].stops.len(), 2);
         assert_eq!(cms[0].stops[0], (0.0, [0, 0, 4]));
         assert_eq!(cms[1].stops[2].1, [255, 255, 255]);
+        // Absent mirror_needed defaults to false (no mirror).
+        assert!(!cms[0].mirror_needed && !cms[1].mirror_needed);
+    }
+
+    /// The inline `mirror_needed` label is read, and a sequential map bakes
+    /// pre-mirrored (density_scale 0.5); a cyclic map stays single-pass (1.0).
+    #[test]
+    fn reads_mirror_needed_and_compensates_density() {
+        use crate::palette::{Palette, MIRROR_DENSITY_SCALE};
+        let txt = r#"[
+            {"name": "seq", "stops": [[0.0,[0,0,4]],[1.0,[252,253,191]]], "cycle": "sequential", "mirror_needed": true},
+            {"name": "cyc", "stops": [[0.0,[10,20,30]],[0.5,[200,180,90]]], "cycle": "cyclic", "mirror_needed": false}
+        ]"#;
+        let cms = parse_colormaps(txt).unwrap();
+        assert!(cms[0].mirror_needed, "sequential entry must read mirror_needed=true");
+        assert!(!cms[1].mirror_needed, "cyclic entry must read mirror_needed=false");
+        let seq = Palette::from_srgb8_stops_mirrored("seq", &cms[0].stops, false, cms[0].mirror_needed);
+        let cyc = Palette::from_srgb8_stops_mirrored("cyc", &cms[1].stops, false, cms[1].mirror_needed);
+        assert_eq!(seq.density_scale(), MIRROR_DENSITY_SCALE);
+        assert_eq!(cyc.density_scale(), 1.0);
     }
 
     #[test]

@@ -1,0 +1,167 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Palette roundtrip fidelity sweep — voxel_res x support_floor</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box;margin:0;padding:0}
+body{font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;background:#0e0f13;color:#ccc;display:flex;height:100vh;overflow:hidden}
+#side{width:300px;min-width:220px;display:flex;flex-direction:column;border-right:1px solid #23252e;overflow:hidden}
+#side h1{font-size:12px;color:#eee;padding:10px 12px;border-bottom:1px solid #23252e}
+.ctl{padding:8px 12px;border-bottom:1px solid #23252e;display:flex;flex-direction:column;gap:6px}
+.ctl label{font-size:10px;color:#778}
+.row{display:flex;gap:4px;flex-wrap:wrap}
+button{font:10px ui-monospace;padding:2px 7px;border-radius:5px;cursor:pointer;background:#1d2029;border:1px solid #2c2f3a;color:#aaa}
+button.on{background:#2a3050;border-color:#4a6af4;color:#9fb6ff}
+#list{flex:1;overflow-y:auto}
+.it{padding:5px 12px;cursor:pointer;border-left:3px solid transparent;display:flex;justify-content:space-between;gap:6px}
+.it:hover{background:#1a1c24}.it.on{border-left-color:#7a9fff;background:#161a2a}
+.it .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.it .sc{color:#777;font-size:10px;font-variant-numeric:tabular-nums}
+.pp{font-size:9px;padding:0 4px;border-radius:3px;border:1px solid #2c2f3a}
+.pA{color:#7ac8f0;border-color:#1f4a6b}.pB{color:#e8a05a;border-color:#6b3a10}
+.pC{color:#c08af0;border-color:#4a2f6b}.pD{color:#888}
+#main{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:16px}
+.card{background:#15171d;border:1px solid #23252e;border-radius:8px;padding:12px 16px}
+h2{font-size:13px;color:#eee;margin-bottom:8px}.sub{color:#777;font-size:11px;margin-bottom:8px;max-width:1100px}
+table{border-collapse:collapse;font-size:11px}
+th,td{padding:3px 7px;border-bottom:1px solid #1a1c20;text-align:right;font-variant-numeric:tabular-nums}
+th{color:#8aa;text-align:right;border-bottom:1px solid #23252e}
+th.l,td.l{text-align:left}
+.strip{height:16px;display:block;image-rendering:pixelated;width:150px;border-radius:2px}
+.gt{outline:1px solid #4a6af4}
+.bug{color:#f87171}.good{color:#6ee7b7}.mut{color:#666}
+canvas{background:#0c0d10;border:1px solid #23252e;border-radius:4px}
+.flex{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.heat td{text-align:center;cursor:pointer}
+.tag{font-size:9px;padding:1px 5px;border-radius:999px;border:1px solid #2c2f3a}
+.tag.native{color:#7af0b8;border-color:#1f6b46}.tag.sequential{color:#e8a05a;border-color:#6b3a10}
+</style></head><body>
+<div id="side"><h1>roundtrip sweep</h1>
+ <div class="ctl"><label>population filter</label><div class="row" id="popf"></div>
+   <label>sort</label><div class="row" id="sortf"></div></div>
+ <div id="list"></div></div>
+<div id="main"><div class="card" id="meta">loading…</div><div id="detail" class="card">pick a palette</div></div>
+<script>
+const META={"n": 224, "render": [960, 640], "max_iter": 600, "density": 1.0, "cov_eps": 0.05, "cov_eps_half": 0.025, "cyclic_thr": 0.05, "seam_seq_thr": 0.1, "lam": 2.0, "arc_retain": 0.5, "seed": 42, "exercised_fraction": 1.0, "voxel_res_axis": [24, 32, 40, 48, 56, 64], "support_floor_axis": [0.0, 15.0, 30.0, 60.0], "support_floor_ref": 30.0, "default_voxel_res": 48, "mf_anchor": 0.995, "def_cell": "vr48_sf0"};
+const DATA='../../data/palette_roundtrip_sweep/';
+const SB=DATA+'strips/', SC=DATA+'scatter/';
+const f=(x,d=4)=>(x==null?'-':Number(x).toFixed(d));
+let manifest=null, pops=null, cells=null, curPop='all', sortk='chamfer_def', selCell=null, scatterCache={};
+
+const VR=META.voxel_res_axis, SF=META.support_floor_axis, DEFC=META.def_cell;
+
+async function init(){
+  manifest=await (await fetch(DATA+'manifest.json')).json();
+  pops=manifest.populations; cells=manifest.cells;
+  selCell=DEFC;
+  const m=manifest.meta;
+  document.getElementById('meta').innerHTML=
+   `<b>${m.n}</b> survivors · render ${m.render.join('×')} maxiter ${m.max_iter} density ${m.density} · `+
+   `GT = exercised-arc OKLab (exact). Fidelity = <b>chamfer(GT, best_cycle)</b>, lower=better. `+
+   `<b>NO winner promoted — judge the strips.</b><br>`+
+   `grid: voxel_res {${VR.join(',')}} × support_floor {${SF.join(',')}} (OFF/0.5×/1×/2× of ${m.support_floor_ref}) `+
+   `+ mf995 anchor @vr${m.default_voxel_res}. mass_fraction 0.90 fixed (anchor 0.995).<br>`+
+   `populations: <span class=pp>A</span> admission-tail ${pops.counts.A} · `+
+   `<span class=pp>B</span> voxel-residual ${pops.counts.B} · <span class=pp>C</span> hard-cyclic ${pops.counts.C} (excl.) · `+
+   `<span class=pp>D</span> easy ${pops.counts.D}`;
+  popButtons(); sortButtons(); renderSummary(); renderList();
+}
+function popButtons(){const e=document.getElementById('popf');
+  ['all','A','B','C','D','agg(A+B+D)'].forEach(p=>{const b=document.createElement('button');
+   b.textContent=p;b.className=p==curPop?'on':'';b.onclick=()=>{curPop=p;popButtons();renderList();};e.append(b);});
+  e.replaceChildren(...e.querySelectorAll('button'));}
+function sortButtons(){const e=document.getElementById('sortf');e.innerHTML='';
+  [['chamfer_def','chamfer@def'],['span','vr-span'],['name','name'],['wj','wrap-jump']].forEach(([k,l])=>{
+   const b=document.createElement('button');b.textContent=l;b.className=k==sortk?'on':'';
+   b.onclick=()=>{sortk=k;sortButtons();renderList();};e.append(b);});}
+
+function popOf(n){return pops.tags[n];}
+function chDef(r){return r.cells[DEFC]?.chamfer_cycle;}
+function vrSpan(r){const v=VR.map(vr=>r.cells[`vr${vr}_sf0`]?.chamfer_cycle).filter(x=>x!=null);
+  return v.length?Math.max(...v)-Math.min(...v):0;}
+
+function renderList(){
+  let rows=manifest.build1.filter(r=>{if(curPop=='all')return true;
+    if(curPop=='agg(A+B+D)')return ['A','B','D'].includes(popOf(r.name));
+    return popOf(r.name)==curPop;});
+  rows.sort((a,b)=>{ if(sortk=='name')return a.name.localeCompare(b.name);
+    if(sortk=='wj')return b.true_wrap_jump-a.true_wrap_jump;
+    if(sortk=='span')return vrSpan(b)-vrSpan(a);
+    return (chDef(b)??-1)-(chDef(a)??-1);});
+  const L=document.getElementById('list');L.innerHTML='';
+  rows.forEach(r=>{const d=document.createElement('div');d.className='it';d.dataset.n=r.name;
+   d.innerHTML=`<span class="nm"><span class="pp p${popOf(r.name)}">${popOf(r.name)}</span> ${r.name}</span>`+
+     `<span class="sc">${f(chDef(r))}</span>`;
+   d.onclick=()=>showDetail(r.name);L.append(d);});
+}
+
+function renderSummary(){
+  const S=manifest.summary, T=S.table;
+  let h=`<h2>Per-population × cell — median chamfer (lower=better). Click a cell to set the scatter/strip cell.</h2>`+
+    `<div class="sub">support_floor columns: OFF / 0.5× / 1× / 2× (of ${manifest.meta.support_floor_ref}). `+
+    `Aggregate excludes C (irreducible). def cell = <b>${DEFC}</b>.</div>`;
+  for(const p of ['A','B','D','agg(A+B+D)','C']){
+    const t=T[p];h+=`<div style="margin:6px 0"><b class="p${p[0]=='a'?'D':p}">pop ${p}</b> (n=${t.n})`+
+     `<table class=heat style="margin-top:3px"><tr><th class=l>vr ↓ / sf →</th>`+
+     SF.map(s=>`<th>sf${s}</th>`).join('')+`<th>mf995</th></tr>`;
+    for(const vr of VR){h+=`<tr><td class=l>${vr}</td>`+
+      SF.map(s=>{const c=t.cells[`vr${vr}_sf${s}`];const v=c?.chamfer?.median;
+        const sel=`vr${vr}_sf${s}`==selCell?'outline:1px solid #4a6af4':'';
+        return `<td style="${sel};color:${heat(v)}" onclick="setCell('vr${vr}_sf${s}')">${f(v,4)}</td>`;}).join('')+
+      (vr==manifest.meta.default_voxel_res?`<td style="color:${heat(t.cells[DEFC.replace('sf0','mf995')]?.chamfer?.median)}" onclick="setCell('vr${vr}_mf995')">${f(t.cells['vr'+vr+'_mf995']?.chamfer?.median,4)}</td>`:`<td class=mut>·</td>`)+
+      `</tr>`;}
+    h+=`</table></div>`;}
+  // tripwire
+  const tw=S.regression_tripwire;
+  h+=`<div style="margin-top:10px"><b>Regression tripwire</b> — cells that improve the A+B+D aggregate but regress a population:`;
+  h+= tw.length? `<table style="margin-top:3px"><tr><th class=l>cell</th><th>agg def</th><th>agg cell</th><th class=l>regressed</th></tr>`+
+     tw.map(t=>`<tr><td class=l class=bug>${t.cell}</td><td>${f(t.agg_def)}</td><td>${f(t.agg_cell)}</td>`+
+       `<td class=l>${t.regressed_pops.map(x=>`${x.pop}:+${f(x.delta)}`).join(', ')}</td></tr>`).join('')+`</table>`
+     : ` <span class=good>none</span>`;
+  h+=`</div>`;
+  // floor probe
+  const fp=manifest.floor_probe;
+  h+=`<div style="margin-top:10px"><b>Floor probe</b> (followup #3) @${fp.probe_cell}: `+
+   `chamfer median <b>${f(fp.chamfer_median)}</b> (eps-independent) · directed_cov eps=${fp.coverage_eps}→<b>${f(fp.directed_cov_median,3)}</b> · `+
+   `eps=${fp.coverage_eps_half}→<b>${f(fp.directed_cov_half_median,3)}</b><br><span class=mut>${fp.note}</span></div>`;
+  document.getElementById('main').firstElementChild.insertAdjacentHTML('afterend',`<div class="card">${h}</div>`);
+}
+function heat(v){if(v==null)return '#666';const t=Math.min(1,v/0.06);
+  return `rgb(${Math.round(110+t*145)},${Math.round(231-t*150)},${Math.round(183-t*120)})`;}
+window.setCell=(ck)=>{selCell=ck;document.querySelectorAll('.heat td').forEach(td=>td.style.outline='');
+  const cur=document.querySelector('.it.on');renderSummaryRefresh();if(cur)showDetail(cur.dataset.n);};
+function renderSummaryRefresh(){const c=document.querySelectorAll('#main .card');if(c[1])c[1].remove();renderSummary();}
+
+async function showDetail(name){
+  document.querySelectorAll('.it').forEach(e=>e.classList.toggle('on',e.dataset.n==name));
+  const r=manifest.build1.find(x=>x.name==name);
+  if(!scatterCache[name])scatterCache[name]=await (await fetch(SC+name+'.json')).json();
+  const sc=scatterCache[name];
+  const det=document.getElementById('detail');
+  // strips across all cells
+  let strips=`<div class="strip-label mut">GT</div><img class="strip gt" src="${SB}${name}_gt.png">`;
+  let grid=`<table><tr><th class=l>cell</th><th>chamfer</th><th>haus</th><th>aligned</th><th>cov</th><th class=l>label</th><th class=l>strip</th></tr>`;
+  for(const c of cells){const m=r.cells[c.key]||{};const isSel=c.key==selCell;
+   grid+=`<tr style="${isSel?'background:#161a2a':''}"><td class=l>${c.key}${isSel?' ◀':''}</td>`+
+    `<td style="color:${heat(m.chamfer_cycle)}">${f(m.chamfer_cycle)}</td><td>${f(m.hausdorff)}</td>`+
+    `<td>${f(m.aligned)}</td><td>${f(m.directed_cov,3)}</td>`+
+    `<td class=l><span class="tag ${m.cycle_label||''}">${m.cycle_label||'-'}</span></td>`+
+    `<td class=l><img class="strip" src="${SB}${name}_${c.key}.png" onclick="setCell('${c.key}')" style="cursor:pointer"></td></tr>`;}
+  grid+=`</table>`;
+  det.innerHTML=`<h2><span class="pp p${popOf(name)}">${popOf(name)}</span> ${name} `+
+    `<span class=mut>wrap-jump ${f(r.true_wrap_jump)} · ${r.is_cyclic_gt?'cyclic GT':'sequential GT'}</span></h2>`+
+    `<div class="flex"><div><div class=sub>GT LUT strip + extracted across cells (click a strip to select its scatter cell)</div>${grid}</div>`+
+    `<div><div class=sub>OKLab a–b · selected cell <b>${selCell}</b></div>`+
+    `<canvas id="cv" width="260" height="260"></canvas>`+
+    `<div class=sub style="margin-top:4px"><span style="color:#3aa">●</span> LUT(GT) · <span style="color:#888">●</span> pixels · <span style="color:#f83">●</span> extracted</div></div></div>`;
+  drawScatter(sc, selCell);
+}
+function drawScatter(sc,ck){const cv=document.getElementById('cv');if(!cv)return;const x=cv.getContext('2d');
+  x.fillStyle='#0c0d10';x.fillRect(0,0,260,260);x.strokeStyle='#222';
+  x.beginPath();x.moveTo(130,0);x.lineTo(130,260);x.moveTo(0,130);x.lineTo(260,130);x.stroke();
+  const P=p=>[p[1]*340+130,130-p[2]*340];
+  const dot=(p,c,r)=>{const[a,b]=P(p);x.beginPath();x.arc(a,b,r,0,7);x.fillStyle=c;x.fill();};
+  (sc.pixels||[]).forEach(p=>dot(p,'rgba(140,140,140,.35)',1.6));
+  (sc.gt||[]).forEach(p=>dot(p,'rgba(50,200,200,.65)',2.2));
+  (sc.cells[ck]||[]).forEach(p=>dot(p,'rgba(255,130,50,.9)',2.6));
+}
+init();
+</script></body></html>

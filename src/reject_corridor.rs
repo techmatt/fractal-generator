@@ -135,7 +135,9 @@ pub fn run_reject_corridor(args: &RejectCorridorArgs) -> Result<(), String> {
     let cm_text = std::fs::read_to_string(COLORMAPS_PATH)
         .map_err(|e| format!("read {COLORMAPS_PATH}: {e}"))?;
     let stops = load_colormap(&cm_text, &args.palette)?;
-    let palette = Palette::from_srgb8_stops(args.palette.clone(), &stops, false);
+    // Selective seam fix: SEQUENTIAL (mirror_needed) maps bake pre-mirrored.
+    let mirror = probe::colormap_mirror_needed(&cm_text, &args.palette);
+    let palette = Palette::from_srgb8_stops_mirrored(args.palette.clone(), &stops, false, mirror);
     let params = color_params();
     let trap = Trap {
         shape: TrapShape::Point,

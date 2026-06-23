@@ -20,6 +20,15 @@
 /// than 8-bit output, so the lerp between entries is visually exact.
 pub const LUT_SIZE: usize = 4096;
 
+/// Density multiplier applied by the coloring stage when a palette was built with
+/// **pre-mirror** (selective seam fix for SEQUENTIAL maps). Pre-mirror folds the
+/// gradient into an out-and-back, doubling the spatial band frequency at a fixed
+/// density; scaling the effective density by this factor keeps a mirrored
+/// sequential map's band count ~matched to the un-mirrored original — just
+/// de-seamed. `1.0` for un-mirrored palettes (no change). Matched in
+/// `coloring.MIRROR_DENSITY_SCALE`.
+pub const MIRROR_DENSITY_SCALE: f64 = 0.5;
+
 /// A cyclic gradient baked to a linear-RGB lookup table.
 pub struct Palette {
     /// Display name (built-in name, `.map` filename, or `.ugr` block title).
@@ -27,6 +36,11 @@ pub struct Palette {
     /// Cyclic LUT of linear-light RGB, `LUT_SIZE` entries. Index `i` is the
     /// color at `t = i / LUT_SIZE`; entry `LUT_SIZE-1` wraps to entry `0`.
     lut: Vec<[f64; 3]>,
+    /// Coloring-stage density multiplier (see [`MIRROR_DENSITY_SCALE`]).
+    /// `MIRROR_DENSITY_SCALE` for a pre-mirrored palette, else `1.0`. Does **not**
+    /// affect the baked LUT (so the byte-match invariant is unaffected) — only the
+    /// `value·density` mapping in [`crate::coloring::shade`].
+    density_scale: f64,
 }
 
 /// An OKLab control point: parametric position and OKLab color.
@@ -54,6 +68,26 @@ impl Palette {
     /// Build a palette from sRGB8 control points (file loaders / authored
     /// built-ins). `reverse` flips the gradient direction.
     pub fn from_srgb8_stops(name: impl Into<String>, stops: &[(f64, [u8; 3])], reverse: bool) -> Self {
+        Palette::from_srgb8_stops_mirrored(name, stops, reverse, false)
+    }
+
+    /// As [`from_srgb8_stops`], but `mirror=true` first reflects the stops into a
+    /// seamless out-and-back via [`mirror_stops`] — the **selective** seam fix for
+    /// SEQUENTIAL (`mirror_needed`) palettes. Pass `mirror=false` for cyclic maps
+    /// (unchanged single-pass bake). See [`mirror_stops`] for the construction.
+    pub fn from_srgb8_stops_mirrored(
+        name: impl Into<String>,
+        stops: &[(f64, [u8; 3])],
+        reverse: bool,
+        mirror: bool,
+    ) -> Self {
+        let mirrored;
+        let stops: &[(f64, [u8; 3])] = if mirror {
+            mirrored = mirror_stops(stops);
+            &mirrored
+        } else {
+            stops
+        };
         let oklab: Vec<OklabStop> = stops
             .iter()
             .map(|&(pos, rgb)| OklabStop {
@@ -61,7 +95,13 @@ impl Palette {
                 lab: srgb8_to_oklab(rgb),
             })
             .collect();
-        Palette::from_oklab_stops(name, oklab, reverse)
+        let mut pal = Palette::from_oklab_stops(name, oklab, reverse);
+        if mirror {
+            // Pre-mirror doubled the band frequency; compensate so the mirrored
+            // sequential map keeps the original's band count (just de-seamed).
+            pal.density_scale = MIRROR_DENSITY_SCALE;
+        }
+        pal
     }
 
     /// Build a cyclic gradient from a set of OKLab colors placed at **evenly
@@ -114,12 +154,22 @@ impl Palette {
         Palette {
             name: name.into(),
             lut,
+            density_scale: 1.0,
         }
     }
 
     /// Display name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Coloring-stage density multiplier (see [`MIRROR_DENSITY_SCALE`]): `0.5`
+    /// for a pre-mirrored sequential palette, `1.0` otherwise. The shade stage
+    /// multiplies the configured density by this so a mirrored map keeps its
+    /// band count.
+    #[inline]
+    pub fn density_scale(&self) -> f64 {
+        self.density_scale
     }
 
     /// Look up the cyclic gradient at `t`, returning linear-light RGB. `t` is
@@ -161,6 +211,43 @@ fn interp_oklab_cyclic(stops: &[OklabStop], t: f64) -> [f64; 3] {
     let span = (first.pos + 1.0) - last.pos;
     let f = (t + 1.0 - last.pos) / span;
     lerp3(last.lab, first.lab, f)
+}
+
+/// Pre-mirror a stop list into a symmetric out-and-back (triangle wave).
+///
+/// For a SEQUENTIAL (`mirror_needed`) palette the raw cyclic bake compresses the
+/// endpoint (last→first color) transition into the tiny wrap segment, producing a
+/// visible seam band on trap renders (and spurious dark/light stops when the
+/// extractor recovers that band). Reflecting the stops removes the seam: the
+/// forward gradient occupies positions `[0, 0.5]`, its reflection occupies
+/// `(0.5, 1)`, and the cyclic wrap (last→first) mirrors the opening segment, so
+/// endpoints meet on the same color. Density `d` then yields `d` out-and-back
+/// passes.
+///
+/// Matched byte-for-byte to `coloring.mirror_stops` (Python port): same
+/// normalize-into-`[0,1)` + stable sort, same `u = (p−p0)/span` remap, same
+/// `0.5·u` forward / `1−0.5·u` reflected positions. The reflection drops the two
+/// endpoints (`i=0` lands on the seam at 0, already present; `i=n−1` is the
+/// turning point at 0.5, already present), giving `2n−2` stops.
+fn mirror_stops(stops: &[(f64, [u8; 3])]) -> Vec<(f64, [u8; 3])> {
+    let mut s: Vec<(f64, [u8; 3])> =
+        stops.iter().map(|&(p, c)| (p.rem_euclid(1.0), c)).collect();
+    s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let n = s.len();
+    let p0 = s[0].0;
+    let span = s[n - 1].0 - p0;
+    if !(span > 0.0) {
+        return s; // degenerate: all stops coincide — nothing to mirror.
+    }
+    let u = |i: usize| (s[i].0 - p0) / span;
+    let mut out = Vec::with_capacity(2 * n - 2);
+    for i in 0..n {
+        out.push((0.5 * u(i), s[i].1)); // forward → [0, 0.5]
+    }
+    for i in (1..n - 1).rev() {
+        out.push((1.0 - 0.5 * u(i), s[i].1)); // reflection → (0.5, 1)
+    }
+    out
 }
 
 #[inline]

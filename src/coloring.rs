@@ -136,6 +136,11 @@ pub fn shade(
         return GLITCH_LINEAR;
     }
 
+    // Effective density: a pre-mirrored (sequential) palette folds the gradient
+    // into an out-and-back, so its `density_scale` (0.5) halves the configured
+    // density to keep the band count matched. 1.0 for un-mirrored palettes.
+    let density = params.density * palette.density_scale();
+
     let mut color = if sample.escaped {
         let value = match params.channel {
             ColorChannel::Smooth => sample.smooth_iter,
@@ -144,7 +149,7 @@ pub fn shade(
             // range folds into a usable gradient sweep.
             ColorChannel::De => (sample.de / pixel_spacing).ln_1p(),
         };
-        let mut t = value * params.density + params.offset;
+        let mut t = value * density + params.offset;
         if matches!(params.channel, ColorChannel::Trap) {
             t += sample.trap_phase * params.trap_phase_strength;
         }
@@ -153,7 +158,7 @@ pub fn shade(
         match params.interior {
             InteriorMode::Black => [0.0, 0.0, 0.0],
             InteriorMode::Trap => {
-                let t = params.trap_curve.apply(sample.trap_min) * params.trap_scale * params.density
+                let t = params.trap_curve.apply(sample.trap_min) * params.trap_scale * density
                     + params.offset
                     + sample.trap_phase * params.trap_phase_strength;
                 palette.lookup_linear(t.rem_euclid(1.0))

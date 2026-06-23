@@ -18,6 +18,12 @@ import numpy as np
 
 LUT_SIZE = 4096
 
+# Density multiplier applied when a palette is pre-mirrored (selective seam fix for
+# SEQUENTIAL maps). Pre-mirror folds the gradient into an out-and-back, doubling the
+# spatial band frequency; this keeps a mirrored map's band count ~matched to the
+# un-mirrored original. Matched to `palette::MIRROR_DENSITY_SCALE` (Rust).
+MIRROR_DENSITY_SCALE = 0.5
+
 # ---------------------------------------------------------------------------
 # sRGB transfer function (palette.rs)
 # ---------------------------------------------------------------------------
@@ -188,14 +194,44 @@ def _parse_ugr_block(toks, i):
 # ---------------------------------------------------------------------------
 
 
-def bake_lut(stops, lut_size=LUT_SIZE, reverse=False):
+def mirror_stops(stops):
+    """Pre-mirror a stop list into a symmetric out-and-back (triangle).
+
+    For a SEQUENTIAL (`mirror_needed`) palette the raw cyclic bake compresses the
+    endpoint (last->first color) transition into the tiny wrap segment, producing a
+    visible seam band. Reflecting the stops removes the seam: the forward gradient
+    occupies positions [0, 0.5], its reflection occupies (0.5, 1), and the cyclic
+    wrap (last->first) mirrors the opening segment, so endpoints meet on the same
+    color. Density d then yields d out-and-back passes (a triangle wave).
+
+    Matches `palette.rs::mirror_stops` byte-for-byte: same normalize+stable-sort,
+    same u=(p-p0)/span remap, same 0.5*u / 1-0.5*u positions. Cyclic palettes are
+    NOT passed here — the caller gates strictly on `mirror_needed`.
+    """
+    s = sorted(((p % 1.0, c) for p, c in stops), key=lambda x: x[0])
+    n = len(s)
+    p0 = s[0][0]
+    span = s[-1][0] - p0
+    if not (span > 0.0):
+        return [(p, c) for p, c in s]  # degenerate: all stops coincide
+    u = [(s[i][0] - p0) / span for i in range(n)]
+    out = [(0.5 * u[i], s[i][1]) for i in range(n)]            # forward -> [0, 0.5]
+    out += [(1.0 - 0.5 * u[i], s[i][1]) for i in range(n - 2, 0, -1)]  # reflection -> (0.5, 1)
+    return out
+
+
+def bake_lut(stops, lut_size=LUT_SIZE, reverse=False, mirror=False):
     """stops: list[(pos, (r,g,b))]. Returns (lut_size, 3) linear-RGB LUT.
 
     Positions normalized into [0,1) and stable-sorted; <2 distinct stops is an
     error (matches the Rust assert). Cyclic: the last stop wraps to the first.
+    `mirror=True` (selective; pass only for `mirror_needed` palettes) first
+    reflects the stops into a seamless out-and-back via `mirror_stops`.
     """
     if len(stops) < 2:
         raise ValueError("a palette needs at least two control points")
+    if mirror:
+        stops = mirror_stops(stops)
     pos = np.array([p % 1.0 for p, _ in stops], dtype=np.float64)
     lab = srgb8_to_oklab(np.array([c for _, c in stops], dtype=np.float64))
     order = np.argsort(pos, kind="stable")
@@ -232,12 +268,17 @@ def lookup_linear(lut, t):
     return lut[i0] * (1.0 - f) + lut[i1] * f
 
 
-def colorize(field, lut, density=1.0, offset=0.0, interior_mask=None):
+def colorize(field, lut, density=1.0, offset=0.0, interior_mask=None, mirror=False):
     """Map a value-field through a baked LUT (coloring.rs Smooth channel).
 
     field: (H,W) float value (e.g. smooth-iter). Returns linear-RGB (H,W,3).
     interior_mask: optional bool (H,W); True pixels -> black (InteriorMode::Black).
+    mirror: pass True when `lut` was baked with `mirror=True` (pre-mirrored
+        sequential palette) so the density is scaled by MIRROR_DENSITY_SCALE,
+        matching `coloring::shade` (which reads `palette.density_scale()`).
     """
+    if mirror:
+        density = density * MIRROR_DENSITY_SCALE
     t = field * density + offset
     rgb_lin = lookup_linear(lut, t)
     if interior_mask is not None:

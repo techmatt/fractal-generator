@@ -341,3 +341,56 @@ pub fn load_colormap(text: &str, name: &str) -> Result<Vec<(f64, [u8; 3])>, Stri
     }
     Ok(stops)
 }
+
+/// Read the inline `mirror_needed` flag for a named colormap in
+/// `clean_colormaps.json` (the SEQUENTIAL/pre-mirror classification written by
+/// `classify.py`). Substring-scoped to the named entry's object — `mirror_needed`
+/// follows `name`/`stops` within the same `{...}`, ahead of the next entry's
+/// `"name"`. Absent / non-sequential / unparsable → `false` (safe: no mirror).
+/// The companion to [`load_colormap`]; both back the `generate` and
+/// `reject-corridor` colormap previews.
+pub fn colormap_mirror_needed(text: &str, name: &str) -> bool {
+    let needle = format!("\"{name}\"");
+    let np = match text.find(&needle) {
+        Some(p) => p + needle.len(),
+        None => return false,
+    };
+    // Bound the search to this entry: the next `"name"` key starts the next object.
+    let bound = text[np..]
+        .find("\"name\"")
+        .map(|p| np + p)
+        .unwrap_or(text.len());
+    let region = &text[np..bound];
+    match region.find("\"mirror_needed\"") {
+        Some(mp) => {
+            let tail = &region[mp + "\"mirror_needed\"".len()..];
+            // First boolean token after the colon.
+            let t = tail.find("true");
+            let f = tail.find("false");
+            match (t, f) {
+                (Some(ti), Some(fi)) => ti < fi,
+                (Some(_), None) => true,
+                _ => false,
+            }
+        }
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod mirror_flag_tests {
+    use super::colormap_mirror_needed;
+
+    const LIB: &str = r#"[
+        {"name": "seq", "source": "x", "stops": [[0.0,[0,0,4]]], "cycle": "sequential", "mirror_needed": true},
+        {"name": "cyc", "source": "y", "stops": [[0.0,[1,2,3]]], "cycle": "cyclic", "mirror_needed": false}
+    ]"#;
+
+    #[test]
+    fn reads_inline_mirror_needed_scoped_to_entry() {
+        assert!(colormap_mirror_needed(LIB, "seq"));
+        assert!(!colormap_mirror_needed(LIB, "cyc"));
+        // Unknown / absent -> false (safe: no mirror).
+        assert!(!colormap_mirror_needed(LIB, "missing"));
+    }
+}
