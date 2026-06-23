@@ -9,6 +9,8 @@ import random
 import traceback
 from pathlib import Path
 
+from PIL import Image as PILImage
+
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 from palette_extract import extract_palette  # noqa: E402
@@ -38,8 +40,13 @@ def main() -> None:
                   f"max_step={res.max_step:.4f}  ridge={res.n_ridge}")
             cm = res.to_colormap(stem)
             (OUT_DIR / f"{stem}.json").write_text(json.dumps(cm, indent=2))
+            thumb_path = OUT_DIR / f"{stem}.thumb.jpg"
+            img = PILImage.open(path).convert("RGB")
+            img.thumbnail((320, 180))
+            img.save(thumb_path, quality=75)
             entry = {
                 "name": stem,
+                "image": str(thumb_path).replace("\\", "/"),
                 "closure": res.closure,
                 "coverage": round(res.coverage * 100, 1),
                 "max_step": round(float(res.max_step), 4),
@@ -49,7 +56,7 @@ def main() -> None:
         except Exception as exc:
             traceback.print_exc()
             print(f"ERROR {stem}: {exc}")
-            entry = {"name": stem, "closure": "?", "coverage": 0.0,
+            entry = {"name": stem, "image": None, "closure": "?", "coverage": 0.0,
                      "max_step": 0.0, "ridge": 0, "error": str(exc)}
         results.append(entry)
 

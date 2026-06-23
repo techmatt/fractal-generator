@@ -187,6 +187,12 @@ pub enum Command {
     /// located, logged, single-palette-preview keepers only (3-palette labeling
     /// is a downstream stage).
     Generate(GenerateArgs),
+    /// Presentation renderer: takes a `locations.jsonl` from a `generate` run,
+    /// zooms in on each seed center, tries three composition offsets (center,
+    /// thirds, golden) at cheap resolution, gates on black fraction < 40%, and
+    /// renders the accepted composition at full resolution across random palettes.
+    /// Emits per-crop PNGs, a contact sheet, and a manifest.json.
+    Present(PresentArgs),
     /// Greedy Mandelbrot→Julia descent filmstrip + JSON (depth-falloff probe).
     Descend(DescendArgs),
     /// Deterministic feature navigation (atom-domain + Newton nuclei) filmstrip.
@@ -2075,6 +2081,58 @@ impl GenerateArgs {
             esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
         }
     }
+}
+
+/// `present` subcommand: see `present::run_present`. Takes a `locations.jsonl`
+/// from a `generate` run and produces presentation-ready crops. Zooms in on each
+/// seed center, tries three composition offsets at cheap 320×180 resolution,
+/// picks the one with the lowest black fraction, gates on < 40% black, then
+/// renders at full resolution across random palettes.
+#[derive(Args, Debug)]
+pub struct PresentArgs {
+    /// Path to `locations.jsonl` from a `generate` run (required).
+    #[arg(long)]
+    pub input: String,
+
+    /// Output directory root; a `<run_stem>/` subdirectory is created inside.
+    #[arg(long, default_value = "out/present/")]
+    pub out_dir: String,
+
+    /// Full-resolution render width in pixels.
+    #[arg(long, default_value_t = 1920)]
+    pub width: u32,
+
+    /// Full-resolution render height in pixels.
+    #[arg(long, default_value_t = 1080)]
+    pub height: u32,
+
+    /// Linear supersampling factor for the full-resolution render.
+    #[arg(long, default_value_t = 2)]
+    pub ss: u32,
+
+    /// Zoom factor: `new_fw = seed_fw × this`.
+    #[arg(long, default_value_t = 0.4)]
+    pub zoom_factor: f64,
+
+    /// Which composition offsets to try: "center", "thirds", "golden", or "all".
+    #[arg(long, default_value = "all")]
+    pub compositions: String,
+
+    /// Path to the colormap library JSON.
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub palette_file: String,
+
+    /// Number of random palettes to apply per accepted crop.
+    #[arg(long, default_value_t = 3)]
+    pub palettes_per_crop: usize,
+
+    /// Maximum iterations for both cheap-screen and full-resolution renders.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// SplitMix64 seed for reproducible palette selection.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
 }
 
 /// `reject-corridor` subcommand: see `reject_corridor::run_reject_corridor`.

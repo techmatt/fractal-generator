@@ -258,3 +258,17 @@ pub fn shade_and_downsample(
     }
     RgbImage::from_raw(out_w, out_h, pixels).expect("buffer dimensions match")
 }
+
+/// Fraction of samples that did not escape (interior pixels). A fast black-pixel
+/// proxy from raw iteration data, without shading.
+///
+/// Interior pixels render as dead black under `InteriorMode::Black` (the
+/// presentation default), so this is an accurate stand-in for OKLab L < 0.08
+/// when evaluated on the raw buffer before `shade_and_downsample`.
+pub fn black_fraction(samples: &[PixelSample]) -> f32 {
+    if samples.is_empty() {
+        return 1.0;
+    }
+    let n = samples.iter().filter(|s| !s.escaped).count();
+    n as f32 / samples.len() as f32
+}

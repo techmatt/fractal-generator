@@ -114,8 +114,8 @@ impl Default for AcceptBand {
     /// override each clause. Fit to 50 frames — re-check on each new batch.
     fn default() -> Self {
         Self {
-            spread_min: 50.0,
-            interior_max: 0.40,
+            spread_min: 20.0,  // loose: seed-discovery; presentation filter applied downstream
+            interior_max: 0.80, // loose: seed-discovery; presentation filter applied downstream
             esc_median_min: 3.0,
         }
     }

@@ -69,6 +69,11 @@ class PaletteResult:
     n_ridge: int                     # ridge voxels feeding the graph
     raw_spine_max_step: float = 0.0  # largest jump in the raw spine (real discontinuity check)
     spine_lab: np.ndarray = field(repr=False, default=None)  # raw ordered spine (debug)
+    # branch-drop diagnostics (DIAGNOSTIC ONLY; see extract_spine)
+    branch_drop_frac: float = 0.0    # chosen-component nodes off the diameter path
+    dropped_extent: float = 0.0      # OKLab gyration of those dropped voxels
+    n_chosen: int = 0                # chosen-component node count
+    n_path: int = 0                  # diameter-path node count (pre-trim)
 
     def to_colormap(self, name: str) -> dict:
         n = len(self.stops_rgb)
@@ -109,13 +114,24 @@ def density_voxels(lab: np.ndarray, res: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def select_ridge(cent: np.ndarray, mass: np.ndarray,
-                 mass_fraction: float) -> tuple[np.ndarray, np.ndarray]:
-    """Keep the densest voxels accounting for `mass_fraction` of total pixel mass.
-    This is what discards antialiasing haze and thin tendrils."""
+                 mass_fraction: float,
+                 support_floor: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """Admit a voxel if its mass clears the cumulative-rank cutoff *OR* an absolute
+    `support_floor` (pixel-mass units; 0 disables the floor).
+
+    The cumulative cutoff (densest voxels summing to `mass_fraction` of total mass)
+    discards AA haze, but in the *mass-imbalanced* regime a single dominant blob
+    fills the budget within its top few voxels, lifting the rank threshold above
+    every thin-subject voxel — they never enter the graph. `support_floor` is a
+    rank-independent floor (set just above per-voxel noise) that re-admits those
+    thin voxels. Since a floor below the rank threshold subsumes it, the union is
+    effectively `mass >= min(thr, support_floor)` whenever the floor is active."""
     sc = np.sort(mass)[::-1]
     cum = np.cumsum(sc) / mass.sum()
     thr = sc[min(np.searchsorted(cum, mass_fraction), len(sc) - 1)]
     keep = mass >= thr
+    if support_floor > 0:
+        keep = keep | (mass >= support_floor)
     return cent[keep], mass[keep]
 
 
@@ -132,6 +148,12 @@ def _knn_graph(P: np.ndarray, k: int) -> csr_matrix:
 
 def _mst_diameter(Pb: np.ndarray, Gb: csr_matrix) -> np.ndarray:
     """MST + two-sweep tree-diameter -> ordered spine points."""
+    return Pb[_mst_diameter_idx(Gb)]
+
+
+def _mst_diameter_idx(Gb: csr_matrix) -> np.ndarray:
+    """MST + two-sweep tree-diameter -> ordered node *indices* of the simple path.
+    Nodes off this path (side branches) are exactly what the traversal discards."""
     T = minimum_spanning_tree(Gb); T = T.maximum(T.T)
     far, _ = dijkstra(T, directed=False, indices=0, return_predecessors=True)
     u = int(np.argmax(far))
@@ -140,7 +162,7 @@ def _mst_diameter(Pb: np.ndarray, Gb: csr_matrix) -> np.ndarray:
     path = [v]
     while path[-1] != u and path[-1] >= 0:
         path.append(int(pred[path[-1]]))
-    return Pb[np.array(path[::-1])]
+    return np.array(path[::-1])
 
 
 def _extent(Pc: np.ndarray) -> float:
@@ -150,31 +172,62 @@ def _extent(Pc: np.ndarray) -> float:
 
 
 def extract_spine(P: np.ndarray, mass: np.ndarray, k: int, trim_delta: float,
-                  min_component_nodes: int | None = None, verbose: bool = True) -> np.ndarray:
+                  min_component_nodes: int | None = None, verbose: bool = True,
+                  diag: dict | None = None) -> np.ndarray:
     """Order the dominant ridge into a single open principal curve.
     Component selection = max spanned color-space extent (gyration), gated by a
     node-count support floor — NOT largest mass (which collapses onto flat dark
-    regions) and NOT arc length (which a noisy compact blob inflates)."""
+    regions) and NOT arc length (which a noisy compact blob inflates).
+
+    If `diag` is a dict it is filled with branch-drop diagnostics for the chosen
+    component (DIAGNOSTIC ONLY — the traversal still returns just the diameter
+    path; nothing here changes what is dropped):
+      n_admitted   - total ridge voxels fed to the graph
+      n_chosen     - nodes in the selected (max-extent) component
+      n_path       - nodes on the tree-diameter path (the spine, pre-trim)
+      branch_drop_frac - (n_chosen - n_path) / n_chosen  [traversal loss]
+      dropped_extent   - OKLab gyration of the chosen-component off-path voxels
+      offpath_frac_admitted - (n_admitted - n_path) / n_admitted  [+ non-chosen comps]
+    """
     if min_component_nodes is None:
         min_component_nodes = k + 1
     G = _knn_graph(P, k)
     _, cc = connected_components(G, directed=False)
 
     best_spine, best_ext, rows = None, -1.0, []
+    best_Pc, best_path = None, None
     for c in np.unique(cc):
         sel = cc == c
         if int(sel.sum()) < min_component_nodes:
             continue
         Pc = P[sel]
-        spine_c = _mst_diameter(Pc, G[sel][:, sel])
+        path_c = _mst_diameter_idx(G[sel][:, sel])
+        spine_c = Pc[path_c]
         ext = _extent(Pc)
         rows.append((int(c), int(sel.sum()), float(mass[sel].sum()), ext, float(Pc[:, 0].mean())))
         if ext > best_ext:
             best_ext, best_spine = ext, spine_c
+            best_Pc, best_path = Pc, path_c
 
     if best_spine is None:                       # degenerate fallback: all specks
         sel = cc == np.argmax(np.bincount(cc, weights=mass))
-        best_spine = _mst_diameter(P[sel], G[sel][:, sel])
+        best_Pc = P[sel]
+        best_path = _mst_diameter_idx(G[sel][:, sel])
+        best_spine = best_Pc[best_path]
+
+    if diag is not None:
+        n_chosen = len(best_Pc)
+        n_path = len(best_path)
+        off = np.ones(n_chosen, bool); off[best_path] = False
+        dropped = best_Pc[off]
+        diag.update(
+            n_admitted=int(len(P)),
+            n_chosen=int(n_chosen),
+            n_path=int(n_path),
+            branch_drop_frac=float((n_chosen - n_path) / n_chosen) if n_chosen else 0.0,
+            dropped_extent=_extent(dropped) if len(dropped) >= 2 else 0.0,
+            offpath_frac_admitted=float((len(P) - n_path) / len(P)) if len(P) else 0.0,
+        )
 
     if verbose and rows:
         rows.sort(key=lambda r: -r[3])
@@ -202,6 +255,225 @@ def close_palette(spine: np.ndarray, tau_close: float) -> tuple[np.ndarray, str,
         return spine, "native", gap                      # ends meet -> already a loop
     mirror = np.vstack([spine, spine[-2:0:-1]])           # c0..cn..c1  (-> c0 closes)
     return mirror, "mirrored", gap
+
+
+# --------------------------------------------------------------------------- #
+# Best-open vs best-cycle: soft seam-penalised path over the SAME MST.
+#   score(P) = arclength(P) - lam * ‖lab(end_a) - lab(end_b)‖   (OKLab seam)
+# lam=0 recovers the tree-diameter (= best-open) exactly; lam>0 trades a little
+# length for a closeable seam. Single-pass: no Euler tour, no branch coverage.
+# --------------------------------------------------------------------------- #
+
+def _mst_sym(Gb: csr_matrix) -> csr_matrix:
+    """Symmetric MST of a (sub)graph."""
+    T = minimum_spanning_tree(Gb)
+    return T.maximum(T.T)
+
+
+def _tree_leaves(T: csr_matrix) -> np.ndarray:
+    """Degree-1 node indices of a tree (candidate path endpoints)."""
+    deg = np.asarray((T > 0).sum(axis=1)).ravel()
+    return np.where(deg == 1)[0]
+
+
+def _reconstruct(pred_row: np.ndarray, src: int, dst: int) -> np.ndarray:
+    """Walk predecessors from dst back to src; return src..dst index path."""
+    path = [int(dst)]
+    while path[-1] != src and path[-1] >= 0:
+        path.append(int(pred_row[path[-1]]))
+    return np.array(path[::-1])
+
+
+def best_path_soft(T: csr_matrix, P: np.ndarray, lam: float,
+                   leaf_cap: int = 80,
+                   min_arclen: float = 0.0) -> tuple[np.ndarray, float, float]:
+    """argmax over tree-leaf pairs of arclength - lam * endpoint OKLab gap.
+
+    Tree geodesic distance == polyline arclength (edge weights are OKLab steps),
+    so dijkstra from each leaf gives both the candidate lengths and the path.
+    Returns (path_idx, arclength, endpoint_gap). lam=0 -> tree diameter.
+
+    `min_arclen` floors the admissible arclength: without it the soft penalty has
+    a *trivial* optimum at large lam — a pair of adjacent leaves with gap≈0 AND
+    arclength≈0 (a 2-node loop) scores higher than the real long-but-open loop, so
+    a genuinely-cyclic palette closes onto garbage. Flooring arclength (set to a
+    fraction of the diameter by the caller) keeps closure restricted to long paths;
+    lam=0 with min_arclen=0 is the exact diameter.
+
+    O(L^2) over leaves; if a real ridge has many leaves we cap to the `leaf_cap`
+    most peripheral ones (farthest from the component centroid) — the extreme
+    endpoints are the only plausible path tips anyway."""
+    leaves = _tree_leaves(T)
+    if len(leaves) < 2:                                   # degenerate: fall to diameter
+        far, _ = dijkstra(T, directed=False, indices=0, return_predecessors=True)
+        u = int(np.argmax(far))
+        du, predu = dijkstra(T, directed=False, indices=u, return_predecessors=True)
+        v = int(np.argmax(du))
+        return _reconstruct(predu, u, v), float(du[v]), \
+            float(np.linalg.norm(P[u] - P[v]))
+    if len(leaves) > leaf_cap:
+        d = np.linalg.norm(P[leaves] - P.mean(0), axis=1)
+        leaves = leaves[np.argsort(d)[::-1][:leaf_cap]]
+    dist, preds = dijkstra(T, directed=False, indices=leaves,
+                           return_predecessors=True)        # (L, N)
+    arclen = dist[:, leaves]                               # (L, L) geodesic lengths
+    gaps = np.linalg.norm(P[leaves][:, None, :] - P[leaves][None, :, :], axis=2)
+    score = arclen - lam * gaps
+    np.fill_diagonal(score, -np.inf)
+    score[~np.isfinite(arclen)] = -np.inf                 # disconnected leaf pairs
+    if min_arclen > 0:
+        score[arclen < min_arclen] = -np.inf
+    ii, jj = np.unravel_index(int(np.argmax(score)), score.shape)
+    path = _reconstruct(preds[ii], int(leaves[ii]), int(leaves[jj]))
+    return path, float(arclen[ii, jj]), float(gaps[ii, jj])
+
+
+def count_revisit_branches(T: csr_matrix, P: np.ndarray, path_idx: np.ndarray,
+                           floor: float) -> tuple[int, float]:
+    """LOG-ONLY (Build 3): count off-path branches whose OKLab extent exceeds
+    `floor` — a genuine color excursion the single path discards (a candidate
+    real revisit, NOT preserved). Returns (n_branches, max_branch_extent)."""
+    n = T.shape[0]
+    on = np.zeros(n, bool); on[path_idx] = True
+    off = np.where(~on)[0]
+    if len(off) == 0:
+        return 0, 0.0
+    sub = T[off][:, off]
+    n_cc, lbl = connected_components(sub, directed=False)
+    n_rev, max_ext = 0, 0.0
+    for c in range(n_cc):
+        members = off[lbl == c]
+        if len(members) < 2:
+            continue
+        ext = _extent(P[members])
+        if ext > floor:
+            n_rev += 1
+            max_ext = max(max_ext, ext)
+    return n_rev, float(max_ext)
+
+
+@dataclass
+class CycleResult:
+    """Best-open vs best-cycle extraction over one image (see extract_palette_cycles)."""
+    stops_open_rgb: np.ndarray
+    stops_cycle_rgb: np.ndarray
+    stops_open_lab: np.ndarray
+    stops_cycle_lab: np.ndarray
+    seam_open: float                 # endpoint OKLab gap of the diameter (best-open) path
+    seam_cycle: float                # endpoint OKLab gap of the soft (best-cycle) path
+    arclen_open: float
+    arclen_cycle: float
+    seam_open_pretrim: float         # diameter gap BEFORE tip-trim (Step-0 trim probe)
+    cycle_label: str                 # "native" | "sequential" (seam_cycle > threshold)
+    lam: float
+    arc_retain: float = 0.5          # arclength floor (fraction of diameter) for the cycle
+    n_ridge: int = 0
+    n_chosen: int = 0                # chosen-component node count
+    revisit_branches: int = 0        # Build 3 log-only
+    revisit_max_extent: float = 0.0
+
+
+def _choose_max_extent_component(P: np.ndarray, mass: np.ndarray, k: int,
+                                 min_component_nodes: int | None):
+    """Component selection identical to extract_spine (max OKLab gyration), but
+    returns the chosen component's points + its MST for the cycle path."""
+    if min_component_nodes is None:
+        min_component_nodes = k + 1
+    G = _knn_graph(P, k)
+    _, cc = connected_components(G, directed=False)
+    best_ext, best_sel = -1.0, None
+    for c in np.unique(cc):
+        sel = cc == c
+        if int(sel.sum()) < min_component_nodes:
+            continue
+        ext = _extent(P[sel])
+        if ext > best_ext:
+            best_ext, best_sel = ext, sel
+    if best_sel is None:
+        best_sel = cc == np.argmax(np.bincount(cc, weights=mass))
+    Pc = P[best_sel]
+    T = _mst_sym(G[best_sel][:, best_sel])
+    return Pc, T
+
+
+def _trim_spine(spine: np.ndarray, trim_delta: float) -> np.ndarray:
+    """Drop leading/trailing nodes joined by an over-budget (sparse) jump."""
+    step = np.linalg.norm(np.diff(spine, axis=0), axis=1)
+    lo, hi = 0, len(spine) - 1
+    while lo < hi - 2 and step[lo] > trim_delta:
+        lo += 1
+    while hi > lo + 2 and step[hi - 1] > trim_delta:
+        hi -= 1
+    return spine[lo:hi + 1]
+
+
+def extract_palette_cycles(
+    path: Path,
+    n_stops: int = 256,
+    max_samples: int = 600_000,
+    voxel_res: int = 48,
+    mass_fraction: float = 0.90,
+    knn_k: int = 8,
+    trim_delta: float = 0.06,
+    lam: float = 0.5,
+    arc_retain: float = 0.5,
+    seam_seq_threshold: float = 0.10,
+    revisit_floor: float = 0.06,
+    smooth_frac: float = 0.012,
+    support_floor: float = 0.0,
+    seed: int = 0,
+) -> CycleResult:
+    """Emit BOTH best-open (diameter) and best-cycle (soft-closed) for one image.
+
+    Best-open mirrors the shipped extractor (diameter + tip-trim); seam_open is
+    its endpoint gap (post-trim, as the shipped close_palette measures it), and
+    seam_open_pretrim is the same gap before trimming (Step-0 probe). Best-cycle
+    joins its chosen endpoints natively and reports seam_cycle; mirror is used
+    ONLY as a labelled "sequential" fallback when seam_cycle exceeds the
+    (reported, not tuned) `seam_seq_threshold`. The default extract_palette path
+    is untouched."""
+    rgb = load_pixels(path, max_samples, seed)
+    lab = srgb_to_oklab(rgb)
+    cent, mass = density_voxels(lab, voxel_res)
+    P, M = select_ridge(cent, mass, mass_fraction, support_floor)
+    Pc, T = _choose_max_extent_component(P, M, knn_k, None)
+
+    open_path, arc_open, _ = best_path_soft(T, Pc, 0.0)
+    cyc_path, arc_cycle, seam_cycle = best_path_soft(
+        T, Pc, lam, min_arclen=arc_retain * arc_open)
+
+    open_spine_raw = Pc[open_path]
+    seam_open_pre = float(np.linalg.norm(open_spine_raw[0] - open_spine_raw[-1]))
+    open_spine = _trim_spine(open_spine_raw, trim_delta)
+    seam_open = float(np.linalg.norm(open_spine[0] - open_spine[-1]))
+
+    cyc_spine = Pc[cyc_path]
+    n_rev, rev_ext = count_revisit_branches(T, Pc, cyc_path, revisit_floor)
+
+    # best-open: honest closure is mirror out-and-back (a diameter rarely self-meets).
+    open_loop = np.vstack([open_spine, open_spine[-2:0:-1]])
+    # best-cycle: close natively unless the seam is too wide -> labelled sequential.
+    if seam_cycle <= seam_seq_threshold:
+        cyc_label = "native"
+        cyc_loop = cyc_spine
+    else:
+        cyc_label = "sequential"
+        cyc_loop = np.vstack([cyc_spine, cyc_spine[-2:0:-1]])
+
+    open_loop = smooth_loop(open_loop, smooth_frac)
+    cyc_loop = smooth_loop(cyc_loop, smooth_frac)
+    open_lab = resample_closed(open_loop, n_stops)
+    cyc_lab = resample_closed(cyc_loop, n_stops)
+
+    return CycleResult(
+        stops_open_rgb=oklab_to_srgb(open_lab), stops_cycle_rgb=oklab_to_srgb(cyc_lab),
+        stops_open_lab=open_lab, stops_cycle_lab=cyc_lab,
+        seam_open=seam_open, seam_cycle=seam_cycle,
+        arclen_open=arc_open, arclen_cycle=arc_cycle,
+        seam_open_pretrim=seam_open_pre, cycle_label=cyc_label, lam=lam,
+        arc_retain=arc_retain, n_ridge=len(P), n_chosen=len(Pc),
+        revisit_branches=n_rev, revisit_max_extent=rev_ext,
+    )
 
 
 def resample_closed(loop: np.ndarray, n_stops: int) -> np.ndarray:
@@ -254,13 +526,16 @@ def extract_palette(
     tau_close: float = 0.10,
     smooth_frac: float = 0.012,
     coverage_eps: float = 0.05,
+    support_floor: float = 0.0,
     seed: int = 0,
+    verbose: bool = True,
 ) -> PaletteResult:
     rgb = load_pixels(path, max_samples, seed)
     lab = srgb_to_oklab(rgb)
     cent, mass = density_voxels(lab, voxel_res)
-    P, M = select_ridge(cent, mass, mass_fraction)
-    spine = extract_spine(P, M, knn_k, trim_delta)
+    P, M = select_ridge(cent, mass, mass_fraction, support_floor)
+    diag: dict = {}
+    spine = extract_spine(P, M, knn_k, trim_delta, verbose=verbose, diag=diag)
 
     raw_step = np.linalg.norm(np.diff(spine, axis=0), axis=1)
     loop, closure, gap = close_palette(spine, tau_close)
@@ -277,6 +552,10 @@ def extract_palette(
         coverage=coverage, max_step=float(step.max()), mean_step=float(step.mean()),
         endpoint_gap=gap, n_ridge=len(P), spine_lab=spine,
         raw_spine_max_step=float(raw_step.max()) if len(raw_step) else 0.0,
+        branch_drop_frac=diag.get("branch_drop_frac", 0.0),
+        dropped_extent=diag.get("dropped_extent", 0.0),
+        n_chosen=diag.get("n_chosen", 0),
+        n_path=diag.get("n_path", 0),
     )
 
 
@@ -333,6 +612,8 @@ def main() -> None:
     ap.add_argument("--trim-delta", type=float, default=0.06)
     ap.add_argument("--tau-close", type=float, default=0.10)
     ap.add_argument("--smooth-frac", type=float, default=0.012)
+    ap.add_argument("--support-floor", type=float, default=0.0,
+                    help="absolute per-voxel mass floor (pixel counts); 0 disables")
     ap.add_argument("--eps", type=float, default=0.05, help="coverage threshold (OKLab)")
     ap.add_argument("--diagnostics", type=Path, default=None, help="write a diagnostic .png")
     args = ap.parse_args()
@@ -340,12 +621,13 @@ def main() -> None:
     res = extract_palette(
         args.image, n_stops=args.stops, voxel_res=args.voxel_res,
         mass_fraction=args.mass_fraction, trim_delta=args.trim_delta, tau_close=args.tau_close,
-        smooth_frac=args.smooth_frac, coverage_eps=args.eps,
+        smooth_frac=args.smooth_frac, coverage_eps=args.eps, support_floor=args.support_floor,
     )
     name = args.name or args.image.stem
     print(f"{name}: closure={res.closure} coverage={res.coverage*100:.1f}% "
           f"max_step={res.max_step:.4f} mean_step={res.mean_step:.4f} "
-          f"endpoint_gap={res.endpoint_gap:.4f} ridge={res.n_ridge}")
+          f"endpoint_gap={res.endpoint_gap:.4f} ridge={res.n_ridge} "
+          f"branch_drop={res.branch_drop_frac*100:.1f}% dropped_extent={res.dropped_extent:.4f}")
     if args.out:
         args.out.write_text(json.dumps(res.to_colormap(name)))
         print(f"wrote {args.out}")

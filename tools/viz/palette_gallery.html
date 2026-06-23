@@ -222,14 +222,14 @@
   <div id="grid"></div>
 </div>
 
-<div id="detail empty" id="detail">
+<div id="detail" class="empty">
   <span>Select a wallpaper</span>
 </div>
 
 <script>
 // ── data ──────────────────────────────────────────────────────────────────────
 // Adjust this path to wherever build_wallpaper_manifest.py writes its output.
-const MANIFEST_PATH = "../../data/palette_viz/manifest.json";
+const MANIFEST_PATH = "../../data/palette_viz/test/manifest.json";
 
 let allEntries = [];
 let activeIndex = null;
@@ -244,9 +244,31 @@ async function loadManifest() {
     showLoadError(e);
     return;
   }
-  allEntries = manifest.entries;
-  document.getElementById("stats").textContent =
-    `${manifest.total} images · ${manifest.errors} errors`;
+  // Support both build_wallpaper_manifest.py schema (entries) and
+  // test_wallpaper_extraction.py schema (images, closure, coverage 0-100)
+  const rawEntries = manifest.entries ?? manifest.images ?? [];
+  const total = manifest.total ?? manifest.n ?? rawEntries.length;
+  const errCount = manifest.errors ?? rawEntries.filter(e => e.error).length;
+  const baseDir = MANIFEST_PATH.replace(/manifest\.json$/, "");
+  // Convert absolute repo paths to relative (test scripts emit absolute Windows paths)
+  const relPath = p => {
+    if (!p) return p;
+    const m = p.replace(/\\/g, '/').match(/\/(data\/.*)$/);
+    return m ? '../../' + m[1] : p;
+  };
+  allEntries = rawEntries.map(e => ({
+    name: e.name,
+    image: relPath(e.image) ?? `${baseDir}${e.name}.thumb.jpg`,
+    palette_json: relPath(e.palette_json) ?? `${baseDir}${e.name}.json`,
+    coverage: (e.coverage !== null && e.coverage !== undefined)
+      ? (e.coverage > 1 ? e.coverage / 100 : e.coverage)
+      : null,
+    native: e.native !== undefined
+      ? e.native
+      : (e.closure === "native" ? true : e.closure != null ? false : null),
+    error: e.error ?? null,
+  }));
+  document.getElementById("stats").textContent = `${total} images · ${errCount} errors`;
   renderGrid();
 }
 
@@ -409,20 +431,21 @@ function oklab2rgb(L, a, b) {
 }
 
 function drawPaletteStrip(canvas, stops) {
-  // stops: array of { t: 0..1, L, a, b } or { t, rgb:[r,g,b] }
+  // stops: [[t, [r,g,b]], ...] sRGB8 from to_colormap(), or {t,L,a,b} OKLab dicts
   if (!stops || stops.length === 0) return;
   const ctx = canvas.getContext("2d");
   const W = canvas.width, H = canvas.height;
-  // build gradient
   const grad = ctx.createLinearGradient(0, 0, W, 0);
   for (const s of stops) {
-    let rgb;
-    if (s.rgb) rgb = s.rgb;
-    else rgb = oklab2rgb(s.L ?? s[0], s.a ?? s[1], s.b ?? s[2]);
-    grad.addColorStop(
-      Math.min(1, Math.max(0, s.t ?? s.position ?? 0)),
-      `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`
-    );
+    let rgb, t;
+    if (Array.isArray(s)) {
+      t = s[0];
+      rgb = s[1];
+    } else {
+      t = s.t ?? s.position ?? 0;
+      rgb = s.rgb ?? oklab2rgb(s.L ?? 0.5, s.a ?? 0, s.b ?? 0);
+    }
+    grad.addColorStop(Math.min(1, Math.max(0, t)), `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
   }
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);

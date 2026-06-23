@@ -160,7 +160,14 @@ const COL_PIXELS  = "#888888";   // gray  — rendered pixels
 const COL_EXTRACT = "#e07040";   // amber — extracted curve
 
 let manifest = null;
-let runCache = {};   // name → loaded data.json
+let runCache = {};   // name → loaded data
+
+// Convert absolute repo paths (from test_roundtrip.py) to relative for fetch
+function relPath(p) {
+  if (!p) return p;
+  const m = p.replace(/\\/g, '/').match(/\/(data\/.*)$/);
+  return m ? '../../' + m[1] : p;
+}
 
 // ── load manifest ─────────────────────────────────────────────────────────────
 async function init() {
@@ -206,7 +213,7 @@ async function showEntry(entry) {
   const hdr = document.createElement("div");
   hdr.id = "detail-header";
   const cov = entry.coverage !== null ? `${(entry.coverage*100).toFixed(1)}%` : "—";
-  const nat = entry.native === true ? "native" : entry.native === false ? "mirror-closed" : "—";
+  const nat = entry.closure ?? "—";
   hdr.innerHTML = `
     <div id="detail-name">${entry.name}</div>
     <div id="detail-meta">
@@ -223,16 +230,20 @@ async function showEntry(entry) {
     return;
   }
 
-  // load run data
+  // load run data — manifest has separate per-file paths (absolute; relPath makes them relative)
   let data = runCache[entry.name];
   if (!data) {
     try {
-      const r = await fetch(entry.data_json);
-      data = await r.json();
+      const [lutPts, pixPts, extPts] = await Promise.all([
+        fetch(relPath(entry.lut_points)).then(r => r.json()),
+        fetch(relPath(entry.pixel_points)).then(r => r.json()),
+        fetch(relPath(entry.extracted_points)).then(r => r.json()),
+      ]);
+      data = { lut_points: lutPts, pixel_points: pixPts, extracted_stops: extPts };
       runCache[entry.name] = data;
     } catch(e) {
       main.appendChild(Object.assign(document.createElement("pre"), {
-        id: "error-box", textContent: "Could not load data.json: " + e.message
+        id: "error-box", textContent: "Could not load data: " + e.message
       }));
       return;
     }
@@ -244,7 +255,7 @@ async function showEntry(entry) {
 
   const img = document.createElement("img");
   img.id = "render-img";
-  img.src = entry.render;
+  img.src = relPath(entry.render);
   img.alt = entry.name;
   row.appendChild(img);
 
@@ -358,18 +369,24 @@ function makeStripGroup(label, stops, fallbackColor, usePaletteColors) {
 }
 
 function drawPaletteStrip(canvas, stops) {
+  // stops: [[t, [r,g,b]], ...] sRGB8 from to_colormap(), or [{t,L,a,b}] OKLab dicts
   if (!stops || stops.length === 0) return;
   const ctx = canvas.getContext("2d");
   const W = canvas.width, H = canvas.height;
-  const sorted = [...stops].sort((a,b) => (a.t??0)-(b.t??0));
+  const tOf = s => Array.isArray(s) ? s[0] : (s.t ?? s.position ?? 0);
+  const sorted = [...stops].sort((sa, sb) => tOf(sa) - tOf(sb));
   const grad = ctx.createLinearGradient(0, 0, W, 0);
   for (const s of sorted) {
-    const L = s.L ?? s[0] ?? 0.5;
-    const a = s.a ?? s[1] ?? 0;
-    const b = s.b ?? s[2] ?? 0;
-    const [r,g,bv] = oklab2rgb(L, a, b);
-    const t = Math.min(1, Math.max(0, s.t ?? s.position ?? 0));
-    grad.addColorStop(t, `rgb(${r},${g},${bv})`);
+    let rgb, t;
+    if (Array.isArray(s)) {
+      t = s[0];
+      rgb = s[1];
+    } else {
+      t = s.t ?? s.position ?? 0;
+      const L = s.L ?? 0.5, a = s.a ?? 0, bv = s.b ?? 0;
+      rgb = oklab2rgb(L, a, bv);
+    }
+    grad.addColorStop(Math.min(1, Math.max(0, t)), `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
   }
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);

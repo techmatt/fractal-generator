@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Palette consistency bench</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+     background:#0e0f13;color:#ccc;display:flex;height:100vh;overflow:hidden}
+
+#sidebar{width:240px;min-width:180px;display:flex;flex-direction:column;
+         border-right:1px solid #23252e;overflow:hidden}
+#sidebar-header{padding:10px 12px;border-bottom:1px solid #23252e}
+#sidebar-header h1{font-size:12px;font-weight:600;color:#eee;margin-bottom:6px}
+.sort-row{display:flex;gap:5px;flex-wrap:wrap}
+.sort-btn{font-size:11px;padding:2px 7px;border-radius:4px;cursor:pointer;
+          background:#1d2029;border:1px solid #2c2f3a;color:#aaa}
+.sort-btn.active{background:#2a3050;border-color:#4a6af4;color:#7a9fff}
+#pal-list{flex:1;overflow-y:auto;padding:4px 0}
+.pal-item{padding:6px 12px;cursor:pointer;border-left:3px solid transparent;
+          display:flex;flex-direction:column;gap:1px}
+.pal-item:hover{background:#1a1c24}
+.pal-item.active{border-left-color:#7a9fff;background:#161a2a}
+.pal-name{font-size:11px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal-score{font-size:10px;color:#666}
+.pal-item.err .pal-name{color:#7a4040}
+
+#main{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:18px}
+#main.empty{align-items:center;justify-content:center;color:#444;font-size:14px}
+
+#meta-box{background:#15171d;border:1px solid #23252e;border-radius:8px;
+          padding:12px 16px;font-size:11px;color:#888;line-height:1.7}
+#meta-box b{color:#aaa}
+
+.card{background:#15171d;border:1px solid #23252e;border-radius:8px;padding:14px 16px}
+.card h2{font-size:13px;color:#eee;margin-bottom:6px}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#1d2029;
+       border:1px solid #2c2f3a;color:#aaa}
+.badge b{color:#e0e0e0}
+.badge.native{background:#122a1e;border-color:#1f6b46;color:#7af0b8}
+.badge.mirrored{background:#2a1a08;border-color:#6b3a10;color:#e8a05a}
+
+.strip-row{display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap}
+.strip-col{display:flex;flex-direction:column;gap:3px;flex:1;min-width:160px}
+.strip-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#555}
+.strip-img{width:100%;height:28px;display:block;border-radius:3px;image-rendering:pixelated}
+
+.render-scatter-row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.render-box{flex:1;min-width:200px;max-width:480px}
+.render-box img{width:100%;display:block;border-radius:4px;border:1px solid #23252e}
+figcaption{font-size:10px;color:#555;margin-top:4px}
+
+.scatter-box{display:flex;flex-direction:column;gap:4px}
+.scatter-label{font-size:10px;text-transform:uppercase;color:#555}
+.scatter-legend{font-size:10px;color:#555;margin-top:3px}
+canvas.scatter{border:1px solid #23252e;border-radius:4px}
+
+#sen-box{background:#15171d;border:1px solid #23252e;border-radius:8px;padding:14px 16px;display:none}
+#sen-box h2{font-size:13px;color:#eee;margin-bottom:8px}
+table{border-collapse:collapse;width:100%;font-size:11px}
+th{color:#888;font-weight:600;text-align:left;padding:4px 10px;border-bottom:1px solid #23252e}
+td{padding:4px 10px;color:#ccc;border-bottom:1px solid #1a1c24}
+.pos{color:#f87171}.neg{color:#6ee7b7}
+</style></head>
+<body>
+
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>Palette consistency</h1>
+    <div class="sort-row">
+      <button class="sort-btn active" data-key="chamfer">chamfer ↑</button>
+      <button class="sort-btn" data-key="hausdorff">hausdorff</button>
+      <button class="sort-btn" data-key="aligned_residual">aligned</button>
+      <button class="sort-btn" data-key="name">name</button>
+    </div>
+  </div>
+  <div id="pal-list"></div>
+</div>
+
+<div id="main" class="empty">
+  <div id="meta-box">loading…</div>
+  <div id="sen-box">
+    <h2>Sensitivity — one-at-a-time knob Δ(median chamfer)</h2>
+    <table><thead><tr>
+      <th>knob</th><th>direction</th><th>value</th>
+      <th>median chamfer</th><th>Δ vs default</th><th>n_ok</th>
+    </tr></thead><tbody id="sen-tbody"></tbody></table>
+  </div>
+  <div id="detail"></div>
+</div>
+
+<script>
+const MANIFEST_URL    = '../../data/palette_consistency/manifest.json';
+const SENSITIVITY_URL = '../../data/palette_consistency/sensitivity.json';
+const RENDERS_BASE    = '../../out/palette_consistency/';
+const STRIPS_BASE     = '../../data/palette_consistency/strips/';
+
+let allEntries = [];
+let sortKey    = 'chamfer';
+
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    sortKey = btn.dataset.key;
+    document.querySelectorAll('.sort-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.key === sortKey));
+    renderList();
+  });
+});
+
+function renderList() {
+  const sorted = [...allEntries].sort((a, b) => {
+    if (sortKey === 'name') return a.name.localeCompare(b.name);
+    return (a[sortKey] ?? 1e9) - (b[sortKey] ?? 1e9);
+  });
+  const list = document.getElementById('pal-list');
+  list.innerHTML = '';
+  sorted.forEach(e => {
+    const div = document.createElement('div');
+    div.className = 'pal-item' + (e.error ? ' err' : '');
+    div.dataset.name = e.name;
+    div.innerHTML = `<div class="pal-name">${e.name}</div>
+      <div class="pal-score">${e.error ? 'ERROR' : `ch=${e.chamfer.toFixed(4)} · ${e.closure}`}</div>`;
+    div.addEventListener('click', () => showDetail(e));
+    list.appendChild(div);
+  });
+}
+
+function showDetail(e) {
+  document.querySelectorAll('.pal-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.name === e.name));
+  document.getElementById('main').className = '';
+  const det = document.getElementById('detail');
+  if (e.error) {
+    det.innerHTML = `<div class="card"><h2>${e.name}</h2>
+      <p style="color:#f87171">${e.error}</p></div>`;
+    return;
+  }
+  const closureCls = e.closure || '';
+  det.innerHTML = `
+<div class="card">
+  <h2>${e.name}</h2>
+  <div class="badges">
+    <span class="badge ${closureCls}">${e.closure}</span>
+    <span class="badge">chamfer <b>${e.chamfer.toFixed(5)}</b></span>
+    <span class="badge">hausdorff <b>${e.hausdorff.toFixed(5)}</b></span>
+    <span class="badge">aligned_residual <b>${e.aligned_residual.toFixed(5)}</b></span>
+    <span class="badge">coverage <b>${(e.coverage*100).toFixed(1)}%</b></span>
+    <span class="badge">exercised <b>${(e.exercised_fraction*100).toFixed(0)}%</b></span>
+  </div>
+
+  <div class="strip-row">
+    <div class="strip-col">
+      <div class="strip-label">ground-truth (exercised arc)</div>
+      <img src="${STRIPS_BASE}${e.name}_gt.png" class="strip-img" onerror="this.style.opacity=.2">
+    </div>
+    <div class="strip-col">
+      <div class="strip-label">extracted</div>
+      <img src="${STRIPS_BASE}${e.name}_ext.png" class="strip-img" onerror="this.style.opacity=.2">
+    </div>
+  </div>
+
+  <div class="render-scatter-row">
+    <figure class="render-box">
+      <img src="${RENDERS_BASE}${e.name}.png" onerror="this.style.opacity=.2">
+      <figcaption>render · palette_lib LUT · density=${e.density||1}</figcaption>
+    </figure>
+    <div class="scatter-box">
+      <div class="scatter-label">OKLab a–b scatter</div>
+      <canvas id="scatter-cv" width="220" height="220" class="scatter"></canvas>
+      <div class="scatter-legend">
+        <span style="color:rgba(80,200,120,0.9)">●</span> ground truth &nbsp;
+        <span style="color:rgba(255,130,60,0.9)">●</span> extracted
+      </div>
+    </div>
+  </div>
+</div>`;
+
+  drawScatter('scatter-cv', e.gt_lab || [], e.ext_lab || []);
+}
+
+function drawScatter(id, gt, ext) {
+  const c   = document.getElementById(id);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#111'; ctx.fillRect(0, 0, 220, 220);
+  ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
+  [[110,0,110,220],[0,110,220,110]].forEach(([x1,y1,x2,y2]) => {
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  });
+  const toXY = p => [p[1]*320+110, 110-p[2]*320];
+  const dot  = (p, col, r) => {
+    const [x,y] = toXY(p);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2*Math.PI);
+    ctx.fillStyle = col; ctx.fill();
+  };
+  gt.forEach(p  => dot(p, 'rgba(80,200,120,0.55)', 2.5));
+  ext.forEach(p => dot(p, 'rgba(255,130,60,0.80)', 3.5));
+}
+
+async function loadSensitivity() {
+  try {
+    const r = await fetch(SENSITIVITY_URL);
+    if (!r.ok) return;
+    const d = await r.json();
+    const box = document.getElementById('sen-box');
+    const tb  = document.getElementById('sen-tbody');
+    box.style.display = '';
+    d.rows.forEach(row => {
+      const tr = document.createElement('tr');
+      const delta = row.delta_chamfer;
+      const dc = Math.abs(delta) < 0.0005 ? '' : delta > 0 ? 'pos' : 'neg';
+      tr.innerHTML = `<td>${row.knob}</td><td>${row.direction}</td><td>${row.value}</td>
+        <td>${row.median_chamfer.toFixed(5)}</td>
+        <td class="${dc}">${delta > 0 ? '+' : ''}${delta.toFixed(5)}</td>
+        <td>${row.n_ok}</td>`;
+      tb.appendChild(tr);
+    });
+  } catch(e) { console.warn('sensitivity not loaded:', e); }
+}
+
+async function init() {
+  try {
+    const r = await fetch(MANIFEST_URL);
+    const d = await r.json();
+    allEntries = d.entries || [];
+    const m   = d.meta || {};
+    document.getElementById('meta-box').innerHTML =
+      `<b>n</b>=${m.n_baseline} &nbsp; <b>seed</b>=${m.seed} &nbsp; ` +
+      `<b>density</b>=${m.density} &nbsp; ` +
+      `<b>render</b>=${(m.render_wh||[]).join('×')} &nbsp; ` +
+      `<b>maxiter</b>=${m.max_iter}<br>` +
+      `<b>chamfer</b>: median=${m.chamfer_median?.toFixed(5)} &nbsp; ` +
+      `p25=${m.chamfer_p25?.toFixed(5)} &nbsp; p75=${m.chamfer_p75?.toFixed(5)} &nbsp; ` +
+      `max=${m.chamfer_max?.toFixed(5)}<br>` +
+      `<b>closure</b>: native=${m.n_native} / mirrored=${m.n_mirrored}<br>` +
+      `<b>exercised_fraction</b>: mean=${m.exercised_fraction_mean?.toFixed(4)} ` +
+      `± ${m.exercised_fraction_std?.toFixed(4)} ` +
+      `<em>(sanity: should be ~constant across all palettes)</em>`;
+    document.getElementById('main').className = '';
+    renderList();
+    await loadSensitivity();
+  } catch(e) {
+    document.getElementById('meta-box').textContent = 'Error loading manifest: ' + e;
+  }
+}
+
+init();
+</script>
+</body></html>

@@ -21,6 +21,7 @@ use fractal_generator::energy;
 use fractal_generator::generate;
 use fractal_generator::navigate;
 use fractal_generator::palette_pick;
+use fractal_generator::present;
 use fractal_generator::profile;
 use fractal_generator::reject_corridor;
 use fractal_generator::search;
@@ -337,6 +338,7 @@ fn run() -> Result<(), String> {
     match &cli.command {
         Some(Command::Sheet(args)) => run_sheet(args),
         Some(Command::Generate(args)) => generate::run_generate(args),
+        Some(Command::Present(args)) => present::run_present(args),
         Some(Command::Descend(args)) => descend::run_descend(args),
         Some(Command::Navigate(args)) => navigate::run_navigate(args),
         Some(Command::Search(args)) => search::run_search(args),
