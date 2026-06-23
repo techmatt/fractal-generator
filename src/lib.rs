@@ -44,6 +44,7 @@ pub mod navigate;
 pub mod palette;
 pub mod palette_io;
 pub mod palette_pick;
+pub mod palette_score;
 pub mod present;
 pub mod probe;
 pub mod profile;

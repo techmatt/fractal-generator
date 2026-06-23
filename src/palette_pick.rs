@@ -181,19 +181,22 @@ pub fn run_palette_pick(args: &PalettePickArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// A colormap parsed out of `clean_colormaps.json`: a name, its sRGB8 stops, and
-/// the inline `mirror_needed` classification (SEQUENTIAL → pre-mirror at bake).
-struct Colormap {
-    name: String,
-    stops: Vec<(f64, [u8; 3])>,
-    mirror_needed: bool,
+/// A colormap parsed out of `clean_colormaps.json`: a name, its sRGB8 stops, the
+/// inline `mirror_needed` classification (SEQUENTIAL → pre-mirror at bake), and
+/// the `cycle` label (provenance only). Shared with `palette_score`.
+pub(crate) struct Colormap {
+    pub(crate) name: String,
+    pub(crate) stops: Vec<(f64, [u8; 3])>,
+    pub(crate) mirror_needed: bool,
+    /// Inline `cycle` classification string (e.g. "cyclic" / "sequential"), if present.
+    pub(crate) cycle: Option<String>,
 }
 
 /// Parse the survivor colormap library: a JSON array of
 /// `{"name": str, "source": str, "stops": [[pos, [r,g,b]], ...]}` objects.
 /// Hand-rolled (the project avoids serde) via a tiny generic JSON parser, then a
 /// schema projection — `source` and any other keys are ignored.
-fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
+pub(crate) fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
     let v = JsonParser::new(text).parse()?;
     let arr = match v {
         Json::Arr(a) => a,
@@ -208,6 +211,7 @@ fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
         let mut name = None;
         let mut stops_json = None;
         let mut mirror_needed = false;
+        let mut cycle = None;
         for (k, val) in obj {
             match k.as_str() {
                 "name" => {
@@ -219,6 +223,11 @@ fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
                 "mirror_needed" => {
                     if let Json::Bool(b) = val {
                         mirror_needed = b;
+                    }
+                }
+                "cycle" => {
+                    if let Json::Str(s) = val {
+                        cycle = Some(s);
                     }
                 }
                 _ => {}
@@ -256,14 +265,15 @@ fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
         if stops.len() < 2 {
             return Err(format!("colormap '{name}': need ≥2 stops, found {}", stops.len()));
         }
-        out.push(Colormap { name, stops, mirror_needed });
+        out.push(Colormap { name, stops, mirror_needed, cycle });
     }
     Ok(out)
 }
 
 /// Minimal JSON value (only what the colormap schema needs; objects keep insertion order).
+/// Shared with `palette_score` (views.json parsing).
 #[allow(dead_code)] // Null/Bool are parsed for completeness but the schema never reads them.
-enum Json {
+pub(crate) enum Json {
     Null,
     Bool(bool),
     Num(f64),
@@ -274,17 +284,17 @@ enum Json {
 
 /// A tiny recursive-descent JSON parser over byte input. Sufficient for the
 /// well-formed colormap library; not a general-purpose validator.
-struct JsonParser<'a> {
+pub(crate) struct JsonParser<'a> {
     b: &'a [u8],
     i: usize,
 }
 
 impl<'a> JsonParser<'a> {
-    fn new(s: &'a str) -> Self {
+    pub(crate) fn new(s: &'a str) -> Self {
         JsonParser { b: s.as_bytes(), i: 0 }
     }
 
-    fn parse(&mut self) -> Result<Json, String> {
+    pub(crate) fn parse(&mut self) -> Result<Json, String> {
         self.ws();
         let v = self.value()?;
         self.ws();

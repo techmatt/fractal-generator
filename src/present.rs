@@ -52,6 +52,18 @@ const COMP_OFFSETS: &[(&str, f64, f64)] = &[
     ("golden", -0.118, -0.118),           // golden-ratio offset
 ];
 
+/// Resolve a named composition (`center` / `thirds` / `golden`) to its
+/// fw-relative `(dre, dim)` offset. Unknown names fall back to `center` (0, 0).
+/// Shared with `palette-score` so scored crops use the same offsets as `present`.
+pub(crate) fn composition_offset(name: &str) -> (f64, f64) {
+    for &(n, dre, dim) in COMP_OFFSETS {
+        if n == name {
+            return (dre, dim);
+        }
+    }
+    (0.0, 0.0)
+}
+
 struct Seed {
     keeper_index: usize,
     cx: f64,

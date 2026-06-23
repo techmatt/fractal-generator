@@ -1,0 +1,76 @@
+<!doctype html><html><head><meta charset="utf-8"><title>candidate views — pick 4</title>
+<style>:root{color-scheme:dark}
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#0e0f13;color:#ccc;padding:18px 26px}
+h1{font-size:16px;margin:0 0 4px}
+.sub{color:#888;font-size:11px;max-width:1100px;margin-bottom:16px}
+.err{color:#e8705a;white-space:pre-wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px}
+.card{background:#15171d;border:1px solid #23252e;border-radius:8px;padding:10px}
+.render{width:100%;display:block;border-radius:4px;image-rendering:auto;background:#000}
+.nm{color:#e0e0e0;font-weight:bold;font-size:12px;margin:8px 0 2px}
+.meta{color:#9aa;font-size:11px;margin:2px 0}
+.json{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:5px 7px;
+ background:#0b0c10;border:1px solid #23252e;border-radius:4px;color:#cdd6a0;font:11px/1.4 ui-monospace,monospace;
+ white-space:pre;overflow-x:auto;cursor:pointer}
+.json:hover{border-color:#3a5a8a}
+.copied{color:#7ad17a;font-size:10px;margin-left:8px}</style>
+</head><body>
+<h1>Candidate views — pick 4 (diverse structures)</h1>
+<div class="sub" id="meta"></div>
+<div class="err" id="err"></div>
+<div class="grid" id="grid"></div>
+<script>
+// present writes its manifest at out/present/<run_stem>/manifest.json; this file lives in tools/viz/.
+const MANIFEST_PATH = "../../out/present/candidates/manifest.json";
+// crop.output paths in the manifest are repo-root-relative; rebase to this file's location.
+const ROOT = "../../";
+
+function jline(c){
+  // Exactly the fields views.json consumes, verbatim from the manifest.
+  return `{ "name": "seed_${c.seed_index}", "cx": ${c.cx}, "cy": ${c.cy}, "fw": ${c.fw}, "composition": "${c.composition}" }`;
+}
+
+(async () => {
+  let m;
+  try {
+    const r = await fetch(MANIFEST_PATH);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    m = await r.json();
+  } catch (e) {
+    document.getElementById('err').textContent =
+      `Could not load ${MANIFEST_PATH}: ${e.message}\n` +
+      `Serve the repo root over http (browsers block file:// fetch), e.g.:\n` +
+      `  python -m http.server  (from C:\\Code\\fractal-generator)\n` +
+      `then open  http://localhost:8000/tools/viz/candidate_views.html`;
+    return;
+  }
+  document.getElementById('meta').innerHTML =
+    `${m.crops.length} candidate crops from <b>${m.source_jsonl}</b> · zoom ${m.zoom_factor} · ` +
+    `${m.accepted} accepted / ${m.rejected_black} rejected-black of ${m.total_seeds} seeds.<br>` +
+    `Click a JSON line to copy it straight into the palette-score <b>views.json</b>.`;
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = m.crops.map(c => {
+    const img = ROOT + c.output;
+    const j = jline(c).replace(/"/g, '&quot;');
+    return `<div class="card">
+      <img class="render" src="${img}" loading="lazy" alt="seed ${c.seed_index}">
+      <div class="nm">seed ${c.seed_index} · ${c.palette}<span class="copied" data-i="${c.seed_index}"></span></div>
+      <div class="meta">cx=${c.cx}  cy=${c.cy}</div>
+      <div class="meta">fw=${c.fw}  comp=${c.composition}  cov=${c.coverage}</div>
+      <div class="json" data-json="${j}">${j}</div>
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('.json').forEach(el => {
+    el.addEventListener('click', () => {
+      const txt = el.getAttribute('data-json');
+      navigator.clipboard.writeText(txt).then(() => {
+        const note = el.parentElement.querySelector('.copied');
+        note.textContent = '✓ copied';
+        setTimeout(() => note.textContent = '', 1400);
+      });
+    });
+  });
+})();
+</script></body></html>

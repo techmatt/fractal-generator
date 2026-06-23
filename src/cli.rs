@@ -300,6 +300,15 @@ pub enum Command {
     /// sheet. Diagnosis-only — no band, no scoring, no render-path change; Matt
     /// picks. Sheet + reproducibility legend land under `data/palette_pick/`.
     PalettePick(PalettePickArgs),
+    /// Palette-scoring surface: iterate 4 fixed "good" views ONCE (reusing
+    /// `present`'s render config) and recolor them into a clean 2×2 grid under
+    /// **each** of the 224 library palettes, so Matt can hand-label palette
+    /// quality (1/2/3) decoupled from location quality. Without `--full` it stops
+    /// at a `twilight_shifted` preview grid (the views-fixture eyeball gate); with
+    /// `--full` it writes one grid PNG per palette + a manifest under
+    /// `data/palette_score/`. Selective mirror per `mirror_needed`, exactly as
+    /// `present`/`palette-pick`. Deterministic; no scoring (Matt judges).
+    PaletteScore(PaletteScoreArgs),
 }
 
 /// `palette-pick` subcommand: see `palette_pick::run_palette_pick`. Reproducible
@@ -354,6 +363,54 @@ pub struct PalettePickArgs {
 
     /// Output directory for the sheet + reproducibility legend.
     #[arg(long, default_value = "out/palette_pick")]
+    pub out_dir: String,
+}
+
+/// `palette-score` subcommand: see `palette_score::run_palette_score`. Builds the
+/// hand-scoring surface — 4 fixed views iterated once, recolored under each of the
+/// 224 survivors into clean 2×2 grids. Deterministic; reuses `present`'s coloring
+/// config + the selective-mirror path verbatim so scores transfer to the location
+/// pass.
+#[derive(Args, Debug)]
+pub struct PaletteScoreArgs {
+    /// The 4-view fixture: `[{name, cx, cy, fw, composition?}, …]` (exactly 4).
+    #[arg(long, default_value = "data/palette_score/views.json")]
+    pub views: String,
+
+    /// Survivor colormap library (the 224 clean maps, inline cycle/mirror_needed).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub palette_file: String,
+
+    /// Per-cell width in pixels (one view per cell).
+    #[arg(long, default_value_t = 480)]
+    pub cell_width: u32,
+
+    /// Per-cell height in pixels (keep 16:9 with cell_width).
+    #[arg(long, default_value_t = 270)]
+    pub cell_height: u32,
+
+    /// Linear supersampling factor (S×S box downsample) per cell.
+    #[arg(long, default_value_t = 2)]
+    pub ss: u32,
+
+    /// Gutter (px) between/around the 2×2 cells — kept thin, no burned-in text.
+    #[arg(long, default_value_t = 6)]
+    pub gutter: u32,
+
+    /// Maximum iterations (matches `present`'s default for config parity).
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Diagnostic palette for the preview grid (the views-fixture eyeball gate).
+    #[arg(long, default_value = "twilight_shifted")]
+    pub diagnostic_palette: String,
+
+    /// Render the full 224-palette sweep. Without it, stop at the preview grid.
+    #[arg(long)]
+    pub full: bool,
+
+    /// Output directory (outside `out/` — Matt clears `out/`).
+    #[arg(long, default_value = "data/palette_score/")]
     pub out_dir: String,
 }
 
