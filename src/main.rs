@@ -11,6 +11,8 @@ use std::time::Instant;
 use clap::Parser;
 use num_complex::Complex;
 
+use fractal_generator::aa_filter;
+use fractal_generator::aa_study;
 use fractal_generator::backend::{F64Backend, JuliaBackend, PerturbationBackend, Trap};
 use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
@@ -359,6 +361,8 @@ fn run() -> Result<(), String> {
         Some(Command::RejectCorridor(args)) => reject_corridor::run_reject_corridor(args),
         Some(Command::PalettePick(args)) => palette_pick::run_palette_pick(args),
         Some(Command::PaletteScore(args)) => palette_score::run_palette_score(args),
+        Some(Command::AaStudy(args)) => aa_study::run_aa_study(args),
+        Some(Command::AaFilter(args)) => aa_filter::run_aa_filter(args),
         None => run_render(&cli),
     }
 }

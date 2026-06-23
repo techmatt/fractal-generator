@@ -309,6 +309,180 @@ pub enum Command {
     /// `data/palette_score/`. Selective mirror per `mirror_needed`, exactly as
     /// `present`/`palette-pick`. Deterministic; no scoring (Matt judges).
     PaletteScore(PaletteScoreArgs),
+    /// Antialiasing bake-off at the 2560×1440 target: one view × one cyclic
+    /// palette, rendered under five AA schemes (ordered grid ss2/ss3/ss4 +
+    /// rotated-grid 4-rooks + stratified jitter) so two axes — sample count and
+    /// sub-sample placement — can be eyeballed at 1:1. Reuses `present`'s f64
+    /// render path; varies only `render::SubsamplePattern`. Per cell: wall-clock,
+    /// the full PNG, and a matched 1:1 crop of one auto-picked high-frequency
+    /// region. Emits `tools/viz/aa_study.html` + a JSON log (stable path, not
+    /// `out/`). Box downsample fixed; the reconstruction-filter study is next.
+    AaStudy(AaStudyArgs),
+    /// AA reconstruction-filter bake-off: one view × one cyclic palette, rendered
+    /// **once** at grid ss4 (16 spp), then downsampled three ways — box vs
+    /// Mitchell–Netravali vs Lanczos-3 — over the *same* shaded supersample buffer.
+    /// The filter only reweights samples already iterated, so the two extra cells
+    /// are ~free on top of the single ~4.2 s iterate. Pins the 1:1 crop to the
+    /// aa-study's selected box so all three filters are judged on identical pixels.
+    /// Emits `tools/viz/aa_filter_study.html` + a JSON log (stable path, not
+    /// `out/`).
+    AaFilter(AaFilterArgs),
+}
+
+/// `aa-filter` subcommand: see `aa_filter::run_aa_filter`. One fixed view + cyclic
+/// palette iterated once at grid ss4; the sole axis is the downsample
+/// reconstruction filter (box / Mitchell / Lanczos). Shallow f64 (asserted).
+#[derive(Args, Debug)]
+pub struct AaFilterArgs {
+    /// Frame center, real part — arbitrary-precision decimal string. Default is
+    /// the aa-study view (so the pinned crop lands on identical pixels).
+    #[arg(long, default_value = "-0.746339", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.112242", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Width of the view in the complex plane (aa-study default).
+    #[arg(long, default_value_t = 0.000583)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// Output width in pixels (height follows 16:9). The study's real target.
+    #[arg(long, default_value_t = 2560)]
+    pub width: u32,
+
+    /// Supersample factor (grid). The study locks this to 4 (16 spp); exposed for
+    /// experimentation only.
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Cyclic (mirror-safe) palette name, looked up in `--colormaps`.
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Survivor colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// 1:1 crop width (px). The matched crop is auto-picked at this size only if
+    /// `--crop` is empty.
+    #[arg(long, default_value_t = 384)]
+    pub crop_width: u32,
+
+    /// 1:1 crop height (px).
+    #[arg(long, default_value_t = 384)]
+    pub crop_height: u32,
+
+    /// Explicit crop box `x,y,w,h`. Default pins the aa-study's selected box so
+    /// the three filters are judged on identical pixels; pass an empty string to
+    /// auto-pick by edge energy instead.
+    #[arg(long, default_value = "928,464,384,384")]
+    pub crop: String,
+
+    /// Output directory for the PNGs/crops/JSON (HTML lands in its parent).
+    /// Stable path by design — not under `out/`.
+    #[arg(long, default_value = "tools/viz/aa_filter_study")]
+    pub out_dir: String,
+}
+
+impl AaFilterArgs {
+    /// Parse `--crop` (`x,y,w,h`). Empty string → auto-pick (returns `None`).
+    pub fn resolved_crop(&self) -> Result<Option<(u32, u32, u32, u32)>, String> {
+        if self.crop.trim().is_empty() {
+            return Ok(None);
+        }
+        let p: Vec<&str> = self.crop.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --crop '{}', expected x,y,w,h", self.crop));
+        }
+        let mut v = [0u32; 4];
+        for (i, s) in p.iter().enumerate() {
+            v[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --crop component '{}'", s.trim()))?;
+        }
+        Ok(Some((v[0], v[1], v[2], v[3])))
+    }
+}
+
+/// `aa-study` subcommand: see `aa_study::run_aa_study`. One fixed view + cyclic
+/// palette rendered under the five AA schemes; reports per-cell wall-clock and
+/// emits the 1:1-crop comparison HTML. Shallow f64 by construction (asserted).
+#[derive(Args, Debug)]
+pub struct AaStudyArgs {
+    /// Frame center, real part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "-0.7453", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.1127", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Width of the view in the complex plane.
+    #[arg(long, default_value_t = 0.0035)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// Output width in pixels (height follows 16:9). The study's real target.
+    #[arg(long, default_value_t = 2560)]
+    pub width: u32,
+
+    /// Cyclic (mirror-safe) palette name, looked up in `--colormaps`.
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Survivor colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// SplitMix64 seed for the stratified-jitter cell (deterministic).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// 1:1 crop width (px). The matched high-frequency crop is auto-picked at
+    /// this size unless `--crop` pins an explicit box.
+    #[arg(long, default_value_t = 384)]
+    pub crop_width: u32,
+
+    /// 1:1 crop height (px).
+    #[arg(long, default_value_t = 384)]
+    pub crop_height: u32,
+
+    /// Explicit crop box `x,y,w,h` (overrides the auto edge-energy pick).
+    #[arg(long)]
+    pub crop: Option<String>,
+
+    /// Output directory for the PNGs/crops/JSON (the HTML lands in its parent).
+    /// Stable path by design — not under `out/`.
+    #[arg(long, default_value = "tools/viz/aa_study")]
+    pub out_dir: String,
+}
+
+impl AaStudyArgs {
+    /// Parse `--crop` (`x,y,w,h`) into an explicit box, or `None` for auto-pick.
+    pub fn resolved_crop(&self) -> Result<Option<(u32, u32, u32, u32)>, String> {
+        let Some(spec) = &self.crop else { return Ok(None) };
+        let p: Vec<&str> = spec.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --crop '{spec}', expected x,y,w,h"));
+        }
+        let mut v = [0u32; 4];
+        for (i, s) in p.iter().enumerate() {
+            v[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --crop component '{}'", s.trim()))?;
+        }
+        Ok(Some((v[0], v[1], v[2], v[3])))
+    }
 }
 
 /// `palette-pick` subcommand: see `palette_pick::run_palette_pick`. Reproducible
@@ -2182,6 +2356,12 @@ pub struct PresentArgs {
     /// Number of random palettes to apply per accepted crop.
     #[arg(long, default_value_t = 3)]
     pub palettes_per_crop: usize,
+
+    /// Emit a distinct crop for **every** composition that passes the black gate
+    /// (labeling mode: each (seed × composition) is its own location to judge),
+    /// instead of the default pick-the-lowest-black single crop per seed.
+    #[arg(long, default_value_t = false)]
+    pub all_compositions: bool,
 
     /// Maximum iterations for both cheap-screen and full-resolution renders.
     #[arg(long, default_value_t = 1000)]

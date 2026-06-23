@@ -25,7 +25,8 @@ use crate::backend::{F64Backend, Trap, TrapShape};
 use crate::cli::PresentArgs;
 use crate::generate::color_params;
 use crate::palette::Palette;
-use crate::probe::{load_colormap, SplitMix64};
+use crate::palette_pick::{parse_colormaps, Colormap};
+use crate::probe::SplitMix64;
 use crate::render::{self, black_fraction, Frame};
 use crate::{coloring, ensure_parent_dir, sheet};
 
@@ -66,6 +67,10 @@ pub(crate) fn composition_offset(name: &str) -> (f64, f64) {
 
 struct Seed {
     keeper_index: usize,
+    /// Standardized label key carried from the `generate` draw stream.
+    draw_index: usize,
+    /// Cheap-screen interior (max-iter) fraction from the seed's draw log.
+    interior_frac: f64,
     cx: f64,
     cy: f64,
     frame_width: f64,
@@ -73,6 +78,8 @@ struct Seed {
 
 struct CropRecord {
     seed_index: usize,
+    draw_index: usize,
+    interior_frac: f64,
     cx: f64,
     cy: f64,
     fw: f64,
@@ -114,28 +121,12 @@ fn parse_usize(line: &str, key: &str) -> Result<usize, String> {
 fn parse_seed(line: &str) -> Result<Seed, String> {
     Ok(Seed {
         keeper_index: parse_usize(line, "keeper_index")?,
+        draw_index: parse_usize(line, "draw_index")?,
+        interior_frac: parse_f64(line, "interior_frac")?,
         cx: parse_f64(line, "center_re")?,
         cy: parse_f64(line, "center_im")?,
         frame_width: parse_f64(line, "frame_width")?,
     })
-}
-
-// ---------- colormap name listing --------------------------------------------
-
-/// Extract all "name" string values from a colormaps JSON array (no serde).
-fn list_colormap_names(text: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut rest = text;
-    while let Some(p) = rest.find("\"name\"") {
-        rest = &rest[p + 6..];
-        let after = rest.trim_start_matches(|c: char| c == ':' || c.is_ascii_whitespace());
-        if let Some(inner) = after.strip_prefix('"') {
-            if let Some(end) = inner.find('"') {
-                names.push(inner[..end].to_string());
-            }
-        }
-    }
-    names
 }
 
 // ---------- manifest builder -------------------------------------------------
@@ -169,14 +160,16 @@ fn build_manifest(
         let out_fwd = c.output.replace('\\', "/");
         let _ = writeln!(
             s,
-            "    {{ \"seed_index\": {}, \"cx\": {}, \"cy\": {}, \"fw\": {}, \
-             \"composition\": \"{}\", \"black_fraction\": {:.4}, \"coverage\": {:.4}, \
-             \"palette\": \"{}\", \"output\": \"{out_fwd}\" }}{comma}",
+            "    {{ \"draw_index\": {}, \"seed_index\": {}, \"cx\": {}, \"cy\": {}, \"fw\": {}, \
+             \"composition\": \"{}\", \"interior_frac\": {:.6}, \"black_fraction\": {:.4}, \
+             \"coverage\": {:.4}, \"palette\": \"{}\", \"output\": \"{out_fwd}\" }}{comma}",
+            c.draw_index,
             c.seed_index,
             jnum(c.cx),
             jnum(c.cy),
             jnum(c.fw),
             c.composition,
+            c.interior_frac,
             c.black_fraction,
             c.coverage,
             c.palette,
@@ -201,14 +194,17 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()?;
     eprintln!("present: {} seeds from {}", seeds.len(), args.input);
 
-    // 2. Load palette library
+    // 2. Load palette library through the SAME path as palette-score / palette-pick
+    //    (carries the inline `mirror_needed` classification, so present's location
+    //    crops adopt the selective-mirror construction the scored grids used).
     let cm_text = std::fs::read_to_string(&args.palette_file)
         .map_err(|e| format!("read {}: {e}", args.palette_file))?;
-    let all_names = list_colormap_names(&cm_text);
-    if all_names.is_empty() {
+    let library: Vec<Colormap> = parse_colormaps(&cm_text)
+        .map_err(|e| format!("parse {}: {e}", args.palette_file))?;
+    if library.is_empty() {
         return Err(format!("no palettes found in {}", args.palette_file));
     }
-    eprintln!("palette library: {} entries", all_names.len());
+    eprintln!("palette library: {} entries", library.len());
 
     let mut rng = SplitMix64(args.seed);
     let params = color_params();
@@ -245,8 +241,8 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
         let focus_cx = seed.cx;
         let focus_cy = seed.cy;
 
-        // --- cheap render per composition, pick min black fraction ---
-        let mut best: Option<(&'static str, f64, f64, f32)> = None; // (name, cx, cy, bf)
+        // --- cheap render per composition (black fraction for the gate) ---
+        let mut comp_bf: Vec<(&'static str, f64, f64, f32)> = Vec::new(); // (name, cx, cy, bf)
         for &(comp_name, dre, dim) in try_comps {
             let ccx = focus_cx + dre * new_fw;
             let ccy = focus_cy + dim * new_fw;
@@ -259,85 +255,104 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
             let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
             let buf = render::iterate_samples_f64(&backend, &frame, CHEAP_SS, channels);
             let bf = black_fraction(&buf.samples);
-            if best.is_none() || bf < best.unwrap().3 {
-                best = Some((comp_name, ccx, ccy, bf));
-            }
+            comp_bf.push((comp_name, ccx, ccy, bf));
         }
 
-        let (comp_name, comp_cx, comp_cy, bf) = best.unwrap();
-        let coverage = 1.0 - bf;
-
-        if bf >= BLACK_THRESH {
-            eprintln!(
-                "  seed {:04} REJECTED  comp={} black_frac={:.3}",
-                seed.keeper_index, comp_name, bf
-            );
-            rejected_black += 1;
-            continue;
-        }
-
-        eprintln!(
-            "  seed {:04} ACCEPTED  comp={} black_frac={:.3} coverage={:.3}",
-            seed.keeper_index, comp_name, bf, coverage
-        );
-        accepted += 1;
-
-        // --- full-res render (iterate once, recolor per palette) ---
-        let frame = Frame {
-            center: Complex::new(comp_cx, comp_cy),
-            frame_width: new_fw,
-            out_width: args.width,
-            out_height: args.height,
+        // Which composition crops to emit: in all-compositions mode, every one
+        // that clears the black gate becomes a distinct label unit; otherwise the
+        // single lowest-black composition (legacy pick-best).
+        let chosen: Vec<(&'static str, f64, f64, f32)> = if args.all_compositions {
+            comp_bf.iter().copied().filter(|c| c.3 < BLACK_THRESH).collect()
+        } else {
+            comp_bf
+                .iter()
+                .copied()
+                .min_by(|a, b| a.3.partial_cmp(&b.3).unwrap())
+                .filter(|c| c.3 < BLACK_THRESH)
+                .into_iter()
+                .collect()
         };
-        let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
-        let buf = render::iterate_samples_f64(&backend, &frame, args.ss, channels);
-        let pixel_spacing = new_fw / args.width as f64;
 
-        for _ in 0..args.palettes_per_crop {
-            let pi = rng.below(all_names.len());
-            let pal_name = &all_names[pi];
-            let stops = match load_colormap(&cm_text, pal_name) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("  palette '{pal_name}' load error: {e}");
-                    continue;
-                }
-            };
-            let palette = Palette::from_srgb8_stops(pal_name.clone(), &stops, false);
-            let img = render::shade_and_downsample(
-                &buf.samples,
-                args.width,
-                args.height,
-                args.ss,
-                &palette,
-                &params,
-                pixel_spacing,
+        // Reject accounting is per composition-crop considered (= label units).
+        let considered = if args.all_compositions { comp_bf.len() } else { 1 };
+        rejected_black += considered - chosen.len();
+
+        for &(comp_name, comp_cx, comp_cy, bf) in &chosen {
+            let coverage = 1.0 - bf;
+            eprintln!(
+                "  seed {:04} draw {:04} ACCEPTED  comp={} black_frac={:.3} coverage={:.3}",
+                seed.keeper_index, seed.draw_index, comp_name, bf, coverage
             );
+            accepted += 1;
 
-            let safe_name =
-                pal_name.replace(['/', '\\', ' ', ':', '*', '?', '"', '<', '>', '|'], "_");
-            let fname = format!("{}_{}.png", seed.keeper_index, safe_name);
-            let out_path = run_dir.join(&fname);
-            img.save(&out_path)
-                .map_err(|e| format!("save {}: {e}", out_path.display()))?;
+            // --- full-res render (iterate once, recolor per palette) ---
+            let frame = Frame {
+                center: Complex::new(comp_cx, comp_cy),
+                frame_width: new_fw,
+                out_width: args.width,
+                out_height: args.height,
+            };
+            let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
+            let buf = render::iterate_samples_f64(&backend, &frame, args.ss, channels);
+            let pixel_spacing = new_fw / args.width as f64;
 
-            let out_str = out_path.to_string_lossy().into_owned();
+            for _ in 0..args.palettes_per_crop {
+                let pi = rng.below(library.len());
+                let cm = &library[pi];
+                let pal_name = &cm.name;
+                // Selective seam fix (parity with palette-score): SEQUENTIAL
+                // (`mirror_needed`) maps bake pre-mirrored out-and-back; cyclic maps
+                // stay single-pass. Density compensation rides on the palette's
+                // `density_scale` and is applied in shade.
+                let palette = Palette::from_srgb8_stops_mirrored(
+                    pal_name.clone(),
+                    &cm.stops,
+                    false,
+                    cm.mirror_needed,
+                );
+                let img = render::shade_and_downsample(
+                    &buf.samples,
+                    args.width,
+                    args.height,
+                    args.ss,
+                    &palette,
+                    &params,
+                    pixel_spacing,
+                );
 
-            let thumb =
-                image::imageops::resize(&img, SHEET_THUMB_W, SHEET_THUMB_H, FilterType::Triangle);
-            sheet_tiles.push(thumb);
+                let safe_name =
+                    pal_name.replace(['/', '\\', ' ', ':', '*', '?', '"', '<', '>', '|'], "_");
+                // Composition in the filename so (seed × composition × palette)
+                // crops never collide in all-compositions mode.
+                let fname = format!("{}_{}_{}.png", seed.keeper_index, comp_name, safe_name);
+                let out_path = run_dir.join(&fname);
+                img.save(&out_path)
+                    .map_err(|e| format!("save {}: {e}", out_path.display()))?;
 
-            crops.push(CropRecord {
-                seed_index: seed.keeper_index,
-                cx: comp_cx,
-                cy: comp_cy,
-                fw: new_fw,
-                composition: comp_name,
-                black_fraction: bf,
-                coverage,
-                palette: pal_name.clone(),
-                output: out_str,
-            });
+                let out_str = out_path.to_string_lossy().into_owned();
+
+                let thumb = image::imageops::resize(
+                    &img,
+                    SHEET_THUMB_W,
+                    SHEET_THUMB_H,
+                    FilterType::Triangle,
+                );
+                sheet_tiles.push(thumb);
+
+                crops.push(CropRecord {
+                    seed_index: seed.keeper_index,
+                    draw_index: seed.draw_index,
+                    interior_frac: seed.interior_frac,
+                    cx: comp_cx,
+                    cy: comp_cy,
+                    fw: new_fw,
+                    composition: comp_name,
+                    black_fraction: bf,
+                    coverage,
+                    palette: pal_name.clone(),
+                    output: out_str,
+                });
+            }
         }
     }
 
