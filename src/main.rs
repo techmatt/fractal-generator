@@ -23,6 +23,7 @@ use fractal_generator::energy;
 use fractal_generator::focus_diag;
 use fractal_generator::gate_diag;
 use fractal_generator::generate;
+use fractal_generator::guided_descend;
 use fractal_generator::maxiter_diag;
 use fractal_generator::navigate;
 use fractal_generator::palette_pick;
@@ -348,6 +349,7 @@ fn run() -> Result<(), String> {
         Some(Command::Generate(args)) => generate::run_generate(args),
         Some(Command::Present(args)) => present::run_present(args),
         Some(Command::Descend(args)) => descend::run_descend(args),
+        Some(Command::GuidedDescend(args)) => guided_descend::run_guided_descend(args),
         Some(Command::Navigate(args)) => navigate::run_navigate(args),
         Some(Command::Search(args)) => search::run_search(args),
         Some(Command::Corpus(args)) => corpus::run_corpus(args),

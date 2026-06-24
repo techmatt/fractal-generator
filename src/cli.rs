@@ -195,6 +195,13 @@ pub enum Command {
     Present(PresentArgs),
     /// Greedy Mandelbrot→Julia descent filmstrip + JSON (depth-falloff probe).
     Descend(DescendArgs),
+    /// Stochastic guided descent: many decorrelated root-down walks to random
+    /// depth, each step picking the next center by a probabilistic policy (mostly
+    /// into a detected μ-focus). Every visited frame is a candidate; emits a
+    /// candidate-pool sheet (by-walk ladders + flat grid) + `pool.jsonl` under
+    /// `data/guided_descend/<run>/`. Geometric policies only — no CNN, no dedup,
+    /// no prefix-sharing. Diagnosis-first; `generate` is left intact as the control.
+    GuidedDescend(GuidedDescendArgs),
     /// Deterministic feature navigation (atom-domain + Newton nuclei) filmstrip.
     Navigate(NavigateArgs),
     /// Best-first frontier search (beam + backtracking + diversity) over a tree
@@ -2682,6 +2689,156 @@ impl GenerateArgs {
     }
 }
 
+/// `guided-descend` subcommand: see `guided_descend::run_guided_descend`.
+/// Stochastic guided descent from the fixed base-Mandelbrot root; geometric
+/// policy only (no CNN). Reuses the `generate` cheap screen + `AcceptBand` and a
+/// freshly-built μ scale-space focus finder.
+#[derive(Args, Debug)]
+pub struct GuidedDescendArgs {
+    /// Number of independent, decorrelated walks (each starts at the root).
+    #[arg(long, default_value_t = 80)]
+    pub n_walks: usize,
+
+    /// Minimum terminal walk depth (inclusive).
+    #[arg(long, default_value_t = 2)]
+    pub depth_min: u32,
+
+    /// Maximum terminal walk depth (inclusive).
+    #[arg(long, default_value_t = 6)]
+    pub depth_max: u32,
+
+    /// Per-step zoom factor (`child.fw = parent.fw × this`). Applies to the
+    /// normal mid-descent steps (depth ≥ 2); the root step uses `--root-zoom`.
+    #[arg(long, default_value_t = 0.4)]
+    pub zoom_per_step: f64,
+
+    /// Root-step zoom factor (the first jump is its own thing — base fw 3.0 ×
+    /// this → depth-1 window). Default 0.08 ⇒ depth-1 fw ≈ 0.24. Much bigger than
+    /// a mid-descent step because the root is the whole Mandelbrot view.
+    #[arg(long, default_value_t = 0.08)]
+    pub root_zoom: f64,
+
+    /// Target-policy weight: descend into a detected μ-focus (renormalized).
+    #[arg(long, default_value_t = 0.85)]
+    pub w_foci: f64,
+
+    /// Target-policy weight: descend into the energy-weighted density focus.
+    #[arg(long, default_value_t = 0.10)]
+    pub w_density: f64,
+
+    /// Target-policy weight: descend into a random interior point (explore floor).
+    #[arg(long, default_value_t = 0.05)]
+    pub w_random: f64,
+
+    /// Placement mixture `center,horizon,random` (where the chosen target lands in
+    /// the child frame). Applied to the foci/density branches; the random branch
+    /// is always centered. Lowered center vs run0 (was 0.50,0.25,0.25) to
+    /// decorrelate the shallow layers — this is the repetition dial.
+    #[arg(long, default_value = "0.25,0.40,0.35")]
+    pub placement: String,
+
+    /// Focus-finder σ band in field px (comma-separated). Persistence is measured
+    /// within this band; the sampling score is peak×isolation (NOT persistence).
+    #[arg(long, default_value = "16,20,24,28,32")]
+    pub sigma_band: String,
+
+    /// Cheap field/screen render width in px (height follows 16:9, ss1). Drives
+    /// both the AcceptBand screen and the μ-field the focus finder reads. Default
+    /// 768 so the σ band {16..32} runs at the frame-fraction it was tuned at
+    /// (run0 ran 256 → σ ~3× too coarse). Alias `--node-size`.
+    #[arg(long, alias = "node-size", default_value_t = 768)]
+    pub node_width: u32,
+
+    /// Preview render width in px (height follows 16:9, ss1).
+    #[arg(long, default_value_t = 640)]
+    pub preview_width: u32,
+
+    /// Preview colormap name (from the colormaps JSON) — diagnostic only.
+    #[arg(long, default_value = "cubehelix")]
+    pub preview_palette: String,
+
+    /// Colormap library JSON (for the preview palette).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Maximum iterations for the field/screen and preview renders.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Accept-band override: middle-90% smooth-iter spread floor.
+    #[arg(long)]
+    pub spread_min: Option<f64>,
+
+    /// Accept-band override: interior (max-iter) fraction cap.
+    #[arg(long)]
+    pub interior_max: Option<f64>,
+
+    /// Accept-band override: escape-median smooth-iter floor.
+    #[arg(long)]
+    pub esc_median_min: Option<f64>,
+
+    /// Flat-grid PNG columns.
+    #[arg(long, default_value_t = 10)]
+    pub cols: usize,
+
+    /// SplitMix64 seed (deterministic).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Output directory (`pool_sheet.html`, `pool.jsonl`, `pool_grid.png`,
+    /// `tiles/`). Outside `out/` — durable. Use a distinct dir per run.
+    #[arg(long, default_value = "data/guided_descend/run1")]
+    pub out_dir: String,
+}
+
+impl GuidedDescendArgs {
+    /// Effective accept band (each clause flag-overridable; shared default).
+    pub fn band(&self) -> crate::generate::AcceptBand {
+        let d = crate::generate::AcceptBand::default();
+        crate::generate::AcceptBand {
+            spread_min: self.spread_min.unwrap_or(d.spread_min),
+            interior_max: self.interior_max.unwrap_or(d.interior_max),
+            esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
+        }
+    }
+
+    /// Parse `--placement` (`center,horizon,random`) raw weights (un-normalized).
+    pub fn resolved_placement(&self) -> Result<(f64, f64, f64), String> {
+        let p: Vec<&str> = self.placement.split(',').collect();
+        if p.len() != 3 {
+            return Err(format!("invalid --placement '{}', expected center,horizon,random", self.placement));
+        }
+        let parse = |s: &str| -> Result<f64, String> {
+            s.trim().parse::<f64>().map_err(|_| format!("invalid --placement value '{}'", s.trim()))
+        };
+        let (c, h, r) = (parse(p[0])?, parse(p[1])?, parse(p[2])?);
+        if c < 0.0 || h < 0.0 || r < 0.0 || c + h + r <= 0.0 {
+            return Err("--placement weights must be non-negative and sum > 0".into());
+        }
+        Ok((c, h, r))
+    }
+
+    /// Parse `--sigma-band` (comma-separated px) into ascending σ values.
+    pub fn resolved_sigmas(&self) -> Result<Vec<f64>, String> {
+        let mut v: Vec<f64> = Vec::new();
+        for s in self.sigma_band.split(',') {
+            let x: f64 = s.trim().parse().map_err(|_| format!("invalid --sigma-band value '{}'", s.trim()))?;
+            if x <= 0.0 {
+                return Err(format!("--sigma-band values must be > 0 (got {x})"));
+            }
+            v.push(x);
+        }
+        if v.is_empty() {
+            return Err("--sigma-band is empty".into());
+        }
+        Ok(v)
+    }
+}
+
 /// `present` subcommand: see `present::run_present`. Takes a `locations.jsonl`
 /// from a `generate` run and produces presentation-ready crops. Zooms in on each
 /// seed center, tries three composition offsets at cheap 320×180 resolution,
@@ -2748,11 +2905,11 @@ pub struct PresentArgs {
     /// **before** palettes: discard the (seed × composition) crop if its
     /// occupancy (fraction of 32×18 tiles with mean edge energy > 0.010) is below
     /// this. `0` disables the gate (legacy behaviour). The loose0 calibration
-    /// floor was 0.23; gate-diag (loose0_v3) raised it to 0.321 — the low
-    /// occupancy tail's bottom decile is ~96% doomed (geo_label==1) and holds
-    /// zero label-3 crops (min label-3 occupancy 0.4184), so 0.321 rejects ~52
-    /// geometries at zero good-crop cost.
-    #[arg(long, default_value_t = 0.0)]
+    /// floor was 0.23; gate-diag (loose0_v3) raised it to 0.321 (now the
+    /// default) — the low occupancy tail's bottom decile is ~96% doomed
+    /// (geo_label==1) and holds zero label-3 crops (min label-3 occupancy
+    /// 0.4184), so 0.321 rejects ~52 geometries at zero good-crop cost.
+    #[arg(long, default_value_t = 0.321)]
     pub occupancy_floor: f64,
 
     /// Output image format for emitted crops: `png` or `jpg`.

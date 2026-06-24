@@ -43,6 +43,7 @@ pub mod focus_diag;
 pub mod font;
 pub mod gate_diag;
 pub mod generate;
+pub mod guided_descend;
 pub mod hp;
 pub mod maxiter_diag;
 pub mod navigate;
