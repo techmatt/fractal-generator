@@ -34,6 +34,10 @@ target
 __pycache__/
 *.pyc
 
+# Python uv environment (see CLAUDE.md "Python / uv"). The venv is regenerable
+# from pyproject.toml + uv.lock via `uv sync` — both of those ARE committed.
+/.venv/
+
 # All generated artifacts live under the single out/ tree (see CLAUDE.md,
 # "Generated-output convention"). Ignore the whole tree but keep its anchor so
 # the directory survives a clean checkout. This blanket rule subsumes the old

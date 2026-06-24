@@ -1,0 +1,26 @@
+[project]
+name = "fractal-generator-ml"
+version = "0.1.0"
+description = "Python ML tooling for the fractal-generator aesthetic classifier (finetune stage of the generate→present→label→finetune→bias loop)."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    # Pinned to the versions already in uv's global cache (from C:\Code\video-to-photo)
+    # so `uv sync` hardlinks the cu124 torch wheels instead of re-downloading them.
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "timm==1.0.27",
+    "scikit-learn==1.8.0",
+    "Pillow==12.2.0",
+    "numpy",
+]
+
+# torch/torchvision are pulled from the PyTorch CUDA index below (cu124 build),
+# not PyPI's default CPU build. Mirrors the video-to-photo setup.
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu124" }]
+torchvision = [{ index = "pytorch-cu124" }]

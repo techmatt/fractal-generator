@@ -75,3 +75,23 @@ The tree is `out/{renders,strips,search,corpus,wallpaper,demos}/`. Use `crate::e
 - Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png only), astro-float. The descend JSON is hand-rolled rather than pulling in serde.
 - Matt is expert (graphics + ML PhD) — be terse and precise; skip basics.
 - Module docs (`//!`) carry the real design rationale; read them before changing a module.
+
+## Python / uv
+
+The Rust engine is the core; Python is the ML/analysis side (corpus tooling, the
+aesthetic classifier, palette experiments). **Use `uv` for all Python, not bare
+`python`/`pip`/conda.** The project env is declared in root `pyproject.toml` +
+`uv.lock` (both committed); `.venv/` is gitignored and regenerable with `uv sync`.
+
+- Run things with **`uv run python …`** (or `uv run <tool>`) — never the global
+  `python` on PATH (that's base conda, no torch). Add deps with `uv add <pkg>`.
+- **GPU stack:** torch is the **cu124** build (`torch==2.6.0+cu124`,
+  `torchvision==0.21.0+cu124`) pulled from the `pytorch-cu124` index pinned in
+  `pyproject.toml` — not PyPI's CPU default. CUDA runs on the local RTX 2060 SUPER
+  (8 GB). `timm`, `scikit-learn`, `Pillow`, `numpy` round out the classifier stack.
+- Versions are pinned to match the `video-to-photo` project so uv's global cache
+  hardlinks the wheels (a full `uv sync` is seconds, no multi-GB torch download).
+  Keep them in lockstep when bumping.
+- The classifier lives in `classifier/`; its weights/metrics go to
+  `data/classifier/v1/` (gitignored under the `data/*` rule — expected for
+  weights/scratch).
