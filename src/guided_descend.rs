@@ -28,14 +28,17 @@
 //! thickets, per the `focus-field-concentration` finding; we keep it only as a
 //! reported attribute). Foci are sampled in proportion to that score.
 //!
-//! Root step is **special-cased** (rev1): foci at base scale are degenerate (the
-//! μ-finder has nothing to lock onto on the whole set), so the root→depth-1 jump
-//! is a **boundary-window sampler** instead — a high-res base field (`center
-//! (-0.5, 0)`, `fw 3.0`) rendered once, its near-boundary band (small-DE exterior
-//! pixels) taken, principal features excluded, and the depth-1 window center
-//! drawn from that band and placed at frame center with its own `--root-zoom`.
-//! Subsequent steps (depth ≥ 2) use the per-node finder + placement mixture.
-//! Decorrelation comes from the RNG stream; the base field is shared.
+//! Root step is a **50/50 sampler mixture** (rev4 Part A, `--root-mix`): with
+//! probability `root_mix` the depth-1 window is drawn from the durable 8192² smooth
+//! field ([`root_field`]) — uniformly among windows passing a two-sided escaped-μ
+//! criterion (the `score` seam) at `--root-zoom-8k` — and otherwise from the flat
+//! `generate` sampler verbatim (uniform-in-plane center × log-uniform shallow fw →
+//! cheap screen → `AcceptBand`), keeping its own sampled fw. **Both roots are
+//! permissive (≤80% black) and skip the occupancy floor** — the depth ≥ 2 set-
+//! avoidance guards do the tightening. This grafts the flat method's planar
+//! measure-uniformity onto descent at the root; rev4 Part B grafts it per-step
+//! (random near-boundary draws, FPS-spread foci, zoom jitter). Decorrelation comes
+//! from the RNG stream; the 8k field is shared across all runs.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -52,6 +55,7 @@ use crate::generate::{self, color_params};
 use crate::palette::Palette;
 use crate::probe::{self, SplitMix64};
 use crate::render::{self, Frame};
+use crate::root_field::{PassWindow, RootField};
 use crate::{hp, sheet};
 
 /// f64-safety sanity guard on the descended frame width. Depth ≤ 6 at 0.4×/step
@@ -71,30 +75,19 @@ const TOP_FOCI: usize = 16;
 /// reject set-dominated candidates before paying for the 768 node render.
 const PROBE_W: u32 = 128;
 
-/// Base-field render width for the root boundary sampler (height 16:9). A few
-/// thousand px — enough to resolve a clean near-boundary band. Rendered once,
-/// shared across all walks; shallow f64 (fw 3.0) so it is cheap.
-const BASE_FIELD_WIDTH: u32 = 2048;
-
-/// Near-boundary band cut: exterior pixels whose DE sits in the bottom this
-/// quantile of exterior DE (small DE ⇒ close to the set, not interior). Traces a
-/// thin boundary band the root window is sampled from.
+/// Near-boundary band cut (rev4 B2 + flat-root screens are elsewhere): exterior
+/// pixels whose DE sits in the bottom this quantile of exterior DE (small DE ⇒
+/// close to the set, not interior). Traces a thin boundary band the per-step
+/// `random` branch samples from. (The rev1–3 5-feature exclusion list is retired:
+/// the ≤80%-black root gate subsumes it.)
 const BOUNDARY_DE_PCT: f64 = 0.12;
 
-/// Known principal features excluded from root sampling (Matt wants fresh
-/// regions, not the clichés): main-cardioid cusp, period-2 cusp / seahorse neck,
-/// west antenna tip, the two period-3 bulb cusps. **Starting point — refine after
-/// seeing the pool.**
-const EXCLUDE_FEATURES: &[(f64, f64)] = &[
-    (0.25, 0.0),     // main-cardioid cusp
-    (-0.75, 0.0),    // period-2 cusp / seahorse neck
-    (-2.0, 0.0),     // west antenna tip
-    (-0.125, 0.74),  // period-3 bulb cusp (upper)
-    (-0.125, -0.74), // period-3 bulb cusp (lower)
-];
+/// Window-scan stride as a fraction of window height (8k root). Half-window stride
+/// gives broad spatial coverage of passing windows without an integral image.
+const SCAN_STRIDE_FRAC: f64 = 0.5;
 
-/// Plane-unit radius of the exclusion disk around each principal feature.
-const EXCLUDE_R: f64 = 0.12;
+/// Max redraw attempts for either root sampler before a walk's root step dies.
+const ROOT_MAX_TRIES: usize = 4000;
 
 /// Which policy branch chose a step's target.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -183,6 +176,8 @@ struct Candidate {
     walk: usize,
     depth: u32,
     target_depth: u32,
+    /// Which root sampler seeded this walk ("8k" | "flat") — the attribution facet.
+    root_src: &'static str,
     branch: &'static str,
     placement: &'static str,
     /// Sampling score of the focus that produced this frame (NaN for density/random).
@@ -217,9 +212,22 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let plsum = pl_center + pl_horizon + pl_random;
     let sigmas = args.resolved_sigmas()?;
     let band = args.band();
+    // rev4 root-mixture + Part-B graft config.
+    let root_mix = args.root_mix.clamp(0.0, 1.0);
+    let (zoom_lo, zoom_hi) = args.resolved_zoom_band()?;
+    let flat_box = args.resolved_flat_box()?;
+    if args.flat_fw_lo <= 0.0 || args.flat_fw_hi <= args.flat_fw_lo {
+        return Err(format!(
+            "need 0 < flat_fw_lo < flat_fw_hi (got {}, {})",
+            args.flat_fw_lo, args.flat_fw_hi
+        ));
+    }
+    let score_cfg = args.root8k_score_cfg();
 
     let node_w = args.node_width.max(16);
     let node_h = (node_w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
+    // rev4 B3 diversity radius in node px (0 ⇒ disabled).
+    let foci_div_px = (args.foci_diversity_radius.max(0.0)) * node_w as f64;
     let prev_w = args.preview_width.max(16);
     let prev_h = (prev_w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
 
@@ -257,8 +265,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // palette-invariant to <1%; same palette `density_focus`/`present` shade with).
     let gate_palette = crate::palette::builtin("default", false).expect("default palette");
 
-    // The fixed root: full Mandelbrot view (conceptual parent of every walk; its
-    // fw seeds the root jump). Per-node renders use `node_w`.
+    // The conceptual root frame (full Mandelbrot view) — only the initial `parent`
+    // placeholder; rev4's depth-1 step ignores it (the root mixture sets its own
+    // center+fw). Per-node renders use `node_w`.
     let root = Frame {
         center: Complex::new(-0.5, 0.0),
         frame_width: 3.0,
@@ -266,14 +275,20 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         out_height: node_h,
     };
     eprintln!(
-        "guided-descend (rev3): {} walks, depth [{},{}], zoom/step {}, root-zoom {}, seed {}\n  \
-         weights foci/density/random = {:.2}/{:.2}/{:.2}, placement {:.2}/{:.2}/{:.2}, \
-         sigma {:?}\n  node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
-         descent culls: flat spread>={} + instant-escape esc_med>={}\n  \
+        "guided-descend (rev4): {} walks, depth [{},{}], zoom/step log-uniform [{},{}], seed {}\n  \
+         root-mix {:.2} (8k vs flat); 8k root-zoom {} + criterion black<={} mean[{},{}] var>={}; \
+         flat box {:?} fw[{},{}] screen {}px\n  \
+         weights foci/density/random = {:.2}/{:.2}/{:.2}, placement {:.2}/{:.2}/{:.2}, sigma {:?}, \
+         foci-diversity {:.0}px, random-boundary {}\n  \
+         node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
+         descent culls (depth>=2): flat spread>={} + instant-escape esc_med>={}\n  \
          best-of-{}: Stage-1 interior-cap {} (probe {}px), Stage-2 occ-floor {} (@{}px), select min-interior",
-        args.n_walks, args.depth_min, args.depth_max, args.zoom_per_step, args.root_zoom, args.seed,
+        args.n_walks, args.depth_min, args.depth_max, zoom_lo, zoom_hi, args.seed,
+        root_mix, args.root_zoom_8k, score_cfg.black_max, score_cfg.mean_lo, score_cfg.mean_hi, score_cfg.var_floor,
+        flat_box, args.flat_fw_lo, args.flat_fw_hi, args.flat_screen_width,
         p_foci, p_density, 1.0 - p_foci - p_density,
         pl_center / plsum, pl_horizon / plsum, pl_random / plsum, sigmas,
+        foci_div_px, args.random_boundary,
         node_w, node_h, prev_w, prev_h, args.preview_palette, args.maxiter,
         band.spread_min, band.esc_median_min,
         args.descent_candidates.max(1),
@@ -293,24 +308,22 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     };
 
     let t0 = std::time::Instant::now();
-    // --- root boundary band: render the base field once at high res, take the
-    //     near-boundary (small-DE exterior) band, exclude principal features. ---
-    let base_w = BASE_FIELD_WIDTH;
-    let base_h = (base_w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
-    let base_frame = Frame {
-        center: root.center,
-        frame_width: root.frame_width,
-        out_width: base_w,
-        out_height: base_h,
-    };
-    let base_buf = render_node(&base_frame);
-    let boundary = build_boundary_band(&base_buf.samples, base_w as usize, base_h as usize, &base_frame);
+    // --- rev4 A1: load (or build+cache) the durable 8k smooth field, then scan it
+    //     once for windows passing the score seam at the 8k root zoom. ---
+    let rf: RootField = RootField::load_or_build(args.maxiter, args.bailout, trap)?;
+    // 8k window footprint at root-zoom-8k (16:9 to match the node aspect).
+    let win_w = ((args.root_zoom_8k / (rf.re_hi - rf.re_lo)) * rf.w as f64).round().max(1.0) as usize;
+    let win_h = ((args.root_zoom_8k * node_h as f64 / node_w as f64 / (rf.im_hi - rf.im_lo)) * rf.h as f64)
+        .round()
+        .max(1.0) as usize;
+    let stride = ((win_h as f64) * SCAN_STRIDE_FRAC).round().max(1.0) as usize;
+    let windows: Vec<PassWindow> = rf.passing_windows(win_w, win_h, stride, &score_cfg);
     eprintln!(
-        "  base field {}x{} + boundary band in {:.2}s ({} band px after exclusion)",
-        base_w, base_h, t0.elapsed().as_secs_f64(), boundary.len()
+        "  8k field ready in {:.2}s; scanned {}x{} windows (stride {}) → {} passing the score seam",
+        t0.elapsed().as_secs_f64(), win_w, win_h, stride, windows.len()
     );
-    if boundary.is_empty() {
-        return Err("root boundary band empty (DE cut + exclusion left nothing)".into());
+    if windows.is_empty() && root_mix > 0.0 {
+        return Err("8k root window scan left nothing — loosen --root8k-* criterion".into());
     }
 
     // Best-of-N screen config (shared across every step of every walk).
@@ -328,12 +341,25 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         params: &params,
     };
 
+    // Part-0: the occ floor over-fires at the depth-1→2 transition. Unless the
+    // legacy `--descent-occ-at-d1d2` flag is set, the d1→d2 step uses a screen
+    // variant with the occupancy floor disabled (Stage-1 interior cap and
+    // least-interior selection are still in force); d≥3 keeps the full screen.
+    let screen_d1d2 = StepScreen { occ_on: false, ..screen };
+    let skip_occ_d1d2 = !args.descent_occ_at_d1d2;
+    if skip_occ_d1d2 && occ_on {
+        eprintln!("  occ floor SKIPPED at d1→d2 step (Part-0 fix); active for d>=3");
+    }
+
     let mut rng = SplitMix64(args.seed);
     let mut cands: Vec<Candidate> = Vec::new();
     // Per-walk reached depth + intended target (for the ladder view + died-early count).
     let mut walk_reached: Vec<(u32, u32)> = Vec::with_capacity(args.n_walks);
     let mut branch_counts = [0usize; 3]; // foci, density, random
-    let mut root_count = 0usize; // depth-1 boundary-sampled steps
+    let mut root8k_count = 0usize; // depth-1 nodes seeded by the 8k field
+    let mut rootflat_count = 0usize; // depth-1 nodes seeded by the flat sampler
+    // Per-walk root sampler ("8k" | "flat" | "" if the root died) for attribution.
+    let mut walk_root_src: Vec<&'static str> = Vec::with_capacity(args.n_walks);
     let mut died_early = 0usize;
     // End-of-walk cause: [ReachedTerminalDepth, BlackCapExhausted, OccFloorExhausted, DegenerateExhausted].
     let mut cause_counts = [0usize; 4];
@@ -350,27 +376,30 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         let mut reached = 0u32;
         // Walk completed unless a step dies; the dying step overwrites this.
         let mut end_cause = EndCause::ReachedTerminalDepth;
+        // The root sampler this walk drew (set on the depth-1 step; "" if it died).
+        let mut cur_root_src: &'static str = "";
 
         for d in 1..=target {
-            // Best-of-N: draw `screen.n_cand` candidates from the per-node policy
-            // (root step = boundary sampler; depth ≥ 2 = focus/density/random), two-
-            // stage screen each, and select the least-set survivor. Provenance
-            // (branch/placement/focus_score) rides on each StepCand.
             let result = if d == 1 {
-                // --- ROOT STEP (rev1): boundary-window sampler, own zoom, centered. ---
-                let new_fw = parent.frame_width * args.root_zoom;
-                if new_fw < FW_FLOOR {
-                    StepResult::Died(EndCause::DegenerateExhausted)
+                // --- ROOT STEP (rev4 Part A): 50/50 sampler mixture, permissive
+                //     (≤80% black), occupancy floor NOT applied. ---
+                if rng.unit() < root_mix {
+                    cur_root_src = "8k";
+                    root_step_8k(
+                        &windows, args.root_zoom_8k, node_w, node_h, args.maxiter,
+                        score_cfg.black_max, &render_node, &mut rng,
+                    )
                 } else {
-                    let mut gen = || -> Option<StepCand> {
-                        let center = sample_boundary(&boundary, &mut rng)?;
-                        Some(StepCand { center, branch: "root", placement: "center", fscore: f64::NAN })
-                    };
-                    best_of_n_step(&screen, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects)
+                    cur_root_src = "flat";
+                    root_step_flat(
+                        flat_box, args.flat_fw_lo, args.flat_fw_hi, args.flat_screen_width,
+                        &band, node_w, node_h, args.maxiter, &render_node, &mut rng,
+                    )
                 }
             } else {
-                // --- NORMAL STEP (depth ≥ 2): per-node finder + placement. ---
-                let new_fw = parent.frame_width * args.zoom_per_step;
+                // --- NORMAL STEP (depth ≥ 2): per-node finder + placement, unchanged
+                //     rev3 best-of-N set-avoidance; rev4 B4 jitters the zoom. ---
+                let new_fw = parent.frame_width * sample_log_uniform(zoom_lo, zoom_hi, &mut rng);
                 if new_fw < FW_FLOOR {
                     StepResult::Died(EndCause::DegenerateExhausted)
                 } else {
@@ -380,7 +409,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     let mut gen = || -> Option<StepCand> {
                         let (focus, branch, fscore) = pick_target(
                             &parent, parent_samples, node_w as usize, node_h as usize, &sigmas,
-                            (p_foci, p_density), &mut rng,
+                            (p_foci, p_density), foci_div_px, args.random_boundary, &mut rng,
                         );
                         let placement = if branch == Branch::Random {
                             Placement::Center
@@ -390,7 +419,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         let center = child_center(focus, placement, new_fw, new_fh, &mut rng);
                         Some(StepCand { center, branch: branch.name(), placement: placement.name(), fscore })
                     };
-                    best_of_n_step(&screen, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects)
+                    // Part-0: skip the occ floor at the depth-1→2 step.
+                    let step_screen = if d == 2 && skip_occ_d1d2 { &screen_d1d2 } else { &screen };
+                    best_of_n_step(step_screen, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects)
                 }
             };
 
@@ -400,7 +431,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         "foci" => branch_counts[0] += 1,
                         "density" => branch_counts[1] += 1,
                         "random" => branch_counts[2] += 1,
-                        _ => root_count += 1, // "root"
+                        "root8k" => root8k_count += 1,
+                        _ => rootflat_count += 1, // "rootflat"
                     }
                     chosen_interiors.push(interior);
                     cands.push(Candidate {
@@ -408,6 +440,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         walk: w,
                         depth: d,
                         target_depth: target,
+                        root_src: cur_root_src,
                         branch,
                         placement,
                         focus_score: fscore,
@@ -426,6 +459,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 }
             }
         }
+        walk_root_src.push(cur_root_src);
 
         cause_counts[match end_cause {
             EndCause::ReachedTerminalDepth => 0,
@@ -489,9 +523,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         let _ = writeln!(
             jsonl,
             "{{ \"idx\": {}, \"walk\": {}, \"depth\": {}, \"target_depth\": {}, \
-             \"branch\": \"{}\", \"placement\": \"{}\", \"focus_score\": {}, \
+             \"root_src\": \"{}\", \"branch\": \"{}\", \"placement\": \"{}\", \"focus_score\": {}, \
              \"cx\": {}, \"cy\": {}, \"fw\": {}, \"png\": \"{}\" }}",
-            c.idx, c.walk, c.depth, c.target_depth, c.branch, c.placement,
+            c.idx, c.walk, c.depth, c.target_depth, c.root_src, c.branch, c.placement,
             jnum(c.focus_score), jnum(c.cx), jnum(c.cy), jnum(c.fw), c.png,
         );
     }
@@ -511,9 +545,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // --- pool_sheet.html (the deliverable Matt judges) ---
     let ci = interior_summary(&chosen_interiors);
     let html = build_html(
-        &cands, &walk_reached, &branch_counts, root_count, died_early, &cause_counts,
-        black_rejects, black_cap_on, black_cap, occ_rejects, occ_on, occ_floor, &ci,
-        args, &sigmas,
+        &cands, &walk_reached, &walk_root_src, &branch_counts, root8k_count, rootflat_count,
+        died_early, &cause_counts, black_rejects, black_cap_on, black_cap, occ_rejects, occ_on,
+        occ_floor, &ci, args, &sigmas, zoom_lo, zoom_hi,
     );
     let html_path = out_dir.join("pool_sheet.html");
     std::fs::write(&html_path, html).map_err(|e| format!("write pool_sheet.html: {e}"))?;
@@ -530,14 +564,33 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // --- repetition: most-repeated emitted frame (round center+fw). ---
     let (top_mult, n_unique) = repetition(&cands);
 
-    println!("=== guided-descend (rev3) ===");
+    // Realized root-mix split (attempted sampler per walk) + productive (reached≥1).
+    let n_8k = walk_root_src.iter().filter(|s| **s == "8k").count();
+    let n_flat = walk_root_src.iter().filter(|s| **s == "flat").count();
+    let (mut prod_8k, mut prod_flat) = (0usize, 0usize);
+    for (src, &(reached, _)) in walk_root_src.iter().zip(walk_reached.iter()) {
+        if reached >= 1 {
+            match *src {
+                "8k" => prod_8k += 1,
+                "flat" => prod_flat += 1,
+                _ => {}
+            }
+        }
+    }
+
+    println!("=== guided-descend (rev4) ===");
     println!(
         "seed={}  walks={}  candidates={}  best-of-{}",
         args.seed, args.n_walks, cands.len(), screen.n_cand
     );
     println!(
-        "branch breakdown: root={} foci={} density={} random={}",
-        root_count, branch_counts[0], branch_counts[1], branch_counts[2]
+        "realized root-mix (target {:.2}): 8k={}/{} walks (productive {}), flat={}/{} walks (productive {})",
+        root_mix, n_8k, args.n_walks, prod_8k, n_flat, args.n_walks, prod_flat
+    );
+    println!(
+        "branch breakdown: root8k={} rootflat={} foci={} density={} random={} (target foci/density/random {:.2}/{:.2}/{:.2})",
+        root8k_count, rootflat_count, branch_counts[0], branch_counts[1], branch_counts[2],
+        p_foci, p_density, 1.0 - p_foci - p_density,
     );
     print!("depth histogram (emitted, all visited frames):");
     for (d, n) in depth_hist.iter().enumerate().skip(1) {
@@ -571,7 +624,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     }
     println!();
     println!(
-        "root-window spread: {} depth-1 samples, center std (re,im) = ({:.3}, {:.3}) of fw-3.0 view",
+        "root-window spread: {} depth-1 samples, center std (re,im) = ({:.3}, {:.3}) over the full set view",
         roots.len(), rsx, rsy
     );
     println!(
@@ -699,11 +752,107 @@ fn best_of_n_step(
 }
 
 // ===========================================================================
+// rev4 Part A: root sampler mixture (both permissive, occ floor NOT applied)
+// ===========================================================================
+
+/// 8k-field root: sample a passing window uniformly, render the depth-1 node, and
+/// accept the first whose node-resolution black fraction is permissive (≤ `black_max`).
+/// The score-seam scan already enforced the criterion at 8k resolution, so this
+/// node-level recheck only catches the rare resolution-mismatch case.
+fn root_step_8k(
+    windows: &[PassWindow],
+    root_zoom_8k: f64,
+    node_w: u32,
+    node_h: u32,
+    maxiter: u32,
+    black_max: f64,
+    render_node: &impl Fn(&Frame) -> render::SampleBuffer,
+    rng: &mut SplitMix64,
+) -> StepResult {
+    if windows.is_empty() || root_zoom_8k < FW_FLOOR {
+        return StepResult::Died(EndCause::DegenerateExhausted);
+    }
+    for _ in 0..ROOT_MAX_TRIES {
+        let wn = windows[rng.below(windows.len())];
+        let frame = Frame {
+            center: wn.center,
+            frame_width: root_zoom_8k,
+            out_width: node_w,
+            out_height: node_h,
+        };
+        let buf = render_node(&frame);
+        if render::black_fraction(&buf.samples) as f64 <= black_max {
+            let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
+            return StepResult::Accepted(frame, buf, "root8k", "center", f64::NAN, int_frac);
+        }
+    }
+    StepResult::Died(EndCause::BlackCapExhausted)
+}
+
+/// Flat-sampler root (the prior `generate` method verbatim): draw a uniform-in-box
+/// center × log-uniform shallow fw, cheap-screen it against the (real) `AcceptBand`,
+/// and keep the first pass — that `(center, fw)` is the depth-1 start, with its own
+/// sampled fw. The node is then rendered as the depth-1 parent buffer.
+#[allow(clippy::too_many_arguments)]
+fn root_step_flat(
+    flat_box: (f64, f64, f64, f64),
+    fw_lo: f64,
+    fw_hi: f64,
+    screen_w: u32,
+    band: &crate::generate::AcceptBand,
+    node_w: u32,
+    node_h: u32,
+    maxiter: u32,
+    render_node: &impl Fn(&Frame) -> render::SampleBuffer,
+    rng: &mut SplitMix64,
+) -> StepResult {
+    let (re_lo, re_hi, im_lo, im_hi) = flat_box;
+    let (ln_lo, ln_hi) = (fw_lo.ln(), fw_hi.ln());
+    let screen_h = (screen_w as f64 * node_h as f64 / node_w as f64).round().max(1.0) as u32;
+    for _ in 0..ROOT_MAX_TRIES {
+        // Three draws per candidate (re, im, scale) — same order as `generate`.
+        let re = re_lo + rng.unit() * (re_hi - re_lo);
+        let im = im_lo + rng.unit() * (im_hi - im_lo);
+        let fw = (ln_lo + rng.unit() * (ln_hi - ln_lo)).exp();
+        if fw < FW_FLOOR {
+            continue;
+        }
+        let center = Complex::new(re, im);
+        let screen = Frame { center, frame_width: fw, out_width: screen_w, out_height: screen_h };
+        let sbuf = render_node(&screen);
+        let (int_frac, esc) = generate::screen_stats(&sbuf.samples, maxiter);
+        if !band.test(int_frac, esc.spread, esc.median).accepted {
+            continue;
+        }
+        // Passed the screen → render the depth-1 node at node resolution.
+        let frame = Frame { center, frame_width: fw, out_width: node_w, out_height: node_h };
+        let buf = render_node(&frame);
+        let (node_int, _esc) = generate::screen_stats(&buf.samples, maxiter);
+        return StepResult::Accepted(frame, buf, "rootflat", "center", f64::NAN, node_int);
+    }
+    StepResult::Died(EndCause::DegenerateExhausted)
+}
+
+/// Log-uniform draw in `[lo, hi]` (rev4 B4 per-step zoom jitter). `lo == hi` ⇒ `lo`.
+fn sample_log_uniform(lo: f64, hi: f64, rng: &mut SplitMix64) -> f64 {
+    if hi <= lo {
+        lo
+    } else {
+        (lo.ln() + rng.unit() * (hi.ln() - lo.ln())).exp()
+    }
+}
+
+// ===========================================================================
 // Policy: target selection
 // ===========================================================================
 
 /// Pick the next descent target on `parent`, returning the complex focus point,
 /// the branch that chose it, and (for the foci branch) the focus's sampling score.
+///
+/// rev4 grafts: foci candidates are value-ordered & distance-thresholded to a
+/// spatially-spread set (B3, `foci_div_px`) before score-weighted sampling; the
+/// `random` branch draws from the frame's near-boundary band rather than a uniform
+/// interior point (B2, `random_boundary`).
 #[allow(clippy::too_many_arguments)]
 fn pick_target(
     parent: &Frame,
@@ -712,6 +861,8 @@ fn pick_target(
     h: usize,
     sigmas: &[f64],
     (p_foci, p_density): (f64, f64),
+    foci_div_px: f64,
+    random_boundary: bool,
     rng: &mut SplitMix64,
 ) -> (Complex<f64>, Branch, f64) {
     let r = rng.unit();
@@ -725,7 +876,8 @@ fn pick_target(
 
     if branch == Branch::Foci {
         let foci = find_foci(samples, w, h, sigmas);
-        if let Some(f) = sample_focus(&foci, rng) {
+        let spread = spread_foci(&foci, foci_div_px);
+        if let Some(f) = sample_focus(&spread, rng) {
             return (pixel_to_complex(parent, f.px, f.py), Branch::Foci, f.score);
         }
         branch = Branch::Density; // foci empty → density fallthrough
@@ -733,7 +885,50 @@ fn pick_target(
 
     match branch {
         Branch::Density => (density_focus(parent, samples, w, h), Branch::Density, f64::NAN),
-        _ => (random_interior_point(parent, rng), Branch::Random, f64::NAN),
+        _ => {
+            let pt = if random_boundary {
+                frame_boundary_point(parent, samples, w, h, rng)
+            } else {
+                random_interior_point(parent, rng)
+            };
+            (pt, Branch::Random, f64::NAN)
+        }
+    }
+}
+
+/// rev4 B3: value-ordered, distance-thresholded suppression. `foci` arrive sorted
+/// by score (desc); keep each only if it is ≥ `radius_px` from every higher-scoring
+/// kept focus, so the densest-ridge peak stops dominating the score-weighted draw.
+/// `radius_px ≤ 0` disables (returns the input order). Node pixels are square in the
+/// plane, so field-px Euclidean distance is already aspect-correct.
+fn spread_foci(foci: &[Focus], radius_px: f64) -> Vec<Focus> {
+    if radius_px <= 0.0 || foci.len() < 2 {
+        return foci.to_vec();
+    }
+    let r2 = radius_px * radius_px;
+    let mut kept: Vec<Focus> = Vec::new();
+    for &f in foci {
+        if kept.iter().all(|k| (k.px - f.px).powi(2) + (k.py - f.py).powi(2) > r2) {
+            kept.push(f);
+        }
+    }
+    kept
+}
+
+/// rev4 B2: draw a uniform point from the frame's near-boundary band (exterior
+/// pixels in the bottom [`BOUNDARY_DE_PCT`] of exterior DE). Falls back to a random
+/// interior point if the frame has no usable boundary band (e.g. all-interior).
+fn frame_boundary_point(
+    parent: &Frame,
+    samples: &[crate::backend::PixelSample],
+    w: usize,
+    h: usize,
+    rng: &mut SplitMix64,
+) -> Complex<f64> {
+    let band = build_boundary_band(samples, w, h, parent);
+    match sample_boundary(&band, rng) {
+        Some(c) => c,
+        None => random_interior_point(parent, rng),
     }
 }
 
@@ -807,11 +1002,11 @@ fn random_interior_point(parent: &Frame, rng: &mut SplitMix64) -> Complex<f64> {
     Complex::new(parent.center.re + (u - 0.5) * parent.frame_width, parent.center.im + (0.5 - v) * fh)
 }
 
-/// Build the root near-boundary band: complex coords of exterior pixels whose DE
+/// Build a frame's near-boundary band: complex coords of exterior pixels whose DE
 /// sits in the bottom [`BOUNDARY_DE_PCT`] of exterior DE (close to the set but not
-/// interior), excluding disks around the known principal features. The depth-1
-/// window center is drawn uniformly from this band — uniform over a small-DE band
-/// is already boundary-biased, so no extra DE weighting.
+/// interior). The rev4 B2 `random` branch draws uniformly from this band — uniform
+/// over a small-DE band is already boundary-biased, so no extra DE weighting. (The
+/// rev1–3 principal-feature exclusion list is retired with the boundary-sampler root.)
 fn build_boundary_band(
     samples: &[crate::backend::PixelSample],
     w: usize,
@@ -832,25 +1027,14 @@ fn build_boundary_band(
         for x in 0..w {
             let s = &samples[y * w + x];
             if s.escaped && s.de > 0.0 && s.de <= thresh {
-                let c = pixel_to_complex(frame, x as f64, y as f64);
-                if !excluded_feature(c) {
-                    band.push(c);
-                }
+                band.push(pixel_to_complex(frame, x as f64, y as f64));
             }
         }
     }
     band
 }
 
-/// Is `c` within an exclusion disk of any principal feature?
-fn excluded_feature(c: Complex<f64>) -> bool {
-    let r2 = EXCLUDE_R * EXCLUDE_R;
-    EXCLUDE_FEATURES
-        .iter()
-        .any(|&(fx, fy)| (c.re - fx).powi(2) + (c.im - fy).powi(2) <= r2)
-}
-
-/// Draw one root-window center uniformly from the boundary band.
+/// Draw one center uniformly from a near-boundary band.
 fn sample_boundary(band: &[Complex<f64>], rng: &mut SplitMix64) -> Option<Complex<f64>> {
     if band.is_empty() {
         None
@@ -1278,8 +1462,10 @@ fn annotate(th: &mut RgbImage, c: &Candidate) {
 fn build_html(
     cands: &[Candidate],
     walk_reached: &[(u32, u32)],
+    walk_root_src: &[&'static str],
     branch_counts: &[usize; 3],
-    root_count: usize,
+    root8k_count: usize,
+    rootflat_count: usize,
     died_early: usize,
     cause_counts: &[usize; 4],
     black_rejects: usize,
@@ -1291,7 +1477,11 @@ fn build_html(
     ci: &InteriorSummary,
     args: &GuidedDescendArgs,
     sigmas: &[f64],
+    zoom_lo: f64,
+    zoom_hi: f64,
 ) -> String {
+    let n_8k = walk_root_src.iter().filter(|s| **s == "8k").count();
+    let n_flat = walk_root_src.iter().filter(|s| **s == "flat").count();
     let roots: Vec<&Candidate> = cands.iter().filter(|c| c.depth == 1).collect();
     let (rsx, rsy) = root_spread(&roots);
     let (top_mult, n_unique) = repetition(cands);
@@ -1315,9 +1505,10 @@ fn build_html(
             nwalks += 1;
             let (reached, target) = walk_reached[w];
             let died = if reached < target { " <span class=died>DIED</span>" } else { "" };
+            let src = walk_root_src.get(w).copied().unwrap_or("");
             let _ = write!(
                 ladders,
-                "<div class=ladder><div class=lmeta>walk {w} · reached {reached}/{target}{died}</div><div class=lrow>"
+                "<div class=ladder><div class=lmeta>walk {w} · root {src} · reached {reached}/{target}{died}</div><div class=lrow>"
             );
             for c in &row {
                 let _ = write!(
@@ -1362,15 +1553,17 @@ figcaption{{padding:2px 5px;font-size:10px;color:#9aa;background:#12141a}}\
 .cap{{padding:2px 6px;font-size:10px;color:#9aa;background:#12141a}}\
 .cap b{{color:#5ec07a}}\
 </style></head><body>\
-<header><h1>guided-descend rev3 — candidate pool ({ncand} candidates)</h1>\
-<div class=note>{nwalks} walks emitting · best-of-{ncand_n} · branch root={rt} foci={bf} density={bd} random={br} · \
+<header><h1>guided-descend rev4 — candidate pool ({ncand} candidates)</h1>\
+<div class=note>{nwalks} walks emitting · best-of-{ncand_n} · \
+root-mix target {rmix:.2}: 8k {n8k}/{total} vs flat {nflat}/{total} walks · \
+branch root8k={r8} rootflat={rf} foci={bf} density={bd} random={br} (target {pf:.2}/{pd:.2}/{pr:.2}) · \
 depth: {dh}· walks died early {died}/{total} · \
 end-cause: terminal={ct} black-cap={cb} occ-floor={co} degenerate={cd} · \
 best-of-N rejects: black-cap {blk} ×{brk}, occ-floor {olk} ×{ork} · \
 chosen interior (drift check): med={cimed:.3} [{cimin:.3}..{cimax:.3}] p25/p75 {cip25:.3}/{cip75:.3} · \
-preview {pal} · root-zoom {rz} (depth-1 fw≈{d1fw:.3}) · \
+preview {pal} · 8k root-zoom {rz8} · zoom/step jitter [{zlo},{zhi}] · \
 root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max-rep ×{tmult} · \
-σ {sig:?} · zoom/step {zps} · seed {seed} · gates on black/interior + occupancy ONLY (no busyness axis) · \
+σ {sig:?} · seed {seed} · gates on black/interior + occupancy ONLY (no busyness axis) · \
 <b>no quality claims</b> — eyeball the sampling behaviour</div></header>\
 <h2>by walk — descent ladders (root→leaf left→right)</h2>{ladders}\
 <h2>flat pool ({ncand})</h2><div class=grid>{flat}</div>\
@@ -1378,10 +1571,17 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         ncand = cands.len(),
         ncand_n = args.descent_candidates.max(1),
         nwalks = nwalks,
-        rt = root_count,
+        rmix = args.root_mix.clamp(0.0, 1.0),
+        n8k = n_8k,
+        nflat = n_flat,
+        r8 = root8k_count,
+        rf = rootflat_count,
         bf = branch_counts[0],
         bd = branch_counts[1],
         br = branch_counts[2],
+        pf = args.w_foci.max(0.0) / (args.w_foci.max(0.0) + args.w_density.max(0.0) + args.w_random.max(0.0)),
+        pd = args.w_density.max(0.0) / (args.w_foci.max(0.0) + args.w_density.max(0.0) + args.w_random.max(0.0)),
+        pr = args.w_random.max(0.0) / (args.w_foci.max(0.0) + args.w_density.max(0.0) + args.w_random.max(0.0)),
         dh = dh,
         died = died_early,
         total = args.n_walks,
@@ -1399,14 +1599,14 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         cip25 = ci.p25,
         cip75 = ci.p75,
         pal = args.preview_palette,
-        rz = args.root_zoom,
-        d1fw = 3.0 * args.root_zoom,
+        rz8 = args.root_zoom_8k,
+        zlo = zoom_lo,
+        zhi = zoom_hi,
         rsx = rsx,
         rsy = rsy,
         nuniq = n_unique,
         tmult = top_mult,
         sig = sigmas,
-        zps = args.zoom_per_step,
         seed = args.seed,
         ladders = ladders,
         flat = flat,

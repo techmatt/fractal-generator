@@ -1,0 +1,74 @@
+{
+  "batch_id": "2026-06-23_flat_generate_loose0_v3",
+  "schema_version": 1,
+  "created": "2026-06-23",
+  "labeler": "matt",
+  "generator_version": "flat_generate",
+  "source_run": "data/generated/loose0/locations.jsonl",
+  "imported_from": "data/label_crops/loose0_v3",
+  "imported_labels_from": "labels/location_labels.json (key draw_index|composition|palette)",
+  "sampling_metaparameters": {
+    "lineage": "discovery-sampler probe 1 promoted to a generator",
+    "seed": 20260700,
+    "box": {
+      "re_lo": -2,
+      "re_hi": 0.7,
+      "im_lo": -1.2,
+      "im_hi": 1.2
+    },
+    "frame_width_range": {
+      "lo": 0.003,
+      "hi": 0.05,
+      "sampling": "log-uniform",
+      "geo_center": 0.012247448713915891
+    },
+    "screen_maxiter": 1000,
+    "accept_band": {
+      "spread_min": 20,
+      "interior_max": 0.8,
+      "esc_median_min": 3,
+      "note": "retuned against run0 hand-labels (two-sided: interior<=40% + spread floor in confirmed 23..86 gap); centralized one-place default, flag-overridable; per-clause margins logged per keeper; fit to 50 frames, re-check per batch"
+    },
+    "keepers_target": 200,
+    "keepers_produced": 200,
+    "root_mix": null,
+    "target_mix": null,
+    "zoom_band": null,
+    "depth_range": null,
+    "black_cap": null,
+    "candidates": null,
+    "fps_radius": null,
+    "root_zoom_8k": null,
+    "orbit_band": null
+  },
+  "present_gates": {
+    "black_thresh": 0.3,
+    "occupancy_floor": 0.23,
+    "edge_floor": 0.01,
+    "tile_grid": [
+      32,
+      18
+    ]
+  },
+  "render_defaults": {
+    "maxiter": 2000,
+    "width": 1280,
+    "height": 720,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "zoom_factor": 0.4,
+    "note": "ss=2 (present default; manifest render string mislabels it ss4). Lanczos-3 downsample."
+  },
+  "counts": {
+    "units": 1043,
+    "labeled": 1043,
+    "score_hist": {
+      "1": 783,
+      "2": 225,
+      "3": 35,
+      "None": 0
+    },
+    "crops_copied": 0
+  }
+}

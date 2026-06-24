@@ -12,6 +12,7 @@ dependencies = [
     "scikit-learn==1.8.0",
     "Pillow==12.2.0",
     "numpy",
+    "matplotlib>=3.11.0",
 ]
 
 # torch/torchvision are pulled from the PyTorch CUDA index below (cu124 build),

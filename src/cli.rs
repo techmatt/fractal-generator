@@ -2708,27 +2708,91 @@ pub struct GuidedDescendArgs {
     #[arg(long, default_value_t = 10)]
     pub depth_max: u32,
 
-    /// Per-step zoom factor (`child.fw = parent.fw × this`). Applies to the
-    /// normal mid-descent steps (depth ≥ 2); the root step uses `--root-zoom`.
+    /// LEGACY fixed per-step zoom (rev1–3). rev4 B4 samples the per-step zoom from
+    /// a log-uniform band `[--zoom-lo, --zoom-hi]` instead; this value is reported
+    /// as the nominal but no longer drives stepping. Set `--zoom-lo`=`--zoom-hi`=x
+    /// to ablate B4 back to a fixed x.
     #[arg(long, default_value_t = 0.4)]
     pub zoom_per_step: f64,
 
-    /// Root-step zoom factor (the first jump is its own thing — base fw 3.0 ×
-    /// this → depth-1 window). Default 0.08 ⇒ depth-1 fw ≈ 0.24. Much bigger than
-    /// a mid-descent step because the root is the whole Mandelbrot view.
+    /// rev4 B4: per-step zoom-jitter band, low edge. Each depth-≥2 step draws its
+    /// zoom log-uniform in `[zoom_lo, zoom_hi]` (default [0.35,0.50], centered near
+    /// the old fixed 0.4) — restores the flat method's scale diversity.
+    #[arg(long, default_value_t = 0.35)]
+    pub zoom_lo: f64,
+
+    /// rev4 B4: per-step zoom-jitter band, high edge.
+    #[arg(long, default_value_t = 0.50)]
+    pub zoom_hi: f64,
+
+    /// LEGACY (rev1–3 boundary-sampler root, retired in rev4). The root is now a
+    /// 50/50 sampler mixture (Part A); the 8k root uses `--root-zoom-8k` and the
+    /// flat root uses its own sampled fw. Kept only so old invocations still parse.
     #[arg(long, default_value_t = 0.08)]
     pub root_zoom: f64,
 
+    // --- rev4 Part A: root sampler mixture ------------------------------------
+    /// `P(8k-field root)` vs `P(flat-sampler root)` at depth-1 (rev4 Part A). 1.0 =
+    /// always the 8k field; 0.0 = always the flat sampler. Both emit a permissive
+    /// (≤80% black) depth-1 node, then hand to the same per-node descent loop.
+    #[arg(long, default_value_t = 0.5)]
+    pub root_mix: f64,
+
+    /// 8k-field root depth-1 frame width (rev4 A1, significant — past the old 0.24,
+    /// folds in "push past base"). At 0.10 the 8k field gives a ~234px window.
+    #[arg(long, default_value_t = 0.10)]
+    pub root_zoom_8k: f64,
+
+    /// 8k-root window criterion: max interior (black) fraction (rev4 A1, permissive;
+    /// subsumes the retired 5-feature exclusion list).
+    #[arg(long, default_value_t = 0.80)]
+    pub root8k_black_max: f64,
+
+    /// 8k-root window criterion: escaped smooth-iter mean lower bound (rejects empty
+    /// far-exterior). Stats over escaped pixels only.
+    #[arg(long, default_value_t = 8.0)]
+    pub root8k_mean_lo: f64,
+
+    /// 8k-root window criterion: escaped smooth-iter mean upper bound (rejects
+    /// set-dominated thickets).
+    #[arg(long, default_value_t = 120.0)]
+    pub root8k_mean_hi: f64,
+
+    /// 8k-root window criterion: escaped smooth-iter variance floor (not-flat).
+    #[arg(long, default_value_t = 6.0)]
+    pub root8k_var_floor: f64,
+
+    // --- rev4 Part A2: flat-sampler root (the prior `generate` method) ---------
+    /// Flat-root center box `re_lo,re_hi,im_lo,im_hi` (rev4 A2 — reuses `generate`'s
+    /// uniform-in-plane box verbatim).
+    #[arg(long = "flat-box", default_value = "-2.0,0.7,-1.2,1.2", allow_hyphen_values = true)]
+    pub flat_box: String,
+
+    /// Flat-root log-uniform fw range, low edge (reuses `generate`'s shallow range).
+    #[arg(long, default_value_t = 0.003)]
+    pub flat_fw_lo: f64,
+
+    /// Flat-root log-uniform fw range, high edge.
+    #[arg(long, default_value_t = 0.05)]
+    pub flat_fw_hi: f64,
+
+    /// Flat-root cheap-screen render width (height 16:9, ss1) — reuses `generate`'s
+    /// screen + `AcceptBand`.
+    #[arg(long, default_value_t = 320)]
+    pub flat_screen_width: u32,
+
     /// Target-policy weight: descend into a detected μ-focus (renormalized).
-    #[arg(long, default_value_t = 0.85)]
+    /// rev4 B1: lowered 0.85→0.70 (raise measure-uniformity via `random`).
+    #[arg(long, default_value_t = 0.70)]
     pub w_foci: f64,
 
     /// Target-policy weight: descend into the energy-weighted density focus.
     #[arg(long, default_value_t = 0.10)]
     pub w_density: f64,
 
-    /// Target-policy weight: descend into a random interior point (explore floor).
-    #[arg(long, default_value_t = 0.05)]
+    /// Target-policy weight: descend into a near-boundary-band point (rev4 B2 —
+    /// the per-step measure-uniformity injection). rev4 B1: raised 0.05→0.20.
+    #[arg(long, default_value_t = 0.20)]
     pub w_random: f64,
 
     /// Placement mixture `center,horizon,random` (where the chosen target lands in
@@ -2742,6 +2806,20 @@ pub struct GuidedDescendArgs {
     /// within this band; the sampling score is peak×isolation (NOT persistence).
     #[arg(long, default_value = "16,20,24,28,32")]
     pub sigma_band: String,
+
+    /// rev4 B3: foci-diversity radius as a fraction of the node frame width. Before
+    /// score-weighted sampling, foci are value-ordered and distance-thresholded (a
+    /// focus within this radius of an already-kept, higher-scoring focus is dropped)
+    /// so the densest-ridge peak stops dominating every step. 0 disables (ablate B3
+    /// → plain top-score sampling).
+    #[arg(long, default_value_t = 0.12)]
+    pub foci_diversity_radius: f64,
+
+    /// rev4 B2: random branch draws from the current frame's near-boundary band
+    /// (exterior pixels near the set) instead of a uniform interior point. Default
+    /// on; `--random-boundary=false` ablates back to the rev3 interior point.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub random_boundary: bool,
 
     /// Cheap field/screen render width in px (height follows 16:9, ss1). Drives
     /// both the AcceptBand screen and the μ-field the focus finder reads. Default
@@ -2808,6 +2886,18 @@ pub struct GuidedDescendArgs {
     #[arg(long, default_value_t = 0.321)]
     pub descent_occ_floor: f64,
 
+    /// Apply the Stage-2 occupancy floor at the **depth-1→2** step too. The occ
+    /// floor over-fires at that first descent transition (12 of 17 run4 early
+    /// deaths were occ-floor kills at d1→d2 — the wide depth-1 root frame is still
+    /// resolving structure the tight depth-2 node hasn't entered yet). **Default
+    /// off:** the occ floor is skipped at d1→d2 and kept for every d≥3 step. Pass
+    /// this flag to restore the legacy behaviour (occ floor at every depth). The
+    /// Stage-1 interior cap and least-interior selection are unaffected at every
+    /// depth; the *presentation* occ floor (`present --occupancy-floor`) is a
+    /// separate, correctly-calibrated gate and is untouched by this flag.
+    #[arg(long, default_value_t = false)]
+    pub descent_occ_at_d1d2: bool,
+
     /// Flat-grid PNG columns.
     #[arg(long, default_value_t = 10)]
     pub cols: usize,
@@ -2818,7 +2908,7 @@ pub struct GuidedDescendArgs {
 
     /// Output directory (`pool_sheet.html`, `pool.jsonl`, `pool_grid.png`,
     /// `tiles/`). Outside `out/` — durable. Use a distinct dir per run.
-    #[arg(long, default_value = "data/guided_descend/run1")]
+    #[arg(long, default_value = "data/guided_descend/run4")]
     pub out_dir: String,
 }
 
@@ -2847,6 +2937,44 @@ impl GuidedDescendArgs {
             return Err("--placement weights must be non-negative and sum > 0".into());
         }
         Ok((c, h, r))
+    }
+
+    /// Parse `--flat-box` (`re_lo,re_hi,im_lo,im_hi`) for the flat-sampler root.
+    pub fn resolved_flat_box(&self) -> Result<(f64, f64, f64, f64), String> {
+        let p: Vec<&str> = self.flat_box.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --flat-box '{}', expected re_lo,re_hi,im_lo,im_hi", self.flat_box));
+        }
+        let parse = |s: &str, what: &str| -> Result<f64, String> {
+            s.trim().parse().map_err(|_| format!("invalid --flat-box {what} in '{}'", self.flat_box))
+        };
+        let (re_lo, re_hi, im_lo, im_hi) =
+            (parse(p[0], "re_lo")?, parse(p[1], "re_hi")?, parse(p[2], "im_lo")?, parse(p[3], "im_hi")?);
+        if re_hi <= re_lo || im_hi <= im_lo {
+            return Err(format!("--flat-box bounds must be lo < hi in '{}'", self.flat_box));
+        }
+        Ok((re_lo, re_hi, im_lo, im_hi))
+    }
+
+    /// The 8k-root window score config (the hand criterion's tunables).
+    pub fn root8k_score_cfg(&self) -> crate::root_field::ScoreCfg {
+        crate::root_field::ScoreCfg {
+            black_max: self.root8k_black_max,
+            mean_lo: self.root8k_mean_lo,
+            mean_hi: self.root8k_mean_hi,
+            var_floor: self.root8k_var_floor,
+        }
+    }
+
+    /// Resolved per-step zoom-jitter band `(lo, hi)` (rev4 B4). `lo==hi` ⇒ fixed.
+    pub fn resolved_zoom_band(&self) -> Result<(f64, f64), String> {
+        if self.zoom_lo <= 0.0 || self.zoom_hi <= 0.0 || self.zoom_hi < self.zoom_lo {
+            return Err(format!(
+                "need 0 < zoom_lo <= zoom_hi (got {}, {})",
+                self.zoom_lo, self.zoom_hi
+            ));
+        }
+        Ok((self.zoom_lo, self.zoom_hi))
     }
 
     /// Parse `--sigma-band` (comma-separated px) into ascending σ values.

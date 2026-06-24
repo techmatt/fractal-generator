@@ -53,3 +53,11 @@ __pycache__/
 !/data/palettes/clean_colormaps.json
 !/data/palettes/quarantined_colormaps.json
 !/data/palettes/quarantine_log.json
+# Permanent label corpus (see data/label_corpus/CORPUS_SCHEMA.md): commit the
+# tiny, irreplaceable metadata (schema, batch.json, images.jsonl, scores.json);
+# gitignore crops/ — each crop is a pure function of its row's `render` block,
+# rebuildable via present/render-one.
+!/data/label_corpus/
+/data/label_corpus/batches/*/crops/
+# regenerable view (rev4_sanity_sheet.py) — not part of the commit policy.
+/data/label_corpus/batches/*/sanity_contact_sheet.html

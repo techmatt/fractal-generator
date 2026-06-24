@@ -1,0 +1,195 @@
+{
+  "batch_id": "2026-06-24_guided_descend_rev4",
+  "schema_version": 1,
+  "created": "2026-06-24",
+  "labeler": null,
+  "generator_version": "guided_descend_rev4",
+  "source_run": "data/guided_descend/run4/pool.jsonl",
+  "present_input": "out/present/run4_bridge/locations.jsonl (pool_to_locations.py bridge)",
+  "note": "guided-descend run4 invocation was not persisted; sampling_metaparameters below are the rev4 documented defaults (src/cli.rs GuidedDescendArgs) plus observed-from-pool stats. The d1->d2 occ-floor disable (Part 0) postdates run4.",
+  "sampling_metaparameters": {
+    "root_mix": 0.5,
+    "root_zoom_8k": 0.1,
+    "root8k_criterion": {
+      "black_max": 0.8,
+      "mean_lo": 8.0,
+      "mean_hi": 120.0,
+      "var_floor": 6.0
+    },
+    "flat_root": {
+      "box": "-2.0,0.7,-1.2,1.2",
+      "fw_lo": 0.003,
+      "fw_hi": 0.05,
+      "screen_width": 320
+    },
+    "target_mix": {
+      "w_foci": 0.7,
+      "w_density": 0.1,
+      "w_random": 0.2
+    },
+    "placement": "0.25,0.40,0.35",
+    "zoom_band": [
+      0.35,
+      0.5
+    ],
+    "depth_range": [
+      4,
+      10
+    ],
+    "n_walks": 80,
+    "sigma_band": "16,20,24,28,32",
+    "foci_diversity_radius": 0.12,
+    "random_boundary": true,
+    "node_width": 768,
+    "descent_candidates": 4,
+    "descent_black_cap": 0.3,
+    "descent_occ_floor": 0.321,
+    "field_maxiter": 1000,
+    "bailout": 1000000.0,
+    "seed": 0,
+    "observed_pool": {
+      "candidates": 455,
+      "root_src_counts": {
+        "8k": 212,
+        "flat": 243
+      },
+      "depth_range_seen": [
+        1,
+        10
+      ]
+    }
+  },
+  "present_gates": {
+    "black_thresh": 0.3,
+    "occupancy_floor": 0.321,
+    "edge_floor": 0.01,
+    "tile_grid": [
+      32,
+      18
+    ]
+  },
+  "render_defaults": {
+    "maxiter": 8000,
+    "width": 1280,
+    "height": 720,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "zoom_factor": 0.4,
+    "palette_roster": "data/palettes/score3_colormaps.json (76 score-3 palettes)",
+    "palettes_rendered_per_crop": 2,
+    "palettes_kept_per_crop": 1
+  },
+  "counts": {
+    "units": 1176,
+    "labeled": 0,
+    "by_palette": {
+      "cet_linear_kry_5_95_c72": 24,
+      "Spectral": 12,
+      "cet_cyclic_mybm_20_100_c48_s25": 22,
+      "coolwarm": 16,
+      "cet_linear_bgyw_15_100_c68": 17,
+      "cmr.copper": 14,
+      "cmr.emergency_s": 18,
+      "twilight": 14,
+      "RdGy": 10,
+      "cet_linear_kryw_5_100_c67": 16,
+      "cet_cyclic_wrwbw_40_90_c42": 15,
+      "cet_linear_bmy_10_95_c71": 15,
+      "cet_linear_kryw_0_100_c71": 15,
+      "cmr.ember": 14,
+      "cmr.seasons_s": 19,
+      "seismic": 10,
+      "afmhot": 25,
+      "cmr.wildfire": 12,
+      "cet_linear_protanopic_deuteranopic_kbw_5_98_c40": 18,
+      "RdYlBu": 15,
+      "berlin": 19,
+      "cmr.ocean": 16,
+      "cmr.pride": 16,
+      "cmr.swamp": 18,
+      "cmr.toxic": 19,
+      "cmr.sunburst": 14,
+      "cmr.prinsenvlag": 15,
+      "cet_linear_protanopic_deuteranopic_kbw_5_95_c34": 17,
+      "cet_linear_bmy_10_95_c78": 21,
+      "gist_heat": 20,
+      "cet_cyclic_rygcbmr_50_90_c64_s25": 11,
+      "cmr.amber": 23,
+      "cet_linear_protanopic_deuteranopic_kbjyw_5_95_c25": 13,
+      "cet_linear_bmw_5_95_c86": 23,
+      "cmr.fusion": 22,
+      "inferno": 18,
+      "Blues": 13,
+      "cet_linear_tritanopic_krw_5_95_c46": 20,
+      "cet_diverging_bwr_40_95_c42": 13,
+      "RdBu": 11,
+      "cividis": 21,
+      "YlOrRd": 22,
+      "cmr.savanna": 19,
+      "cmr.jungle": 12,
+      "bwr": 15,
+      "cmr.redshift": 9,
+      "YlGnBu": 9,
+      "cmr.viola": 18,
+      "cmr.torch": 12,
+      "RdPu": 14,
+      "cmr.lilac": 19,
+      "cet_linear_kryw_5_100_c64": 19,
+      "GnBu": 17,
+      "magma": 17,
+      "cet_cyclic_wrkbw_10_90_c43": 15,
+      "cet_linear_tritanopic_krjcw_5_98_c46": 15,
+      "turbo": 19,
+      "twilight_shifted": 6,
+      "managua": 10,
+      "cmr.voltage": 14,
+      "viridis": 20,
+      "plasma": 17,
+      "cmr.rainforest": 16,
+      "gist_stern": 18,
+      "BrBG": 13,
+      "cet_cyclic_protanopic_deuteranopic_wywb_55_96_c33": 10,
+      "YlOrBr": 24,
+      "cmr.seasons": 9,
+      "cmr.fall": 17,
+      "cmr.waterlily": 13,
+      "cet_cyclic_protanopic_deuteranopic_bwyk_16_96_c31": 13,
+      "cet_linear_kry_0_97_c73": 9,
+      "CMRmap": 8,
+      "cet_cyclic_wrkbw_10_90_c43_s25": 8,
+      "cet_linear_kry_5_98_c75": 9,
+      "PuOr": 7
+    },
+    "by_composition": {
+      "center": 399,
+      "golden": 389,
+      "thirds": 388
+    },
+    "by_root_src": {
+      "8k": 519,
+      "flat": 657
+    },
+    "by_branch": {
+      "root8k": 32,
+      "rootflat": 85,
+      "foci": 736,
+      "density": 103,
+      "random": 220
+    },
+    "by_depth": {
+      "1": 117,
+      "2": 178,
+      "3": 175,
+      "4": 183,
+      "5": 136,
+      "6": 121,
+      "7": 99,
+      "8": 75,
+      "9": 63,
+      "10": 29
+    },
+    "crops_copied": 1176,
+    "missing_provenance": 0
+  }
+}
