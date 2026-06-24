@@ -29,6 +29,10 @@ PROVENANCE_KEYS = (
     "target_depth", "walk_id", "placement", "focus_score",
     "draw_index", "seed_index", "black_fraction", "interior_frac",
     "occupancy", "void_guard",
+    # v2-filtered-enrichment batch (2026-06-24): selection is v2-biased, recorded
+    # so the bias is always recoverable (only `random_eval` rows are unbiased).
+    "selection_role", "filter_score", "argmax_palette", "k_scores",
+    "v2_est_class", "v2_model_id",
 )
 
 

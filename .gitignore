@@ -24,7 +24,15 @@ target
 # Added by cargo
 
 /target
+# Isolated build dir used to compile/iterate while a long background run holds a
+# file-lock on target/release/*.exe on Windows (see code_report.md / CLAUDE.md).
+/target-*/
+/target-test-build.log
 /prompts
+
+# Regenerable curated exports derived from the committed label corpus
+# (data/label_corpus/.../images.jsonl) — not source, not committed.
+/beautiful_locations.json
 
 # Python palette-library prototype: harvested third-party .ugr/.map collections
 # are local working inputs only — never redistribute (see palette_lib/REPORT.md).

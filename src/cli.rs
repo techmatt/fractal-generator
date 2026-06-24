@@ -382,6 +382,93 @@ pub enum Command {
     /// the P/Q/R smoothed focus fields, scale-space persistence, and the
     /// organization scalars. Builds NO gate, modifies NO gating.
     FocusDiag(FocusDiagArgs),
+    /// v2-filtered enrichment batch render bridge (two disjoint modes). `score`
+    /// iterates each guided-descend pool location once at the label geometry,
+    /// applies the present gates (black<0.30 + occ>=0.321), recolors survivors
+    /// under K seeded score-3 palettes, and streams the recolored RGB frames to
+    /// stdout for in-memory v2 scoring (no crops to disk) + a `--meta-out` gate
+    /// sidecar. `render` renders the ~1100 selected `(location, argmax palette)`
+    /// rows at the locked label-crop quality (ss4 + Lanczos-3, q90 JPG). Shallow
+    /// f64 (asserted). See `enrich::run_enrich`.
+    Enrich(EnrichArgs),
+}
+
+/// `enrich` mode selector (see `enrich::run_enrich`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum EnrichMode {
+    /// Stage B: iterate+gate+recolor K palettes, stream RGB frames to stdout.
+    Score,
+    /// Stage D: render the selected (location, argmax palette) crops to JPG.
+    Render,
+}
+
+/// `enrich` subcommand args (shared by both modes; disjoint fields per mode).
+#[derive(Args, Debug)]
+pub struct EnrichArgs {
+    /// Which stage to run: `score` (Stage B) or `render` (Stage D).
+    #[arg(long, value_enum)]
+    pub mode: EnrichMode,
+
+    /// [score] guided-descend `pool.jsonl` (cx/cy/fw + idx per location).
+    #[arg(long, default_value = "data/guided_descend/run5/pool.jsonl")]
+    pub pool: String,
+
+    /// [render] selection JSONL (one `{image_id, cx, cy, fw, palette}` per line).
+    #[arg(long, default_value = "data/enrich/run5/selection.jsonl")]
+    pub selection: String,
+
+    /// Score-3 palette roster (selective-mirror load, parity with present).
+    #[arg(long, default_value = "data/palettes/score3_colormaps.json")]
+    pub colormaps: String,
+
+    /// [score] palettes recolored per location (best-over-K filter). Fixed seeded set.
+    #[arg(long, default_value_t = 4)]
+    pub k: usize,
+
+    /// SplitMix64 seed for the K-palette pick (reproducible).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Crop width in px (the label geometry; occupancy floor is calibrated here).
+    #[arg(long, default_value_t = 1280)]
+    pub width: u32,
+
+    /// Crop height in px.
+    #[arg(long, default_value_t = 720)]
+    pub height: u32,
+
+    /// [score] supersample for the cheap scoring render (the model only sees the
+    /// 1280×720→384×224 downsample, so ss1 is plenty; parity is the transform).
+    #[arg(long, default_value_t = 1)]
+    pub score_ss: u32,
+
+    /// [render] supersample for the final label crop (the wallpaper lock: ss4).
+    #[arg(long, default_value_t = 4)]
+    pub render_ss: u32,
+
+    /// Iteration cap (matches present/render-one label-crop default).
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// Present black gate: discard if interior (non-escaped) fraction >= this.
+    #[arg(long, default_value_t = 0.30)]
+    pub black_cap: f64,
+
+    /// Present occupancy gate: discard if detail occupancy < this.
+    #[arg(long, default_value_t = 0.321)]
+    pub occ_floor: f64,
+
+    /// [score] gate/palette sidecar JSONL output (header line + per-location).
+    #[arg(long, default_value = "data/enrich/run5/score_meta.jsonl")]
+    pub meta_out: String,
+
+    /// [render] output directory for the selected JPG crops.
+    #[arg(long, default_value = "data/enrich/run5/crops")]
+    pub crops_dir: String,
+
+    /// JPEG quality for the rendered label crops.
+    #[arg(long, default_value_t = 90)]
+    pub jpg_quality: u8,
 }
 
 /// `focus-diag` subcommand: see `focus_diag::run_focus_diag`. Field-array dumper —

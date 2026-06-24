@@ -39,6 +39,7 @@ pub mod coloring;
 pub mod corpus;
 pub mod descend;
 pub mod energy;
+pub mod enrich;
 pub mod focus_diag;
 pub mod font;
 pub mod gate_diag;
