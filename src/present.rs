@@ -229,6 +229,7 @@ fn jnum(x: f64) -> String {
 fn build_manifest(
     source: &str,
     zoom_factor: f64,
+    maxiter: u32,
     occupancy_floor: f64,
     total_seeds: usize,
     accepted: usize,
@@ -242,7 +243,7 @@ fn build_manifest(
     let _ = writeln!(s, "  \"zoom_factor\": {zoom_factor},");
     let _ = writeln!(
         s,
-        "  \"render\": \"grid ss4 + lanczos3, maxiter 2000 (render-one quality path)\","
+        "  \"render\": \"grid ss4 + lanczos3, maxiter {maxiter} (render-one quality path)\","
     );
     let _ = writeln!(
         s,
@@ -676,6 +677,9 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
                     pal_name.replace(['/', '\\', ' ', ':', '*', '?', '"', '<', '>', '|'], "_");
                 // Composition in the filename so (seed × composition × palette)
                 // crops never collide in all-compositions mode.
+                // NOTE: the leading numeric prefix is the **seed_index**
+                // (`keeper_index`), NOT the `draw_index` — e.g. `93_center_*.jpg`
+                // is seed 93, whose draw_index may be unrelated (see manifest).
                 let fname = format!("{}_{}_{}.{ext}", seed.keeper_index, comp_name, safe_name);
                 let out_path = run_dir.join(&fname);
                 if as_jpeg {
@@ -733,6 +737,7 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
     let manifest = build_manifest(
         &args.input,
         args.zoom_factor,
+        args.maxiter,
         args.occupancy_floor,
         seeds.len(),
         accepted,

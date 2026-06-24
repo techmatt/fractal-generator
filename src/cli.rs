@@ -355,6 +355,61 @@ pub enum Command {
     /// worst-first) under `data/palette_probe/`. The viewer
     /// (`tools/viz/palette_probe.html`) writes the verdict; this picks nothing.
     PaletteProbe(PaletteProbeArgs),
+    /// Measurement-only signal-separation diagnostic for an explicit reject-the-bad
+    /// gate. For each distinct (draw_index, composition) geometry in a `present`
+    /// manifest, re-render the cheap f64 screen at the stored crop frame (DE channel
+    /// on) and compute dynamics signals — `de_small_frac` (escaped pixels whose
+    /// DE-in-2560px < k, swept k∈{0.5,1,2,4}), `slow_escape_frac` (escape iter near
+    /// `maxiter`), `interior_frac` — plus image-space signals on the representative
+    /// JPG via the `energy.rs` descriptor under the frozen corpus bins
+    /// (`fine_energy_frac` = s16 density, coarse density, mean edge energy). Writes
+    /// one CSV row per geometry (signals + crop frame + manifest occupancy/black).
+    /// Builds NO gate, modifies NO gating; the Python side does the AUC/sheet.
+    GateDiag(GateDiagArgs),
+    /// Measurement-only dynamics-FIELD dumper for the smoothed-escape focal-point +
+    /// scale-space-organization exploration (sibling of `gate-diag`, but full 2D
+    /// arrays not scalars). For each frame in a JSONL frames file, re-render the
+    /// cheap f64 screen (DE channel on) and dump three row-major arrays — `mu`
+    /// (smooth escape, NaN interior), `de_px` (DE in 2560-px units), `interior`
+    /// mask — plus a manifest. The Python side derives the potential `G ≈ 2^-mu`,
+    /// the P/Q/R smoothed focus fields, scale-space persistence, and the
+    /// organization scalars. Builds NO gate, modifies NO gating.
+    FocusDiag(FocusDiagArgs),
+}
+
+/// `focus-diag` subcommand: see `focus_diag::run_focus_diag`. Field-array dumper —
+/// renders each frame's f64 dynamics fields (mu / de_px / interior) at a modest
+/// res and writes them as raw arrays for the Python scale-space analysis.
+#[derive(Args, Debug)]
+pub struct FocusDiagArgs {
+    /// JSONL frames file (one compact `{name,cx,cy,fw,width}` object per line),
+    /// emitted by the Python driver after it picks the contrast + sample frames.
+    #[arg(long, default_value = "data/focus_diag/frames.jsonl")]
+    pub frames: String,
+
+    /// Iteration cap. Production default 8000 (the manifest's "maxiter 2000" string
+    /// is a stale hardcoded note; ignore it).
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// Escape (bailout) radius. ≥1e6 for a stable DE estimate / ideal smooth band;
+    /// 1e6 ≈ 2^20 matches `present`/`generate` — do not bump.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Default field width (px) for frames that don't carry their own `width`;
+    /// height follows 16:9. Modest by design — we need smooth peaks, not AA.
+    #[arg(long, default_value_t = 768)]
+    pub width: u32,
+
+    /// Reference width the DE-in-pixels normalization is pinned to (so `de_px`
+    /// reads as "DE in final-wallpaper pixels", independent of field res).
+    #[arg(long, default_value_t = 2560)]
+    pub de_ref_width: u32,
+
+    /// Stable output dir (not under `out/`). Emits `fields/` + `fields_manifest.json`.
+    #[arg(long, default_value = "data/focus_diag/")]
+    pub out_dir: String,
 }
 
 /// Sub-pixel sample placement for `render-one` (maps to [`crate::render::SubsamplePattern`]).
@@ -593,6 +648,52 @@ pub struct PaletteProbeArgs {
 
     /// Stable output directory (not under `out/`).
     #[arg(long, default_value = "data/palette_probe/")]
+    pub out_dir: String,
+}
+
+/// `gate-diag` subcommand: see `gate_diag::run_gate_diag`. Measurement-only signal
+/// extractor for the reject-the-bad gate study. Re-renders each manifest geometry's
+/// cheap f64 screen (DE channel on) at the stored crop frame and emits per-geometry
+/// dynamics + energy-descriptor signals to a CSV. Builds no gate.
+#[derive(Args, Debug)]
+pub struct GateDiagArgs {
+    /// `present` manifest whose crop geometries (cx/cy/fw per draw_index×comp) are
+    /// re-rendered. The label join + AUC analysis happen Python-side off this CSV.
+    #[arg(long, default_value = "data/label_crops/loose0_v3/manifest.json")]
+    pub manifest: String,
+
+    /// Persisted energy calibration (frozen quantile bins) — the `fine_energy_frac`
+    /// signal bins each JPG's region energies under these corpus-frozen edges.
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Per-scale EMD weights are irrelevant here (no distance), but the frozen bins
+    /// come from the same artifact; this is unused and kept only for symmetry.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Iteration cap for the diagnostic re-render. Defaults to `present`'s 8000
+    /// (the manifest's embedded "maxiter 2000" note is a stale hardcoded string).
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// Escape (bailout) radius. ≥1e6 is required for a stable DE estimate; the
+    /// default matches `present`/`generate` (1e6 ≈ 2^20, already in the ideal band).
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Diagnostic cheap-screen width (px); height follows 16:9. The DE field is
+    /// smooth, so a sub-full-res screen samples `de_small_frac` faithfully and fast.
+    #[arg(long, default_value_t = 640)]
+    pub screen_width: u32,
+
+    /// Reference width the DE-in-pixels normalization is pinned to (so `de_px` reads
+    /// as "DE in final-wallpaper pixels", independent of `screen_width`).
+    #[arg(long, default_value_t = 2560)]
+    pub de_ref_width: u32,
+
+    /// Stable output dir (not under `out/`). Emits `signals.csv`.
+    #[arg(long, default_value = "data/gate_diag/")]
     pub out_dir: String,
 }
 
@@ -2647,7 +2748,10 @@ pub struct PresentArgs {
     /// **before** palettes: discard the (seed × composition) crop if its
     /// occupancy (fraction of 32×18 tiles with mean edge energy > 0.010) is below
     /// this. `0` disables the gate (legacy behaviour). The loose0 calibration
-    /// floor is 0.23.
+    /// floor was 0.23; gate-diag (loose0_v3) raised it to 0.321 — the low
+    /// occupancy tail's bottom decile is ~96% doomed (geo_label==1) and holds
+    /// zero label-3 crops (min label-3 occupancy 0.4184), so 0.321 rejects ~52
+    /// geometries at zero good-crop cost.
     #[arg(long, default_value_t = 0.0)]
     pub occupancy_floor: f64,
 
