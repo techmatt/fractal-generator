@@ -469,13 +469,13 @@ pub struct RenderOneArgs {
     #[arg(long, value_enum, default_value_t = FilterChoice::Lanczos3)]
     pub filter: FilterChoice,
 
-    /// Maximum iterations / orbit cap ("max_orbit"). Raised 2000 → 10000 (the
-    /// `maxiter-blackgate` pass): the escalation sheet showed loose0's spiral
-    /// cores resolve by ~8–10k (the residual pinned-at-cap fraction asymptotes —
-    /// what remains is genuine minibrot interior no cap reclaims). 10000 sits past
-    /// the knee for the loose0 fw range at ~3× the cap-2000 cost on interior-heavy
-    /// frames, near-free on filament frames.
-    #[arg(long, default_value_t = 10000)]
+    /// Maximum iterations / orbit cap ("max_orbit"). Raised 2000 → 8000 (the
+    /// `maxiter-blackgate` pass, Matt's pick): the escalation sheet's residual
+    /// pinned-at-cap fraction asymptotes by ~8k (max-over-crops |Δ| drops below
+    /// 0.02 at the 8k→32k step — the measured knee), what remains is genuine
+    /// minibrot interior no cap reclaims. 8000 is the knee: ~3.3–3.5× the cap-2000
+    /// cost on interior-heavy frames, near-free on filament frames.
+    #[arg(long, default_value_t = 8000)]
     pub maxiter: u32,
 
     /// SplitMix64 seed (consumed only by `--pattern jitter`).
@@ -584,7 +584,7 @@ pub struct PaletteProbeArgs {
     pub supersample: u32,
 
     /// Maximum iterations / orbit cap (the present/render-one current default).
-    #[arg(long, default_value_t = 10000)]
+    #[arg(long, default_value_t = 8000)]
     pub maxiter: u32,
 
     /// JPEG quality for the output crops.
@@ -2631,11 +2631,12 @@ pub struct PresentArgs {
     pub all_compositions: bool,
 
     /// Maximum iterations / orbit cap ("max_orbit") for both cheap-screen and
-    /// full-resolution renders. Raised 1000 → 10000 (the `maxiter-blackgate`
-    /// pass): resolves spiral cores so the black gate sees true interior, not
-    /// under-iterated pixels. The gate (`BLACK_THRESH`) is calibrated against
-    /// the no-escape distribution at this cap.
-    #[arg(long, default_value_t = 10000)]
+    /// full-resolution renders. Raised 1000 → 8000 (the `maxiter-blackgate`
+    /// pass, Matt's pick = the measured escalation knee): resolves the pinned
+    /// spiral-core fringe so the black gate sees true interior, not under-iterated
+    /// pixels. The gate (`BLACK_THRESH`) is calibrated against the no-escape
+    /// distribution at this cap.
+    #[arg(long, default_value_t = 8000)]
     pub maxiter: u32,
 
     /// SplitMix64 seed for reproducible palette selection.
