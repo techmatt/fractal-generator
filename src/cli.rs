@@ -2700,11 +2700,11 @@ pub struct GuidedDescendArgs {
     pub n_walks: usize,
 
     /// Minimum terminal walk depth (inclusive).
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = 3)]
     pub depth_min: u32,
 
     /// Maximum terminal walk depth (inclusive).
-    #[arg(long, default_value_t = 6)]
+    #[arg(long, default_value_t = 10)]
     pub depth_max: u32,
 
     /// Per-step zoom factor (`child.fw = parent.fw × this`). Applies to the
@@ -2754,7 +2754,8 @@ pub struct GuidedDescendArgs {
     pub preview_width: u32,
 
     /// Preview colormap name (from the colormaps JSON) — diagnostic only.
-    #[arg(long, default_value = "cubehelix")]
+    /// `twilight_shifted` is cyclic (seam-free, mirror-moot).
+    #[arg(long, default_value = "twilight_shifted")]
     pub preview_palette: String,
 
     /// Colormap library JSON (for the preview palette).
@@ -2780,6 +2781,16 @@ pub struct GuidedDescendArgs {
     /// Accept-band override: escape-median smooth-iter floor.
     #[arg(long)]
     pub esc_median_min: Option<f64>,
+
+    /// Navigation-time interior/black cap (rev2): after a candidate step is chosen
+    /// and rendered, reject it (and resample the step, folding into the existing 3×
+    /// degenerate budget) if its `render::black_fraction` (interior counts as black,
+    /// same fn present's black gate uses) is ≥ this. Looser than present's 0.30
+    /// discard on purpose — early descents are legitimately black; this only kills
+    /// the black-*dominated* steps. Default-on at 0.45; 0 or ≥1.0 disables. Gate is
+    /// black/interior-fraction ONLY (busyness is known-unseparable by magnitude).
+    #[arg(long, default_value_t = 0.45)]
+    pub descent_black_cap: f64,
 
     /// Flat-grid PNG columns.
     #[arg(long, default_value_t = 10)]

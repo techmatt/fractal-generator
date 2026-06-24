@@ -108,6 +108,17 @@ impl Branch {
     }
 }
 
+/// Why a walk stopped (rev2 — surfaces the Change-2 black-cap-vs-depth tradeoff).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EndCause {
+    /// Walk ran all `target` depths.
+    ReachedTerminalDepth,
+    /// A step found band-okay candidates but all 3 were ≥ the black cap.
+    BlackCapExhausted,
+    /// A step couldn't find a band-okay candidate in 3 tries (flat/instant-escape).
+    DegenerateExhausted,
+}
+
 /// Where the chosen target lands inside the child frame.
 #[derive(Clone, Copy)]
 enum Placement {
@@ -204,6 +215,14 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // Keep the genuine-degenerate culls: flat (low spread) + instant-escape.
     let descent_band = crate::generate::AcceptBand { interior_max: 1.0, ..band };
 
+    // Navigation-time black/interior cap (rev2 Change 2): reuse present's
+    // `render::black_fraction` (interior counts as black) on each candidate node
+    // buffer — already rendered for the screen, so the probe is free and exact (no
+    // separate low-res panel needed). Enabled in (0,1); 0 or ≥1.0 disables. Gates
+    // on black/interior fraction ONLY — no busyness axis (known-unseparable).
+    let black_cap = args.descent_black_cap;
+    let black_cap_on = black_cap > 0.0 && black_cap < 1.0;
+
     // The fixed root: full Mandelbrot view (conceptual parent of every walk; its
     // fw seeds the root jump). Per-node renders use `node_w`.
     let root = Frame {
@@ -215,13 +234,14 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     eprintln!(
         "guided-descend: {} walks, depth [{},{}], zoom/step {}, root-zoom {}, seed {}\n  \
          weights foci/density/random = {:.2}/{:.2}/{:.2}, placement {:.2}/{:.2}/{:.2}, \
-         sigma {:?}\n  node {}x{} ss1, preview {}x{}, maxiter {}\n  \
-         descent culls: flat spread>={} + instant-escape esc_med>={} (interior/black NOT culled — presentation-only)",
+         sigma {:?}\n  node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
+         descent culls: flat spread>={} + instant-escape esc_med>={}; nav black-cap {}",
         args.n_walks, args.depth_min, args.depth_max, args.zoom_per_step, args.root_zoom, args.seed,
         p_foci, p_density, 1.0 - p_foci - p_density,
         pl_center / plsum, pl_horizon / plsum, pl_random / plsum, sigmas,
-        node_w, node_h, prev_w, prev_h, args.maxiter,
+        node_w, node_h, prev_w, prev_h, args.preview_palette, args.maxiter,
         band.spread_min, band.esc_median_min,
+        if black_cap_on { format!("black_frac<{black_cap} (resample→end)") } else { "OFF".into() },
     );
 
     let render_node = |frame: &Frame| -> render::SampleBuffer {
@@ -263,6 +283,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let mut branch_counts = [0usize; 3]; // foci, density, random
     let mut root_count = 0usize; // depth-1 boundary-sampled steps
     let mut died_early = 0usize;
+    // End-of-walk cause breakdown: [ReachedTerminalDepth, BlackCapExhausted, DegenerateExhausted].
+    let mut cause_counts = [0usize; 3];
+    let mut black_rejects = 0usize; // total candidate steps killed by the black cap (all attempts)
 
     for w in 0..args.n_walks {
         let target = args.depth_min + (rng.below((args.depth_max - args.depth_min + 1) as usize) as u32);
@@ -270,6 +293,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         // `None` until the depth-1 root step renders the first node.
         let mut parent_buf: Option<render::SampleBuffer> = None;
         let mut reached = 0u32;
+        // Walk completed unless a step dies; the dying step overwrites this.
+        let mut end_cause = EndCause::ReachedTerminalDepth;
 
         for d in 1..=target {
             // Up to 3 attempts: a degenerate child resamples the whole step.
@@ -277,6 +302,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             // the root step is its own branch, not a foci/density/random pick.
             let mut accepted: Option<(Frame, render::SampleBuffer, &'static str, &'static str, f64)> =
                 None;
+            // Set when an attempt cleared the band but was killed by the black cap:
+            // distinguishes "too black" (structure present) from "degenerate" (flat).
+            let mut step_black_reject = false;
 
             if d == 1 {
                 // --- ROOT STEP (rev1): boundary-window sampler, own zoom,
@@ -294,6 +322,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         let buf = render_node(&child);
                         let (int_frac, esc) = generate::screen_stats(&buf.samples, args.maxiter);
                         if descent_band.test(int_frac, esc.spread, esc.median).accepted {
+                            if black_cap_on && render::black_fraction(&buf.samples) as f64 >= black_cap {
+                                step_black_reject = true;
+                                black_rejects += 1;
+                                continue; // too black — resample the step (3× budget)
+                            }
                             accepted = Some((child, buf, "root", "center", f64::NAN));
                             break;
                         }
@@ -326,6 +359,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         let buf = render_node(&child);
                         let (int_frac, esc) = generate::screen_stats(&buf.samples, args.maxiter);
                         if descent_band.test(int_frac, esc.spread, esc.median).accepted {
+                            if black_cap_on && render::black_fraction(&buf.samples) as f64 >= black_cap {
+                                step_black_reject = true;
+                                black_rejects += 1;
+                                continue; // too black — resample the step (3× budget)
+                            }
                             accepted = Some((child, buf, branch.name(), placement.name(), fscore));
                             break;
                         }
@@ -358,9 +396,25 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     parent = child;
                     parent_buf = Some(buf);
                 }
-                None => break, // walk dies on a degenerate step
+                None => {
+                    // Step exhausted its 3× budget. If any attempt cleared the band
+                    // but was killed by the black cap, the limiting factor was black;
+                    // otherwise it was a genuine degenerate (no band-okay candidate).
+                    end_cause = if step_black_reject {
+                        EndCause::BlackCapExhausted
+                    } else {
+                        EndCause::DegenerateExhausted
+                    };
+                    break;
+                }
             }
         }
+
+        cause_counts[match end_cause {
+            EndCause::ReachedTerminalDepth => 0,
+            EndCause::BlackCapExhausted => 1,
+            EndCause::DegenerateExhausted => 2,
+        }] += 1;
 
         if reached < target {
             died_early += 1;
@@ -437,7 +491,10 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         .map_err(|e| format!("save pool grid: {e}"))?;
 
     // --- pool_sheet.html (the deliverable Matt judges) ---
-    let html = build_html(&cands, &walk_reached, &branch_counts, root_count, died_early, args, &sigmas);
+    let html = build_html(
+        &cands, &walk_reached, &branch_counts, root_count, died_early, &cause_counts,
+        black_rejects, black_cap_on, black_cap, args, &sigmas,
+    );
     let html_path = out_dir.join("pool_sheet.html");
     std::fs::write(&html_path, html).map_err(|e| format!("write pool_sheet.html: {e}"))?;
 
@@ -453,7 +510,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // --- repetition: most-repeated emitted frame (round center+fw). ---
     let (top_mult, n_unique) = repetition(&cands);
 
-    println!("=== guided-descend (rev1) ===");
+    println!("=== guided-descend (rev2) ===");
     println!("seed={}  walks={}  candidates={}", args.seed, args.n_walks, cands.len());
     println!(
         "branch breakdown: root={} foci={} density={} random={}",
@@ -473,8 +530,15 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         n_unique, cands.len(), top_mult
     );
     println!(
-        "walks died early (terminated before target depth on a degenerate step): {}/{}",
+        "walks died early (terminated before target depth): {}/{}",
         died_early, args.n_walks
+    );
+    println!(
+        "end-of-walk cause: reached_terminal_depth={} black_cap_exhausted={} degenerate_exhausted={} \
+         (black cap {}; {} total steps killed by cap)",
+        cause_counts[0], cause_counts[1], cause_counts[2],
+        if black_cap_on { format!("{black_cap}") } else { "OFF".into() },
+        black_rejects,
     );
     println!("elapsed: {:.1}s", t0.elapsed().as_secs_f64());
     println!("pool.jsonl + pool_grid.png + tiles/ under {}", out_dir.display());
@@ -1034,6 +1098,10 @@ fn build_html(
     branch_counts: &[usize; 3],
     root_count: usize,
     died_early: usize,
+    cause_counts: &[usize; 3],
+    black_rejects: usize,
+    black_cap_on: bool,
+    black_cap: f64,
     args: &GuidedDescendArgs,
     sigmas: &[f64],
 ) -> String {
@@ -1107,11 +1175,13 @@ figcaption{{padding:2px 5px;font-size:10px;color:#9aa;background:#12141a}}\
 .cap{{padding:2px 6px;font-size:10px;color:#9aa;background:#12141a}}\
 .cap b{{color:#5ec07a}}\
 </style></head><body>\
-<header><h1>guided-descend rev1 — candidate pool ({ncand} candidates)</h1>\
+<header><h1>guided-descend rev2 — candidate pool ({ncand} candidates)</h1>\
 <div class=note>{nwalks} walks emitting · branch root={rt} foci={bf} density={bd} random={br} · \
-depth: {dh}· walks died early {died}/{total} · root-zoom {rz} (depth-1 fw≈{d1fw:.3}) · \
+depth: {dh}· walks died early {died}/{total} · \
+end-cause: terminal={ct} black-cap={cb} degenerate={cd} ({brk} steps killed by cap) · \
+nav black-cap {blk} · preview {pal} · root-zoom {rz} (depth-1 fw≈{d1fw:.3}) · \
 root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max-rep ×{tmult} · \
-σ {sig:?} · zoom/step {zps} · seed {seed} · interior/black NOT culled (presentation-only) · \
+σ {sig:?} · zoom/step {zps} · seed {seed} · gates on black/interior ONLY (no busyness axis) · \
 <b>no quality claims</b> — eyeball the sampling behaviour</div></header>\
 <h2>by walk — descent ladders (root→leaf left→right)</h2>{ladders}\
 <h2>flat pool ({ncand})</h2><div class=grid>{flat}</div>\
@@ -1125,6 +1195,12 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         dh = dh,
         died = died_early,
         total = args.n_walks,
+        ct = cause_counts[0],
+        cb = cause_counts[1],
+        cd = cause_counts[2],
+        brk = black_rejects,
+        blk = if black_cap_on { format!("<{black_cap}") } else { "OFF".into() },
+        pal = args.preview_palette,
         rz = args.root_zoom,
         d1fw = 3.0 * args.root_zoom,
         rsx = rsx,
