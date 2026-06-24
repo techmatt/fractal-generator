@@ -2699,8 +2699,9 @@ pub struct GuidedDescendArgs {
     #[arg(long, default_value_t = 80)]
     pub n_walks: usize,
 
-    /// Minimum terminal walk depth (inclusive).
-    #[arg(long, default_value_t = 3)]
+    /// Minimum terminal walk depth (inclusive). rev3: raised 3→4 (the shallow
+    /// d3 frames were too zoomed-out / set-dominated to be useful wallpapers).
+    #[arg(long, default_value_t = 4)]
     pub depth_min: u32,
 
     /// Maximum terminal walk depth (inclusive).
@@ -2782,15 +2783,30 @@ pub struct GuidedDescendArgs {
     #[arg(long)]
     pub esc_median_min: Option<f64>,
 
-    /// Navigation-time interior/black cap (rev2): after a candidate step is chosen
-    /// and rendered, reject it (and resample the step, folding into the existing 3×
-    /// degenerate budget) if its `render::black_fraction` (interior counts as black,
-    /// same fn present's black gate uses) is ≥ this. Looser than present's 0.30
-    /// discard on purpose — early descents are legitimately black; this only kills
-    /// the black-*dominated* steps. Default-on at 0.45; 0 or ≥1.0 disables. Gate is
-    /// black/interior-fraction ONLY (busyness is known-unseparable by magnitude).
-    #[arg(long, default_value_t = 0.45)]
+    /// Best-of-N candidate count per step (rev3 Change 2). Each step draws this
+    /// many candidate next-centers from the per-node policy and two-stage screens
+    /// them (cheap interior cap → 768 occupancy floor) before selecting the
+    /// least-set survivor. 1 reproduces rev2's accept-first behaviour.
+    #[arg(long, default_value_t = 4)]
+    pub descent_candidates: usize,
+
+    /// Best-of-N **Stage 1** interior/black cap (rev3, lowered 0.45→0.30 — the
+    /// aggressive set-avoidance hard ceiling). Each candidate is probed at ~128px
+    /// escape-time and rejected if its `render::black_fraction` (interior counts as
+    /// black) is ≥ this; interior fraction is scale-robust so the cheap probe is
+    /// fine. Default-on at 0.30; 0 or ≥1.0 disables. Black/interior-fraction ONLY
+    /// (busyness is known-unseparable by magnitude).
+    #[arg(long, default_value_t = 0.30)]
     pub descent_black_cap: f64,
+
+    /// Best-of-N **Stage 2** occupancy floor (rev3, reuses present's 0.321). Stage-1
+    /// survivors are rendered at the 768 node size, shaded, and scored with the
+    /// `energy::occupancy` parity scorer; candidates below this are rejected (keeps
+    /// walks feature-rich, not empty). Among the rest the **least interior** wins.
+    /// Default-on at 0.321; 0 or ≥1.0 disables. CAVEAT: 0.321 was calibrated on the
+    /// labeling-crop distribution, not navigation frames — a tunable knob.
+    #[arg(long, default_value_t = 0.321)]
+    pub descent_occ_floor: f64,
 
     /// Flat-grid PNG columns.
     #[arg(long, default_value_t = 10)]

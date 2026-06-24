@@ -66,6 +66,11 @@ const MAX_FLOOR_PCT: f64 = 0.85;
 /// Cap on foci returned per frame (top by sampling score).
 const TOP_FOCI: usize = 16;
 
+/// Stage-1 cheap interior-screen render width (height 16:9, ss1). Small + fast:
+/// interior fraction is scale-robust, so a ~128px escape-time panel is enough to
+/// reject set-dominated candidates before paying for the 768 node render.
+const PROBE_W: u32 = 128;
+
 /// Base-field render width for the root boundary sampler (height 16:9). A few
 /// thousand px — enough to resolve a clean near-boundary band. Rendered once,
 /// shared across all walks; shallow f64 (fw 3.0) so it is cheap.
@@ -108,14 +113,18 @@ impl Branch {
     }
 }
 
-/// Why a walk stopped (rev2 — surfaces the Change-2 black-cap-vs-depth tradeoff).
+/// Why a walk stopped (rev3 — surfaces the best-of-N two-stage screen tradeoffs).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EndCause {
     /// Walk ran all `target` depths.
     ReachedTerminalDepth,
-    /// A step found band-okay candidates but all 3 were ≥ the black cap.
+    /// All N candidates were ≥ the Stage-1 black cap (set-dominated; no survivor
+    /// even reached the 768 render).
     BlackCapExhausted,
-    /// A step couldn't find a band-okay candidate in 3 tries (flat/instant-escape).
+    /// Some candidate cleared the black cap + band but all were below the Stage-2
+    /// occupancy floor (drifted feature-poor / empty).
+    OccFloorExhausted,
+    /// No candidate cleared the band screen (flat / instant-escape).
     DegenerateExhausted,
 }
 
@@ -147,6 +156,25 @@ struct Focus {
     peak_norm: f64,
     isolation: f64,
     score: f64,
+}
+
+/// One drawn best-of-N candidate next-center plus its policy provenance (before
+/// any screening). The generator closures (root boundary sampler / per-node
+/// policy) produce these; [`best_of_n_step`] screens + selects among them.
+struct StepCand {
+    center: Complex<f64>,
+    branch: &'static str,
+    placement: &'static str,
+    fscore: f64,
+}
+
+/// Outcome of one best-of-N step.
+enum StepResult {
+    /// Winning node: frame, its 768 buffer (reused — no re-render), provenance,
+    /// and its interior fraction (the selection key, logged for the drift check).
+    Accepted(Frame, render::SampleBuffer, &'static str, &'static str, f64, f64),
+    /// No survivor across the N draws; the binding constraint.
+    Died(EndCause),
 }
 
 /// One emitted candidate frame (a frame visited along a walk).
@@ -215,13 +243,19 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // Keep the genuine-degenerate culls: flat (low spread) + instant-escape.
     let descent_band = crate::generate::AcceptBand { interior_max: 1.0, ..band };
 
-    // Navigation-time black/interior cap (rev2 Change 2): reuse present's
-    // `render::black_fraction` (interior counts as black) on each candidate node
-    // buffer — already rendered for the screen, so the probe is free and exact (no
-    // separate low-res panel needed). Enabled in (0,1); 0 or ≥1.0 disables. Gates
-    // on black/interior fraction ONLY — no busyness axis (known-unseparable).
+    // Best-of-N two-stage screen (rev3 Change 2). Stage 1: cheap PROBE_W interior
+    // cap (`render::black_fraction`, interior counts as black) — the aggressive
+    // set-avoidance ceiling. Stage 2: 768 occupancy floor (`energy::occupancy`
+    // parity scorer on the shaded node) — the feature-rich floor. Survivors are
+    // selected by least interior fraction. Each gate enabled in (0,1); 0 or ≥1.0
+    // disables. Black/interior + occupancy ONLY — no busyness axis (unseparable).
     let black_cap = args.descent_black_cap;
     let black_cap_on = black_cap > 0.0 && black_cap < 1.0;
+    let occ_floor = args.descent_occ_floor;
+    let occ_on = occ_floor > 0.0 && occ_floor < 1.0;
+    // Default-palette gate render for the occupancy probe (occupancy is
+    // palette-invariant to <1%; same palette `density_focus`/`present` shade with).
+    let gate_palette = crate::palette::builtin("default", false).expect("default palette");
 
     // The fixed root: full Mandelbrot view (conceptual parent of every walk; its
     // fw seeds the root jump). Per-node renders use `node_w`.
@@ -232,16 +266,19 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         out_height: node_h,
     };
     eprintln!(
-        "guided-descend: {} walks, depth [{},{}], zoom/step {}, root-zoom {}, seed {}\n  \
+        "guided-descend (rev3): {} walks, depth [{},{}], zoom/step {}, root-zoom {}, seed {}\n  \
          weights foci/density/random = {:.2}/{:.2}/{:.2}, placement {:.2}/{:.2}/{:.2}, \
          sigma {:?}\n  node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
-         descent culls: flat spread>={} + instant-escape esc_med>={}; nav black-cap {}",
+         descent culls: flat spread>={} + instant-escape esc_med>={}\n  \
+         best-of-{}: Stage-1 interior-cap {} (probe {}px), Stage-2 occ-floor {} (@{}px), select min-interior",
         args.n_walks, args.depth_min, args.depth_max, args.zoom_per_step, args.root_zoom, args.seed,
         p_foci, p_density, 1.0 - p_foci - p_density,
         pl_center / plsum, pl_horizon / plsum, pl_random / plsum, sigmas,
         node_w, node_h, prev_w, prev_h, args.preview_palette, args.maxiter,
         band.spread_min, band.esc_median_min,
-        if black_cap_on { format!("black_frac<{black_cap} (resample→end)") } else { "OFF".into() },
+        args.descent_candidates.max(1),
+        if black_cap_on { format!("black_frac<{black_cap}") } else { "OFF".into() }, PROBE_W,
+        if occ_on { format!("occ>={occ_floor}") } else { "OFF".into() }, node_w,
     );
 
     let render_node = |frame: &Frame| -> render::SampleBuffer {
@@ -276,6 +313,21 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         return Err("root boundary band empty (DE cut + exclusion left nothing)".into());
     }
 
+    // Best-of-N screen config (shared across every step of every walk).
+    let screen = StepScreen {
+        n_cand: args.descent_candidates.max(1),
+        node_w,
+        node_h,
+        maxiter: args.maxiter,
+        band: &descent_band,
+        black_cap,
+        black_cap_on,
+        occ_floor,
+        occ_on,
+        gate_palette: &gate_palette,
+        params: &params,
+    };
+
     let mut rng = SplitMix64(args.seed);
     let mut cands: Vec<Candidate> = Vec::new();
     // Per-walk reached depth + intended target (for the ladder view + died-early count).
@@ -283,9 +335,12 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let mut branch_counts = [0usize; 3]; // foci, density, random
     let mut root_count = 0usize; // depth-1 boundary-sampled steps
     let mut died_early = 0usize;
-    // End-of-walk cause breakdown: [ReachedTerminalDepth, BlackCapExhausted, DegenerateExhausted].
-    let mut cause_counts = [0usize; 3];
-    let mut black_rejects = 0usize; // total candidate steps killed by the black cap (all attempts)
+    // End-of-walk cause: [ReachedTerminalDepth, BlackCapExhausted, OccFloorExhausted, DegenerateExhausted].
+    let mut cause_counts = [0usize; 4];
+    let mut black_rejects = 0usize; // total best-of-N candidates killed by the Stage-1 black cap
+    let mut occ_rejects = 0usize; // total best-of-N candidates killed by the Stage-2 occupancy floor
+    // Per-step chosen interior fraction (the drift check — does min-interior pull toward empty?).
+    let mut chosen_interiors: Vec<f64> = Vec::new();
 
     for w in 0..args.n_walks {
         let target = args.depth_min + (rng.below((args.depth_max - args.depth_min + 1) as usize) as u32);
@@ -297,49 +352,32 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         let mut end_cause = EndCause::ReachedTerminalDepth;
 
         for d in 1..=target {
-            // Up to 3 attempts: a degenerate child resamples the whole step.
-            // (branch_name, placement_name, focus_score) carry the provenance —
-            // the root step is its own branch, not a foci/density/random pick.
-            let mut accepted: Option<(Frame, render::SampleBuffer, &'static str, &'static str, f64)> =
-                None;
-            // Set when an attempt cleared the band but was killed by the black cap:
-            // distinguishes "too black" (structure present) from "degenerate" (flat).
-            let mut step_black_reject = false;
-
-            if d == 1 {
-                // --- ROOT STEP (rev1): boundary-window sampler, own zoom,
-                //     sampled point placed at frame center. ---
+            // Best-of-N: draw `screen.n_cand` candidates from the per-node policy
+            // (root step = boundary sampler; depth ≥ 2 = focus/density/random), two-
+            // stage screen each, and select the least-set survivor. Provenance
+            // (branch/placement/focus_score) rides on each StepCand.
+            let result = if d == 1 {
+                // --- ROOT STEP (rev1): boundary-window sampler, own zoom, centered. ---
                 let new_fw = parent.frame_width * args.root_zoom;
-                if new_fw >= FW_FLOOR {
-                    for _ in 0..3 {
-                        let Some(center) = sample_boundary(&boundary, &mut rng) else { break };
-                        let child = Frame {
-                            center,
-                            frame_width: new_fw,
-                            out_width: node_w,
-                            out_height: node_h,
-                        };
-                        let buf = render_node(&child);
-                        let (int_frac, esc) = generate::screen_stats(&buf.samples, args.maxiter);
-                        if descent_band.test(int_frac, esc.spread, esc.median).accepted {
-                            if black_cap_on && render::black_fraction(&buf.samples) as f64 >= black_cap {
-                                step_black_reject = true;
-                                black_rejects += 1;
-                                continue; // too black — resample the step (3× budget)
-                            }
-                            accepted = Some((child, buf, "root", "center", f64::NAN));
-                            break;
-                        }
-                    }
+                if new_fw < FW_FLOOR {
+                    StepResult::Died(EndCause::DegenerateExhausted)
+                } else {
+                    let mut gen = || -> Option<StepCand> {
+                        let center = sample_boundary(&boundary, &mut rng)?;
+                        Some(StepCand { center, branch: "root", placement: "center", fscore: f64::NAN })
+                    };
+                    best_of_n_step(&screen, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects)
                 }
             } else {
                 // --- NORMAL STEP (depth ≥ 2): per-node finder + placement. ---
                 let new_fw = parent.frame_width * args.zoom_per_step;
-                if new_fw >= FW_FLOOR {
+                if new_fw < FW_FLOOR {
+                    StepResult::Died(EndCause::DegenerateExhausted)
+                } else {
                     let new_fh = new_fw * parent.out_height as f64 / parent.out_width as f64;
                     // parent_buf is always Some here (depth-1 root step set it).
                     let parent_samples = &parent_buf.as_ref().unwrap().samples;
-                    for _ in 0..3 {
+                    let mut gen = || -> Option<StepCand> {
                         let (focus, branch, fscore) = pick_target(
                             &parent, parent_samples, node_w as usize, node_h as usize, &sigmas,
                             (p_foci, p_density), &mut rng,
@@ -350,35 +388,21 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                             pick_placement((pl_center, pl_horizon, pl_random), plsum, &mut rng)
                         };
                         let center = child_center(focus, placement, new_fw, new_fh, &mut rng);
-                        let child = Frame {
-                            center,
-                            frame_width: new_fw,
-                            out_width: node_w,
-                            out_height: node_h,
-                        };
-                        let buf = render_node(&child);
-                        let (int_frac, esc) = generate::screen_stats(&buf.samples, args.maxiter);
-                        if descent_band.test(int_frac, esc.spread, esc.median).accepted {
-                            if black_cap_on && render::black_fraction(&buf.samples) as f64 >= black_cap {
-                                step_black_reject = true;
-                                black_rejects += 1;
-                                continue; // too black — resample the step (3× budget)
-                            }
-                            accepted = Some((child, buf, branch.name(), placement.name(), fscore));
-                            break;
-                        }
-                    }
+                        Some(StepCand { center, branch: branch.name(), placement: placement.name(), fscore })
+                    };
+                    best_of_n_step(&screen, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects)
                 }
-            }
+            };
 
-            match accepted {
-                Some((child, buf, branch, placement, fscore)) => {
+            match result {
+                StepResult::Accepted(child, buf, branch, placement, fscore, interior) => {
                     match branch {
                         "foci" => branch_counts[0] += 1,
                         "density" => branch_counts[1] += 1,
                         "random" => branch_counts[2] += 1,
                         _ => root_count += 1, // "root"
                     }
+                    chosen_interiors.push(interior);
                     cands.push(Candidate {
                         idx: cands.len(),
                         walk: w,
@@ -396,15 +420,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     parent = child;
                     parent_buf = Some(buf);
                 }
-                None => {
-                    // Step exhausted its 3× budget. If any attempt cleared the band
-                    // but was killed by the black cap, the limiting factor was black;
-                    // otherwise it was a genuine degenerate (no band-okay candidate).
-                    end_cause = if step_black_reject {
-                        EndCause::BlackCapExhausted
-                    } else {
-                        EndCause::DegenerateExhausted
-                    };
+                StepResult::Died(cause) => {
+                    end_cause = cause;
                     break;
                 }
             }
@@ -413,7 +430,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         cause_counts[match end_cause {
             EndCause::ReachedTerminalDepth => 0,
             EndCause::BlackCapExhausted => 1,
-            EndCause::DegenerateExhausted => 2,
+            EndCause::OccFloorExhausted => 2,
+            EndCause::DegenerateExhausted => 3,
         }] += 1;
 
         if reached < target {
@@ -491,9 +509,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         .map_err(|e| format!("save pool grid: {e}"))?;
 
     // --- pool_sheet.html (the deliverable Matt judges) ---
+    let ci = interior_summary(&chosen_interiors);
     let html = build_html(
         &cands, &walk_reached, &branch_counts, root_count, died_early, &cause_counts,
-        black_rejects, black_cap_on, black_cap, args, &sigmas,
+        black_rejects, black_cap_on, black_cap, occ_rejects, occ_on, occ_floor, &ci,
+        args, &sigmas,
     );
     let html_path = out_dir.join("pool_sheet.html");
     std::fs::write(&html_path, html).map_err(|e| format!("write pool_sheet.html: {e}"))?;
@@ -510,15 +530,44 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // --- repetition: most-repeated emitted frame (round center+fw). ---
     let (top_mult, n_unique) = repetition(&cands);
 
-    println!("=== guided-descend (rev2) ===");
-    println!("seed={}  walks={}  candidates={}", args.seed, args.n_walks, cands.len());
+    println!("=== guided-descend (rev3) ===");
+    println!(
+        "seed={}  walks={}  candidates={}  best-of-{}",
+        args.seed, args.n_walks, cands.len(), screen.n_cand
+    );
     println!(
         "branch breakdown: root={} foci={} density={} random={}",
         root_count, branch_counts[0], branch_counts[1], branch_counts[2]
     );
-    print!("depth histogram (emitted):");
+    print!("depth histogram (emitted, all visited frames):");
     for (d, n) in depth_hist.iter().enumerate().skip(1) {
         print!(" d{d}={n}");
+    }
+    println!();
+    // Terminal-depth histogram (the target each walk drew) — this is where the
+    // depth_min=4 floor is visible (the emitted histogram always carries d1..d3
+    // pass-through frames).
+    let mut target_hist = vec![0usize; (args.depth_max + 1) as usize];
+    for &(_reached, target) in &walk_reached {
+        target_hist[target as usize] += 1;
+    }
+    print!("terminal-depth histogram (target drawn, floor={}):", args.depth_min);
+    for (d, n) in target_hist.iter().enumerate().skip(1) {
+        if *n > 0 || (d as u32 >= args.depth_min && d as u32 <= args.depth_max) {
+            print!(" d{d}={n}");
+        }
+    }
+    println!();
+    // Reached-depth histogram (how deep walks actually got after early deaths).
+    let mut reached_hist = vec![0usize; (args.depth_max + 1) as usize];
+    for &(reached, _target) in &walk_reached {
+        reached_hist[reached as usize] += 1;
+    }
+    print!("reached-depth histogram (actual leaf):");
+    for (d, n) in reached_hist.iter().enumerate() {
+        if *n > 0 {
+            print!(" d{d}={n}");
+        }
     }
     println!();
     println!(
@@ -534,16 +583,119 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         died_early, args.n_walks
     );
     println!(
-        "end-of-walk cause: reached_terminal_depth={} black_cap_exhausted={} degenerate_exhausted={} \
-         (black cap {}; {} total steps killed by cap)",
-        cause_counts[0], cause_counts[1], cause_counts[2],
-        if black_cap_on { format!("{black_cap}") } else { "OFF".into() },
-        black_rejects,
+        "end-of-walk cause: terminal={} black_cap_exhausted={} occ_floor_exhausted={} degenerate_exhausted={}",
+        cause_counts[0], cause_counts[1], cause_counts[2], cause_counts[3],
+    );
+    println!(
+        "best-of-N rejects: black-cap {} ({}), occ-floor {} ({}) — total candidates screened out",
+        black_rejects, if black_cap_on { format!("<{black_cap}") } else { "OFF".into() },
+        occ_rejects, if occ_on { format!(">={occ_floor}") } else { "OFF".into() },
+    );
+    println!(
+        "chosen interior fraction (drift check): n={} min={:.3} p25={:.3} med={:.3} p75={:.3} max={:.3} mean={:.3}",
+        ci.n, ci.min, ci.p25, ci.med, ci.p75, ci.max, ci.mean,
     );
     println!("elapsed: {:.1}s", t0.elapsed().as_secs_f64());
     println!("pool.jsonl + pool_grid.png + tiles/ under {}", out_dir.display());
     println!("sheet: {}", html_path.display());
     Ok(())
+}
+
+// ===========================================================================
+// Best-of-N set-avoidant step selection (rev3 Change 2)
+// ===========================================================================
+
+/// Shared best-of-N screen config (constant across the whole run).
+struct StepScreen<'a> {
+    n_cand: usize,
+    node_w: u32,
+    node_h: u32,
+    maxiter: u32,
+    band: &'a crate::generate::AcceptBand,
+    black_cap: f64,
+    black_cap_on: bool,
+    occ_floor: f64,
+    occ_on: bool,
+    gate_palette: &'a Palette,
+    params: &'a crate::coloring::ColorParams,
+}
+
+/// Draw up to `cfg.n_cand` candidates from `gen` and select the **least-interior**
+/// survivor of a two-stage screen:
+/// - **Stage 1 (cheap):** probe at [`PROBE_W`] escape-time, reject interior ≥ cap.
+///   Interior fraction is scale-robust, so the cheap probe is a sound ceiling.
+/// - **Stage 2 (768):** render the node, cull degenerate (band: flat/instant-escape),
+///   then shade + reject occupancy < floor. The winner's 768 buffer is reused.
+///
+/// With no survivor, [`StepResult::Died`] reports the furthest-reached binding
+/// constraint: occ-floor (a candidate cleared the cap+band) > black-cap (all too
+/// black) > degenerate (none cleared the band).
+fn best_of_n_step(
+    cfg: &StepScreen,
+    new_fw: f64,
+    render_node: &impl Fn(&Frame) -> render::SampleBuffer,
+    gen: &mut dyn FnMut() -> Option<StepCand>,
+    black_rejects: &mut usize,
+    occ_rejects: &mut usize,
+) -> StepResult {
+    let mut saw_black = false; // a candidate failed the Stage-1 interior cap
+    let mut saw_degen = false; // a candidate cleared the cap but failed the band
+    let mut saw_occ = false; // a candidate cleared the band but failed the occ floor
+    // Winner so far = smallest interior fraction among full survivors.
+    let mut best: Option<(Frame, render::SampleBuffer, &'static str, &'static str, f64, f64)> = None;
+
+    for _ in 0..cfg.n_cand.max(1) {
+        let Some(sc) = gen() else { break };
+        let frame = Frame {
+            center: sc.center,
+            frame_width: new_fw,
+            out_width: cfg.node_w,
+            out_height: cfg.node_h,
+        };
+
+        // --- Stage 1: cheap interior screen (~PROBE_W escape-time). ---
+        if cfg.black_cap_on {
+            let probe_h = (PROBE_W as f64 * cfg.node_h as f64 / cfg.node_w as f64).round().max(1.0) as u32;
+            let probe = Frame { out_width: PROBE_W, out_height: probe_h, ..frame };
+            let pbuf = render_node(&probe);
+            if render::black_fraction(&pbuf.samples) as f64 >= cfg.black_cap {
+                saw_black = true;
+                *black_rejects += 1;
+                continue;
+            }
+        }
+
+        // --- Stage 2: 768 node render → band cull → occupancy floor. ---
+        let buf = render_node(&frame);
+        let (int_frac, esc) = generate::screen_stats(&buf.samples, cfg.maxiter);
+        if !cfg.band.test(int_frac, esc.spread, esc.median).accepted {
+            saw_degen = true;
+            continue;
+        }
+        if cfg.occ_on {
+            let img = render::shade_and_downsample(
+                &buf.samples, cfg.node_w, cfg.node_h, 1, cfg.gate_palette, cfg.params, frame.pixel_size(),
+            );
+            if energy::occupancy(&img, OCC_GX, OCC_GY, OCC_FLOOR) < cfg.occ_floor {
+                saw_occ = true;
+                *occ_rejects += 1;
+                continue;
+            }
+        }
+
+        // Full survivor: keep it iff it is the least-set seen so far.
+        if best.as_ref().map_or(true, |b| int_frac < b.5) {
+            best = Some((frame, buf, sc.branch, sc.placement, sc.fscore, int_frac));
+        }
+    }
+
+    match best {
+        Some((f, b, br, pl, fs, ifr)) => StepResult::Accepted(f, b, br, pl, fs, ifr),
+        None if saw_occ => StepResult::Died(EndCause::OccFloorExhausted),
+        None if saw_black => StepResult::Died(EndCause::BlackCapExhausted),
+        None if saw_degen => StepResult::Died(EndCause::DegenerateExhausted),
+        None => StepResult::Died(EndCause::DegenerateExhausted),
+    }
 }
 
 // ===========================================================================
@@ -1035,6 +1187,37 @@ fn dilate(mask: &[f64], w: usize, h: usize, r: usize) -> Vec<f64> {
 // Output helpers
 // ===========================================================================
 
+/// Summary of the per-step chosen interior fractions (the min-interior selection's
+/// drift check: does it pull walks toward the empty/thin floor?).
+struct InteriorSummary {
+    n: usize,
+    min: f64,
+    p25: f64,
+    med: f64,
+    p75: f64,
+    max: f64,
+    mean: f64,
+}
+
+/// Five-number + mean summary of the chosen interior fractions (empty → all zero).
+fn interior_summary(xs: &[f64]) -> InteriorSummary {
+    if xs.is_empty() {
+        return InteriorSummary { n: 0, min: 0.0, p25: 0.0, med: 0.0, p75: 0.0, max: 0.0, mean: 0.0 };
+    }
+    let mut s = xs.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let q = |p: f64| s[((p * (s.len() - 1) as f64).round() as usize).min(s.len() - 1)];
+    InteriorSummary {
+        n: s.len(),
+        min: s[0],
+        p25: q(0.25),
+        med: q(0.5),
+        p75: q(0.75),
+        max: s[s.len() - 1],
+        mean: s.iter().sum::<f64>() / s.len() as f64,
+    }
+}
+
 /// Std-dev of depth-1 root-window centers in (re, im) — a coarse read on whether
 /// the boundary sampler spread walks across the fw-3.0 view or piled up.
 fn root_spread(roots: &[&Candidate]) -> (f64, f64) {
@@ -1098,10 +1281,14 @@ fn build_html(
     branch_counts: &[usize; 3],
     root_count: usize,
     died_early: usize,
-    cause_counts: &[usize; 3],
+    cause_counts: &[usize; 4],
     black_rejects: usize,
     black_cap_on: bool,
     black_cap: f64,
+    occ_rejects: usize,
+    occ_on: bool,
+    occ_floor: f64,
+    ci: &InteriorSummary,
     args: &GuidedDescendArgs,
     sigmas: &[f64],
 ) -> String {
@@ -1175,18 +1362,21 @@ figcaption{{padding:2px 5px;font-size:10px;color:#9aa;background:#12141a}}\
 .cap{{padding:2px 6px;font-size:10px;color:#9aa;background:#12141a}}\
 .cap b{{color:#5ec07a}}\
 </style></head><body>\
-<header><h1>guided-descend rev2 — candidate pool ({ncand} candidates)</h1>\
-<div class=note>{nwalks} walks emitting · branch root={rt} foci={bf} density={bd} random={br} · \
+<header><h1>guided-descend rev3 — candidate pool ({ncand} candidates)</h1>\
+<div class=note>{nwalks} walks emitting · best-of-{ncand_n} · branch root={rt} foci={bf} density={bd} random={br} · \
 depth: {dh}· walks died early {died}/{total} · \
-end-cause: terminal={ct} black-cap={cb} degenerate={cd} ({brk} steps killed by cap) · \
-nav black-cap {blk} · preview {pal} · root-zoom {rz} (depth-1 fw≈{d1fw:.3}) · \
+end-cause: terminal={ct} black-cap={cb} occ-floor={co} degenerate={cd} · \
+best-of-N rejects: black-cap {blk} ×{brk}, occ-floor {olk} ×{ork} · \
+chosen interior (drift check): med={cimed:.3} [{cimin:.3}..{cimax:.3}] p25/p75 {cip25:.3}/{cip75:.3} · \
+preview {pal} · root-zoom {rz} (depth-1 fw≈{d1fw:.3}) · \
 root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max-rep ×{tmult} · \
-σ {sig:?} · zoom/step {zps} · seed {seed} · gates on black/interior ONLY (no busyness axis) · \
+σ {sig:?} · zoom/step {zps} · seed {seed} · gates on black/interior + occupancy ONLY (no busyness axis) · \
 <b>no quality claims</b> — eyeball the sampling behaviour</div></header>\
 <h2>by walk — descent ladders (root→leaf left→right)</h2>{ladders}\
 <h2>flat pool ({ncand})</h2><div class=grid>{flat}</div>\
 </body></html>",
         ncand = cands.len(),
+        ncand_n = args.descent_candidates.max(1),
         nwalks = nwalks,
         rt = root_count,
         bf = branch_counts[0],
@@ -1197,9 +1387,17 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         total = args.n_walks,
         ct = cause_counts[0],
         cb = cause_counts[1],
-        cd = cause_counts[2],
+        co = cause_counts[2],
+        cd = cause_counts[3],
         brk = black_rejects,
         blk = if black_cap_on { format!("<{black_cap}") } else { "OFF".into() },
+        ork = occ_rejects,
+        olk = if occ_on { format!(">={occ_floor}") } else { "OFF".into() },
+        cimed = ci.med,
+        cimin = ci.min,
+        cimax = ci.max,
+        cip25 = ci.p25,
+        cip75 = ci.p75,
         pal = args.preview_palette,
         rz = args.root_zoom,
         d1fw = 3.0 * args.root_zoom,
