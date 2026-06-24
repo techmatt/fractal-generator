@@ -2,7 +2,7 @@
   "batch_id": "2026-06-24_guided_descend_rev4",
   "schema_version": 1,
   "created": "2026-06-24",
-  "labeler": null,
+  "labeler": "matt",
   "generator_version": "guided_descend_rev4",
   "source_run": "data/guided_descend/run4/pool.jsonl",
   "present_input": "out/present/run4_bridge/locations.jsonl (pool_to_locations.py bridge)",
@@ -82,7 +82,7 @@
   },
   "counts": {
     "units": 1176,
-    "labeled": 0,
+    "labeled": 1176,
     "by_palette": {
       "cet_linear_kry_5_95_c72": 24,
       "Spectral": 12,
@@ -190,6 +190,12 @@
       "10": 29
     },
     "crops_copied": 1176,
-    "missing_provenance": 0
-  }
+    "missing_provenance": 0,
+    "score_hist": {
+      "1": 988,
+      "2": 149,
+      "3": 39
+    }
+  },
+  "labeled_at": "2026-06-24"
 }
