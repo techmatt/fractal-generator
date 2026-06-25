@@ -204,16 +204,6 @@ pub enum Command {
     /// outliers, extract exact color targets + proxy structural priors, and emit
     /// `targets.json` (bootstrap bands, optionally blended toward labeled picks).
     Corpus(crate::corpus::CorpusArgs),
-    /// DE-coherence gate isolation probe: render one frame (f64) and report the
-    /// `subpixel_frac` speckle indicator (escaped pixels with `de_px < θ`),
-    /// `esc_frac`, and median `de_px`, with `de_px` pinned to the target
-    /// wallpaper spacing. Validates the missing selection statistic in isolation.
-    Cohere(crate::coherence::CohereArgs),
-    /// Coverage-dominance scorer: render one frame f64 and report `coverage` (the
-    /// fraction of the escaped frame at the magical few-pixels boundary spacing) plus
-    /// the speckle/interior/busy gates; a band-sensitivity table and optional
-    /// scale-sweep make it the discrimination + retune tool for the harvest.
-    Cover(crate::coherence::CoverArgs),
     /// Corpus energy-histogram metric calibration + eye-check (Prompt
     /// corpus-energy-calibration). Computes a multi-scale OKLab edge-energy
     /// histogram for every corpus wallpaper, freezes equal-count bins per scale,
