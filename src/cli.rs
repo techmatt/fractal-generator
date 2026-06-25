@@ -200,8 +200,6 @@ pub enum Command {
     /// `data/guided_descend/<run>/`. Geometric policies only — no CNN, no dedup,
     /// no prefix-sharing. Diagnosis-first; `generate` is left intact as the control.
     GuidedDescend(crate::guided_descend::GuidedDescendArgs),
-    /// Deterministic feature navigation (atom-domain + Newton nuclei) filmstrip.
-    Navigate(crate::navigate::NavigateArgs),
     /// Corpus feature extractor: decode a wallpaper folder, reject non-fractal
     /// outliers, extract exact color targets + proxy structural priors, and emit
     /// `targets.json` (bootstrap bands, optionally blended toward labeled picks).

@@ -53,8 +53,9 @@ pub struct PixelSample {
     pub glitched: bool,
     /// **Navigation channel, not coloring.** The iteration `n ≥ 1` at which the
     /// orbit made its closest approach to the origin (`z_0 = 0` is skipped). This
-    /// is the period of the nearby minibrot — the atom domain (see
-    /// `crate::navigate`). The coloring stage ignores it. Both Mandelbrot
+    /// is the period of the nearby minibrot — the atom domain. The coloring
+    /// stage ignores it (the feature-navigation tooling that consumed it was
+    /// retired in the P2 subcommand cull). Both Mandelbrot
     /// backends populate it identically (perturbation feeds the full value
     /// `Z[m]+δ`, so `n` is absolute and unaffected by rebasing); Julia leaves the
     /// default `0`.

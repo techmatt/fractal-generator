@@ -41,7 +41,6 @@ pub mod generate;
 pub mod guided_descend;
 pub mod hp;
 pub mod jsonl;
-pub mod navigate;
 pub mod palette;
 pub mod palette_io;
 pub mod palette_pick;

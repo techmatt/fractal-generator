@@ -19,7 +19,6 @@ use fractal_generator::energy;
 use fractal_generator::enrich;
 use fractal_generator::generate;
 use fractal_generator::guided_descend;
-use fractal_generator::navigate;
 use fractal_generator::palette_probe;
 use fractal_generator::present;
 use fractal_generator::probe::PERTURB_SPACING;
@@ -335,7 +334,6 @@ fn run() -> Result<(), String> {
         Some(Command::Generate(args)) => generate::run_generate(args),
         Some(Command::Present(args)) => present::run_present(args),
         Some(Command::GuidedDescend(args)) => guided_descend::run_guided_descend(args),
-        Some(Command::Navigate(args)) => navigate::run_navigate(args),
         Some(Command::Corpus(args)) => corpus::run_corpus(args),
         Some(Command::Cohere(args)) => coherence::run_cohere(args),
         Some(Command::Cover(args)) => coherence::run_cover(args),
