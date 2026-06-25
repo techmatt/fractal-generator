@@ -47,6 +47,11 @@ class CorpusRow:
     black_fraction: float
     palette: str
     composition: str
+    # v2-filtered-enrichment batch (v3): the selection bias tag. None for the
+    # provenance-blind batches (loose0, run4); "enriched" (v2-biased, train-LOCKED)
+    # or "random_eval" (unbiased rev4 sample) for the filtered batch. Read ONLY by
+    # the v3 split helper — never a model input (corpus contract).
+    selection_role: str | None = None
     # derived keys
     group_unit: str = field(default="")   # batch-qualified CV/holdout correlation unit
     loc_unit: str = field(default="")     # batch-qualified location (best-over-palettes) key
@@ -106,6 +111,7 @@ def load_corpus_rows(corpus_dir: str | None = None,
                 black_fraction=bf,
                 palette=r["render"].get("palette", ""),
                 composition=r["render"].get("composition", ""),
+                selection_role=prov.get("selection_role"),
             ))
     return rows
 
