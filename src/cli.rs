@@ -291,15 +291,6 @@ pub enum Command {
     /// sheet. Diagnosis-only — no band, no scoring, no render-path change; Matt
     /// picks. Sheet + reproducibility legend land under `data/palette_pick/`.
     PalettePick(crate::palette_pick::PalettePickArgs),
-    /// Palette-scoring surface: iterate 4 fixed "good" views ONCE (reusing
-    /// `present`'s render config) and recolor them into a clean 2×2 grid under
-    /// **each** of the 224 library palettes, so Matt can hand-label palette
-    /// quality (1/2/3) decoupled from location quality. Without `--full` it stops
-    /// at a `twilight_shifted` preview grid (the views-fixture eyeball gate); with
-    /// `--full` it writes one grid PNG per palette + a manifest under
-    /// `data/palette_score/`. Selective mirror per `mirror_needed`, exactly as
-    /// `present`/`palette-pick`. Deterministic; no scoring (Matt judges).
-    PaletteScore(crate::palette_score::PaletteScoreArgs),
     /// Antialiasing bake-off at the 2560×1440 target: one view × one cyclic
     /// palette, rendered under five AA schemes (ordered grid ss2/ss3/ss4 +
     /// rotated-grid 4-rooks + stratified jitter) so two axes — sample count and
