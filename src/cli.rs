@@ -285,12 +285,6 @@ pub enum Command {
     /// sparse-rejection. Marginal control only — no good-busy vs bad-busy split.
     /// Picks no band, builds no loop. Matt judges the eye-check sheets.
     Muster(crate::energy::MusterArgs),
-    /// Diagnostic palette favorite-picker: iterate one fixed dense field (the
-    /// seahorse-valley spiral) ONCE and re-shade it across N palettes sampled
-    /// (fixed seed) from the survivor colormap library, into one labeled contact
-    /// sheet. Diagnosis-only — no band, no scoring, no render-path change; Matt
-    /// picks. Sheet + reproducibility legend land under `data/palette_pick/`.
-    PalettePick(crate::palette_pick::PalettePickArgs),
     /// Locked wallpaper-render default: render ONE (location × palette) at the
     /// settled quality — grid ss4 + Lanczos-3 @ 2560×1440 — to a caller-chosen
     /// stable path, reporting iterate / filter / total wall-clock. An extract of

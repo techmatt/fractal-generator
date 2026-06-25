@@ -1,196 +1,21 @@
-//! `palette-pick` subcommand: diagnostic palette favorite-picker.
+//! Survivor colormap library loader (`clean_colormaps.json`).
 //!
-//! Renders **one fixed dense fractal field** (the seahorse-valley spiral, the
-//! handoff's preferred palette-reading location) **once**, then re-shades that
-//! single iterated buffer across N palettes sampled from the survivor colormap
-//! library (`clean_colormaps.json`). Pure diagnosis: no band, no scoring, no
-//! render-path change — Matt eyeballs the contact sheet and picks a favorite
-//! diagnostic palette.
-//!
-//! Separability is the whole point: the expensive iteration runs one time and
-//! every palette is an O(LUT) re-shade ([`sheet::render_contact_sheet`]). The
-//! sample is deterministic for a fixed `--seed` (SplitMix64 partial Fisher-Yates
-//! over the fixed library order), so the sheet is reproducible and every tile is
-//! identifiable by its burned-in index via the printed/saved legend.
-
-use std::fmt::Write as _;
-
-use num_complex::Complex;
-
-use crate::backend::{Trap, TrapShape};
-use clap::Args;
-use crate::cli::BackendChoice;
-use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
-use crate::hp;
-use crate::palette::Palette;
-use crate::probe::{render_mandel_panel, SplitMix64};
-use crate::sheet;
-
-pub fn run_palette_pick(args: &PalettePickArgs) -> Result<(), String> {
-    // 1. Load + parse the survivor colormap library.
-    let text = std::fs::read_to_string(&args.colormaps)
-        .map_err(|e| format!("failed to read '{}': {e}", args.colormaps))?;
-    let library = parse_colormaps(&text)
-        .map_err(|e| format!("parsing '{}': {e}", args.colormaps))?;
-    if library.is_empty() {
-        return Err(format!("no colormaps in '{}'", args.colormaps));
-    }
-
-    // 2. Deterministic sample of `--count` distinct palettes (partial
-    //    Fisher-Yates over the fixed library order, seeded). Selection order is
-    //    the tile order — reproducible for a fixed seed.
-    let want = args.count.min(library.len());
-    if args.count > library.len() {
-        eprintln!(
-            "note: requested {} palettes but library has only {}; using all {}",
-            args.count,
-            library.len(),
-            library.len()
-        );
-    }
-    let mut rng = SplitMix64(args.seed);
-    let mut idx: Vec<usize> = (0..library.len()).collect();
-    for i in 0..want {
-        let j = i + rng.below(library.len() - i);
-        idx.swap(i, j);
-    }
-    idx.truncate(want);
-
-    let palettes: Vec<Palette> = idx
-        .iter()
-        .map(|&i| {
-            let cm = &library[i];
-            // Selective seam fix: SEQUENTIAL (mirror_needed) maps bake pre-mirrored
-            // (out-and-back); cyclic maps stay single-pass.
-            Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, false, cm.mirror_needed)
-        })
-        .collect();
-
-    // 3. Iterate the fixed field ONCE (f64 cheap-regime — shallow spiral).
-    let panel_w = args.tile_width.max(1);
-    let panel_h = (panel_w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
-    let prec = hp::prec_bits(panel_w, args.frame_width);
-    let center_re = hp::parse_decimal(&args.center_re, prec)?;
-    let center_im = hp::parse_decimal(&args.center_im, prec)?;
-    let center_f64 = Complex::new(hp::to_f64(&center_re), hp::to_f64(&center_im));
-    let trap = Trap {
-        shape: TrapShape::Point,
-        center: Complex::new(0.0, 0.0),
-        radius: 1.0,
-    };
-
-    eprintln!(
-        "palette-pick: field ({}, {}) width {:.3e}, maxiter {}, tile {}x{} ss{}, {} palettes (seed {})",
-        args.center_re,
-        args.center_im,
-        args.frame_width,
-        args.maxiter,
-        panel_w,
-        panel_h,
-        args.supersample,
-        palettes.len(),
-        args.seed,
-    );
-
-    let panel = render_mandel_panel(
-        &center_re,
-        &center_im,
-        center_f64,
-        args.frame_width,
-        panel_w,
-        panel_h,
-        args.supersample,
-        args.maxiter,
-        args.bailout,
-        prec,
-        trap,
-        BackendChoice::Auto,
-    );
-
-    // Density sanity read: a flat field (mostly interior or mostly fast-escape)
-    // reads palette character poorly. Report the escaped fraction so a sparse
-    // field is visible without opening the sheet.
-    let total = panel.buf.samples.len();
-    let escaped = panel.buf.samples.iter().filter(|s| s.escaped).count();
-    let esc_frac = escaped as f64 / total.max(1) as f64;
-    eprintln!(
-        "field density: {:.1}% escaped ({} backend); <~15% or >~95% reads flat — \
-         if so, swap to a denser corridor keeper via --center-*/--frame-width",
-        esc_frac * 100.0,
-        panel.backend_name,
-    );
-
-    // 4. Re-shade across every palette into one contact sheet (default coloring,
-    //    matching `render`'s defaults — smooth escape time).
-    let params = ColorParams {
-        density: 0.025,
-        offset: 0.0,
-        channel: ColorChannel::Smooth,
-        interior: InteriorMode::Black,
-        trap_scale: 1.0,
-        trap_curve: TrapCurve::Sqrt,
-        trap_phase_strength: 0.0,
-        de_shade: None,
-        mark_glitches: false,
-    };
-    let (grid, legend) =
-        sheet::render_contact_sheet(&panel.buf, &palettes, &params, panel.spacing, args.cols);
-
-    // 5. Persist the sheet + a reproducibility legend OUTSIDE out/ (load-bearing
-    //    pick artifact — survives `rm -r out/*`).
-    let sheet_path = format!("{}/palette_pick.png", args.out_dir.trim_end_matches('/'));
-    let legend_path = format!("{}/palette_pick_legend.txt", args.out_dir.trim_end_matches('/'));
-    crate::ensure_parent_dir(&sheet_path)?;
-    grid.save(&sheet_path)
-        .map_err(|e| format!("failed to write {sheet_path}: {e}"))?;
-
-    let mut legend_txt = String::new();
-    writeln!(legend_txt, "# diagnostic-palette pick").ok();
-    writeln!(
-        legend_txt,
-        "# field: center ({}, {}), frame_width {:.6e}, maxiter {}",
-        args.center_re, args.center_im, args.frame_width, args.maxiter
-    )
-    .ok();
-    writeln!(
-        legend_txt,
-        "# tile {panel_w}x{panel_h} ss{}, escaped {:.1}%",
-        args.supersample,
-        esc_frac * 100.0
-    )
-    .ok();
-    writeln!(
-        legend_txt,
-        "# library: {} ({} entries), sampled {} with seed {}",
-        args.colormaps,
-        library.len(),
-        palettes.len(),
-        args.seed
-    )
-    .ok();
-    writeln!(legend_txt, "# tile order is deterministic (selection order).").ok();
-    for line in &legend {
-        writeln!(legend_txt, "{line}").ok();
-    }
-    std::fs::write(&legend_path, &legend_txt)
-        .map_err(|e| format!("failed to write {legend_path}: {e}"))?;
-
-    for line in &legend {
-        println!("{line}");
-    }
-    eprintln!("wrote {sheet_path} ({} tiles) + {legend_path}", palettes.len());
-    Ok(())
-}
+//! Hosts the shared `.json` colormap parser — [`parse_colormaps`] → [`Colormap`]
+//! (name, sRGB8 stops, the inline `mirror_needed` label) — built on a tiny
+//! hand-rolled JSON reader ([`Json`] / [`JsonParser`]; the project avoids serde).
+//! Loaded by `present`, `enrich`, `render_one`, and `palette_probe` to bake the
+//! survivor palettes through the selective-mirror path. The diagnostic
+//! `palette-pick` favorite-picker subcommand that originally lived here was
+//! retired in the P2 subcommand cull; only the loader remains.
 
 /// A colormap parsed out of `clean_colormaps.json`: a name, its sRGB8 stops, the
 /// inline `mirror_needed` classification (SEQUENTIAL → pre-mirror at bake), and
-/// the `cycle` label (provenance only). Shared with `palette_score`.
+/// Shared across the corpus render path (`present` / `enrich` / `render_one` /
+/// `palette_probe`).
 pub(crate) struct Colormap {
     pub(crate) name: String,
     pub(crate) stops: Vec<(f64, [u8; 3])>,
     pub(crate) mirror_needed: bool,
-    /// Inline `cycle` classification string (e.g. "cyclic" / "sequential"), if present.
-    pub(crate) cycle: Option<String>,
 }
 
 /// Parse the survivor colormap library: a JSON array of
@@ -212,7 +37,6 @@ pub(crate) fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
         let mut name = None;
         let mut stops_json = None;
         let mut mirror_needed = false;
-        let mut cycle = None;
         for (k, val) in obj {
             match k.as_str() {
                 "name" => {
@@ -224,11 +48,6 @@ pub(crate) fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
                 "mirror_needed" => {
                     if let Json::Bool(b) = val {
                         mirror_needed = b;
-                    }
-                }
-                "cycle" => {
-                    if let Json::Str(s) = val {
-                        cycle = Some(s);
                     }
                 }
                 _ => {}
@@ -266,7 +85,7 @@ pub(crate) fn parse_colormaps(text: &str) -> Result<Vec<Colormap>, String> {
         if stops.len() < 2 {
             return Err(format!("colormap '{name}': need ≥2 stops, found {}", stops.len()));
         }
-        out.push(Colormap { name, stops, mirror_needed, cycle });
+        out.push(Colormap { name, stops, mirror_needed });
     }
     Ok(out)
 }
@@ -495,61 +314,4 @@ mod tests {
     fn rejects_non_array_root() {
         assert!(parse_colormaps(r#"{"name": "a"}"#).is_err());
     }
-}
-
-
-// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
-/// `palette-pick` subcommand: see `palette_pick::run_palette_pick`. Reproducible
-/// for a fixed `--seed`; the field is shallow (f64 cheap-regime, asserted by the
-/// auto backend staying f64).
-#[derive(Args, Debug)]
-pub struct PalettePickArgs {
-    /// Field center, real part — the handoff's preferred palette-reading spiral.
-    #[arg(long, default_value = "-0.7453", allow_hyphen_values = true)]
-    pub center_re: String,
-
-    /// Field center, imaginary part.
-    #[arg(long, default_value = "0.1127", allow_hyphen_values = true)]
-    pub center_im: String,
-
-    /// Frame width in the complex plane. Default frames a dense spiral; shrink it
-    /// (or move the center) if the density read says the field is flat.
-    #[arg(long, default_value_t = 0.012)]
-    pub frame_width: f64,
-
-    /// Maximum iterations before a pixel is treated as interior.
-    #[arg(long, default_value_t = 2000)]
-    pub maxiter: u32,
-
-    /// Per-tile width in pixels (height follows 16:9). Modest diagnostic size.
-    #[arg(long, default_value_t = 320)]
-    pub tile_width: u32,
-
-    /// Linear supersampling factor (S×S box downsample) per tile.
-    #[arg(long, default_value_t = 1)]
-    pub supersample: u32,
-
-    /// Number of palettes to sample from the library.
-    #[arg(long, default_value_t = 100)]
-    pub count: usize,
-
-    /// SplitMix64 seed for the deterministic palette sample (reproducible).
-    #[arg(long, default_value_t = 0)]
-    pub seed: u64,
-
-    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
-    #[arg(long, default_value_t = 1e6)]
-    pub bailout: f64,
-
-    /// Grid columns (default ≈ √N).
-    #[arg(long)]
-    pub cols: Option<usize>,
-
-    /// Survivor colormap library (JSON array of name/source/stops objects).
-    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
-    pub colormaps: String,
-
-    /// Output directory for the sheet + reproducibility legend.
-    #[arg(long, default_value = "out/palette_pick")]
-    pub out_dir: String,
 }

@@ -21,7 +21,6 @@ use fractal_generator::enrich;
 use fractal_generator::generate;
 use fractal_generator::guided_descend;
 use fractal_generator::navigate;
-use fractal_generator::palette_pick;
 use fractal_generator::palette_probe;
 use fractal_generator::present;
 use fractal_generator::probe::PERTURB_SPACING;
@@ -353,7 +352,6 @@ fn run() -> Result<(), String> {
         Some(Command::Anchor(args)) => energy::run_anchor(args),
         Some(Command::Dedup(args)) => energy::run_dedup(args),
         Some(Command::Muster(args)) => energy::run_muster(args),
-        Some(Command::PalettePick(args)) => palette_pick::run_palette_pick(args),
         Some(Command::RenderOne(args)) => render_one::run_render_one(args),
         Some(Command::PaletteProbe(args)) => palette_probe::run_palette_probe(args),
         Some(Command::Enrich(args)) => enrich::run_enrich(args),
