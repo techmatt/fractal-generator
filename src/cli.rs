@@ -300,15 +300,6 @@ pub enum Command {
     /// region. Emits `tools/viz/aa_study.html` + a JSON log (stable path, not
     /// `out/`). Box downsample fixed; the reconstruction-filter study is next.
     AaStudy(crate::aa_study::AaStudyArgs),
-    /// AA reconstruction-filter bake-off: one view × one cyclic palette, rendered
-    /// **once** at grid ss4 (16 spp), then downsampled three ways — box vs
-    /// Mitchell–Netravali vs Lanczos-3 — over the *same* shaded supersample buffer.
-    /// The filter only reweights samples already iterated, so the two extra cells
-    /// are ~free on top of the single ~4.2 s iterate. Pins the 1:1 crop to the
-    /// aa-study's selected box so all three filters are judged on identical pixels.
-    /// Emits `tools/viz/aa_filter_study.html` + a JSON log (stable path, not
-    /// `out/`).
-    AaFilter(crate::aa_filter::AaFilterArgs),
     /// Locked wallpaper-render default: render ONE (location × palette) at the
     /// settled quality — grid ss4 + Lanczos-3 @ 2560×1440 — to a caller-chosen
     /// stable path, reporting iterate / filter / total wall-clock. An extract of
