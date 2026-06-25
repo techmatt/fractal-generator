@@ -42,14 +42,12 @@ use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::color_params;
 use crate::palette::{builtin, Palette};
 use crate::palette_pick::{parse_colormaps, Colormap};
-use crate::probe::SplitMix64;
+use crate::probe::{SplitMix64, PERTURB_SPACING};
 use crate::render::{self, black_fraction, DownsampleFilter, Frame};
 use crate::ensure_parent_dir;
 
 const BAILOUT: f64 = 1e6;
 const FULL_FILTER: DownsampleFilter = DownsampleFilter::Lanczos3;
-/// f64 quantization floor on pixel spacing (matches `palette-probe`/`render-one`).
-const PERTURB_SPACING: f64 = 1e-13;
 
 // JPEG crop writer shared via `crate::render::save_jpeg`.
 use crate::render::save_jpeg;

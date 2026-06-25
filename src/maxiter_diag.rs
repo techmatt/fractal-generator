@@ -48,6 +48,7 @@ use crate::energy::{occupancy, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
+use crate::probe::PERTURB_SPACING;
 use crate::render::{self, black_fraction, DownsampleFilter, Frame, SubsamplePattern};
 use crate::{coloring, ensure_parent_dir, hp};
 
@@ -188,7 +189,7 @@ fn render_cell(
         out_height: height,
     };
     let pixel_spacing = frame.pixel_size();
-    if pixel_spacing <= 1e-13 {
+    if pixel_spacing <= PERTURB_SPACING {
         return Err(format!(
             "crop {} pixel spacing {pixel_spacing:.3e} is in f64's quantization regime — \
              maxiter-diag is the shallow f64 path",

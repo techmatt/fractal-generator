@@ -172,9 +172,18 @@ impl AcceptBand {
     }
 }
 
-/// Low fixed coloring density (same as probe 1): ~1 gradient cycle / 250
-/// smooth-iter, so value→color reads as structure, not palette churn. Shared
-/// with `reject_corridor` so its tiles shade exactly like keeper previews.
+/// **The canonical corpus / wallpaper coloring standard** (density 0.004,
+/// `Smooth` channel, `Black` interior). ~1 gradient cycle / 250 smooth-iter, so
+/// value→color reads as structure, not palette churn.
+///
+/// This no-arg constructor — distinct from the `color_params(shade: &ShadeArgs)`
+/// CLI-render variants in `main`/`probe` — is the de-facto coloring every corpus
+/// path shares: `present`, `palette_probe`, `enrich`, `render_one`, `aa_study`,
+/// `aa_filter`, `palette_score`, `guided_descend`, `reject_corridor`, and
+/// `maxiter_diag` all import it so their tiles shade identically to keeper
+/// previews. It lives in `generate` for historical reasons (probe 1 was its
+/// first caller); treat it as the shared standard, not a generate-private knob.
+/// (`energy::default_color_params` is a separate, diagnostics-only default.)
 pub(crate) fn color_params() -> ColorParams {
     ColorParams {
         density: 0.004,

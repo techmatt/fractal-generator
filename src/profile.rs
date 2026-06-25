@@ -36,12 +36,8 @@ use crate::cli::ProfileArgs;
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use crate::hp;
 use crate::palette::builtin;
+use crate::probe::PERTURB_SPACING;
 use crate::render::{self, Frame, SampleBuffer};
-
-/// Pixel spacing at/below which f64 enters its quantization regime (mirrors
-/// `main`'s `PERTURB_SPACING`). Used only to *assert* this stays in the f64
-/// regime — the prompt scopes f64 exclusively.
-const PERTURB_SPACING: f64 = 1e-13;
 
 /// Min + median of a set of timings (seconds). The kernel is deterministic, so
 /// the min is the cleanest estimate and the median–min gap is system noise.

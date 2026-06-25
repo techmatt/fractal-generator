@@ -31,6 +31,7 @@ use fractal_generator::palette_pick;
 use fractal_generator::palette_score;
 use fractal_generator::palette_probe;
 use fractal_generator::present;
+use fractal_generator::probe::PERTURB_SPACING;
 use fractal_generator::profile;
 use fractal_generator::reject_corridor;
 use fractal_generator::render_one;
@@ -43,9 +44,6 @@ use fractal_generator::palette_io::{load_palette, load_palette_file};
 use fractal_generator::render::{self, Frame};
 use fractal_generator::sheet;
 
-/// Pixel spacing below which f64 enters its quantization regime (≈ eps·|c|).
-/// At or below this, auto-selection switches to perturbation.
-const PERTURB_SPACING: f64 = 1e-13;
 
 /// Frame width below which f64 deltas approach denormals — the v1 cap
 /// (~1e300 magnification). Refuse rather than render garbage.

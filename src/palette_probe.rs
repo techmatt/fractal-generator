@@ -41,7 +41,7 @@ use crate::cli::PaletteProbeArgs;
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
-use crate::probe::SplitMix64;
+use crate::probe::{SplitMix64, PERTURB_SPACING};
 use crate::render::{self, DownsampleFilter, Frame};
 use crate::ensure_parent_dir;
 
@@ -279,7 +279,7 @@ pub fn run_palette_probe(args: &PaletteProbeArgs) -> Result<(), String> {
             out_height: args.height,
         };
         let pixel_spacing = loc.fw / args.width as f64;
-        if pixel_spacing <= 1e-13 {
+        if pixel_spacing <= PERTURB_SPACING {
             return Err(format!(
                 "location draw {} pixel spacing {pixel_spacing:.3e} is inside f64's quantization \
                  regime — palette-probe is the shallow f64 path",

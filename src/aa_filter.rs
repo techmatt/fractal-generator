@@ -30,6 +30,7 @@ use crate::cli::AaFilterArgs;
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
+use crate::probe::PERTURB_SPACING;
 use crate::render::{self, DownsampleFilter, Frame};
 use crate::{coloring, ensure_parent_dir, hp};
 
@@ -86,7 +87,7 @@ pub fn run_aa_filter(args: &AaFilterArgs) -> Result<(), String> {
     let pixel_spacing = args.frame_width / args.width as f64;
 
     // Shallow-regime assertion: f64 ground truth, never perturbation.
-    if pixel_spacing <= 1e-13 {
+    if pixel_spacing <= PERTURB_SPACING {
         return Err(format!(
             "pixel spacing {pixel_spacing:.3e} is in f64's quantization regime — the AA \
              filter study assumes the shallow f64 ground-truth path. Pick a shallower frame width."
