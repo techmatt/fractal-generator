@@ -28,6 +28,14 @@ cargo run --release -- descend --levels 20 --zoom 6 --output descend_strip.png
 
 Long renders / descents should be backgrounded; release builds put deep production-res renders in seconds.
 
+**Windows exe-lock note.** While a long run is executing, the OS file-locks
+`target/release/fractal-generator.exe`, so a concurrent `cargo build --release`
+fails with `Access is denied (os error 5)`. To build/iterate while a background
+run holds the exe, build into an isolated target dir:
+`CARGO_TARGET_DIR=target-test cargo build --release` (run
+`target-test/release/fractal-generator.exe`). `cargo build --release --lib` also
+compile-checks without touching the exe. `target-*/` is gitignored.
+
 ## Architecture
 
 Two deliberate seams structure everything (`src/lib.rs` is the module root; `src/main.rs` is a thin CLI wrapper):
@@ -64,6 +72,51 @@ Memory: the SS buffer is ~48 B × out_w × out_h × ss² (~470 MB at 1920×1280 
 
 The f64 backend is the **ground truth** for perturbation: shallow renders from both must match (`tests/perturbation.rs`, run at `maxiter = 300` where f64 orbits stay accurate — deeper, f64 is *not* valid ground truth at chaotic locations). Separability is enforced by tests that wrap a backend in a `sample()` counter and assert re-coloring never re-iterates (`tests/separability.rs`, `tests/sheet.rs`).
 
+## Corpus & classifier pipeline
+
+The active workstream (the render core above is "done enough"). Goal: a labeled
+corpus that trains an aesthetic classifier across every generator version's output.
+
+**The flow.**
+`guided-descend` → `data/guided_descend/<run>/pool.jsonl` (one candidate location
+per row: cx/cy/fw + idx + provenance) → **either** `present` (zoom/composition
+batches) **or** `enrich` (v2-filtered center batches) → a batch under
+`data/label_corpus/batches/<batch_id>/` (schema: `data/label_corpus/CORPUS_SCHEMA.md`)
+→ label in `tools/viz/corpus_label.html` (exports `scores.json`, merged into
+`images.jsonl` labels by `tools/corpus/merge_scores.py`) → `classifier/` trains by
+**unioning every batch blind to provenance**.
+
+**The label corpus contract** (full spec: `CORPUS_SCHEMA.md`). Each `images.jsonl`
+row has three independent blocks. `render` is **version-invariant** — the identical
+field set across all batches (`RENDER_KEYS` in `tools/corpus/corpus_common.py`),
+cx/cy/fw as decimal strings, and is the *only* thing the classifier sees (it's a
+pure function → `crops/<image_id>.jpg`, rebuildable via `present`/`render-one`).
+`provenance` is **version-tagged**, free to differ/be null across batches
+(`PROVENANCE_KEYS`); it feeds the bias loop only and **never enters training**.
+`label.score ∈ {null,1,2,3}` (bad/okay/good); `null → value` is the ONE allowed
+mutation anywhere in the store — a merge that would change a non-null score warns
+and refuses.
+
+**The classifier** (`classifier/`, pkg). Weights/metrics in
+`data/classifier/{v1,v2,v3}/` (gitignored under the `data/*` rule). v2+ is a CORN
+**ordinal** head (K−1=2 rank-consistent logits) on
+`mobilenetv4_conv_medium.e250_r384_in12k`. Deploy transform =
+`classifier.data.Transform(train=False)`: the deterministic **1280×720 → 384×224
+bicubic stretch + normalize** mirror of `present.rs`'s JPG path (no jitter/flips).
+`model.score_from_logits` returns `Σ σ(logit_k)` ∈ [0,2] — the monotone rank score
+used for AP. **P(not-bad) = σ(logit₀)** (= P(rank≥1) = P(label≥2)). Black-gate
+parity with the Rust render path: accept iff `black_fraction < 0.30`
+(`BLACK_THRESH`, strict `<`).
+
+**The in-memory scoring bridge** (`enrich` subcommand, `src/enrich.rs`).
+`enrich --mode score` iterates each guided-descend pool location once at the label
+geometry, recolors under K seeded score-3 palettes, and streams each recolored RGB
+frame to **stdout** as a raw record (16-byte LE header `idx,ki,w,h` then `w*h*3`
+RGB bytes); `tools/corpus/enrich_score.py` reads the stream and scores every frame
+with v2 through the exact deploy transform — so 10k+ scoring passes never write
+crops to disk. Only the ~1.1k selected `(location, argmax-palette)` rows are
+rendered to JPG (`enrich --mode render`, full ss4 Lanczos3 wallpaper quality).
+
 ## Conventions
 
 > **Generated-output convention.** All generated artifacts — renders, strips, contact sheets, descent/search/corpus/wallpaper JSON, logs, demo fixtures — are written under the single `out/` tree, never the repo root. The root holds only source, config, docs, and committed `assets/`. `out/` is gitignored (except `.gitkeep`), so the entire working corpus wipes with one `rm -r out/*` without touching anything tracked. **New subcommands MUST default their output under `out/<subcommand>/` and MUST NOT write to the repo root.**
@@ -71,6 +124,15 @@ The f64 backend is the **ground truth** for perturbation: shallow renders from b
 The tree is `out/{renders,strips,search,corpus,wallpaper,demos}/`. Use `crate::ensure_parent_dir(path)?` before any top-level `save`/`fs::write` so a no-flag default writes its dir on a fresh checkout.
 
 > **Persistent-store convention (`data/`).** `out/` is *disposable* — anything that must survive `rm -r out/*` lives under `data/` instead (committed, NOT gitignored). Use this for **load-bearing artifacts that are part of a metric's definition** and that you don't want silently regenerated: e.g. `data/calibration/energy_calibration.json` (the `calibrate` frozen quantile bins + per-image histograms — see `energy::ARTIFACT_PATH`). Regenerable *views* (PNG sheets) stay in `out/`. When something reads such an artifact back, expose the default path as a `pub const` (e.g. `energy::ARTIFACT_PATH`) shared by writer and reader rather than re-deriving the string.
+
+> **Adding a subcommand** (until the `cli.rs` split lands, the `Args` struct still
+> lives in `cli.rs`). Four edit sites: (1) the `Args` struct in `src/cli.rs` (or
+> the subcommand's own module — clap derive works on a struct defined anywhere),
+> (2) a `Command` enum variant in `cli.rs` referencing it, (3) `src/main.rs` `use`
+> + dispatch arm, (4) `src/lib.rs` `pub mod`. New subcommands MUST default outputs
+> under `out/<subcommand>/` (disposable) or `data/<subcommand>/` (load-bearing
+> artifacts) — never the repo root. Keep `#[derive(Args)]`/`#[arg(...)]` attributes
+> and all default values/flag names stable (batch reproducibility depends on them).
 
 - Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png only), astro-float. The descend JSON is hand-rolled rather than pulling in serde.
 - Matt is expert (graphics + ML PhD) — be terse and precise; skip basics.
