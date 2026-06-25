@@ -79,30 +79,8 @@ struct Signals {
 }
 
 // ---------- hand-rolled manifest field parsers (one crop record per line) -----
-
-fn field_f64(line: &str, key: &str) -> Option<f64> {
-    let needle = format!("\"{key}\": ");
-    let p = line.find(&needle)? + needle.len();
-    let rest = &line[p..];
-    let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end].trim().parse::<f64>().ok()
-}
-
-fn field_usize(line: &str, key: &str) -> Option<usize> {
-    let needle = format!("\"{key}\": ");
-    let p = line.find(&needle)? + needle.len();
-    let rest = &line[p..];
-    let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end].trim().parse::<usize>().ok()
-}
-
-fn field_str(line: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\": \"");
-    let p = line.find(&needle)? + needle.len();
-    let rest = &line[p..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
+// Field readers shared via `crate::jsonl` (the canonical copy).
+use crate::jsonl::*;
 
 /// Parse the manifest's `crops` array into one [`Geometry`] per distinct
 /// `(draw_index, composition)` (first palette row kept as the representative).

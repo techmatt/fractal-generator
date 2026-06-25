@@ -329,17 +329,8 @@ fn field(line: &str, key: &str) -> Option<f64> {
     tail[..end].parse().ok()
 }
 
-/// Extract a string JSON field value by key.
-fn field_str(line: &str, key: &str) -> Option<String> {
-    let pat = format!("\"{key}\"");
-    let i = line.find(&pat)? + pat.len();
-    let rest = &line[i..];
-    let colon = rest.find(':')? + 1;
-    let tail = rest[colon..].trim_start();
-    let tail = tail.strip_prefix('"')?;
-    let end = tail.find('"')?;
-    Some(tail[..end].to_string())
-}
+// String JSON field reader shared via `crate::jsonl` (the canonical copy).
+use crate::jsonl::field_str;
 
 // ----------------------------------------------------------------------------
 // knee, reports, sheet

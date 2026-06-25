@@ -60,28 +60,10 @@ fn save_jpeg(img: &image::RgbImage, path: &Path, quality: u8) -> Result<(), Stri
         .map_err(|e| format!("encode jpeg {}: {e}", path.display()))
 }
 
-// ---------- hand-rolled JSONL field readers (parity with palette_probe) -------
-
-fn field_f64(line: &str, key: &str) -> Option<f64> {
-    let needle = format!("\"{key}\":");
-    let p = line.find(&needle)?;
-    let rest = line[p + needle.len()..].trim_start();
-    let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end].trim().trim_matches('"').parse::<f64>().ok()
-}
-
-fn field_usize(line: &str, key: &str) -> Option<usize> {
-    field_f64(line, key).map(|v| v as usize)
-}
-
-fn field_str(line: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\":");
-    let p = line.find(&needle)?;
-    let rest = line[p + needle.len()..].trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
+// ---------- hand-rolled JSONL field readers ----------------------------------
+// Shared canonical copy lives in `crate::jsonl` (this module's variant was the
+// source of truth — see jsonl.rs module doc).
+use crate::jsonl::*;
 
 // ---------- entry point ------------------------------------------------------
 

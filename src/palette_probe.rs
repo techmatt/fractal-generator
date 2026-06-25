@@ -110,30 +110,8 @@ fn parse_labels(text: &str) -> Result<BTreeMap<String, u8>, String> {
 }
 
 // ---------- manifest parsing (hand-rolled NDJSON, parity with present) --------
-
-fn field_f64(line: &str, key: &str) -> Option<f64> {
-    let needle = format!("\"{key}\": ");
-    let p = line.find(&needle)?;
-    let rest = &line[p + needle.len()..];
-    let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end].trim().parse::<f64>().ok()
-}
-
-fn field_usize(line: &str, key: &str) -> Option<usize> {
-    let needle = format!("\"{key}\": ");
-    let p = line.find(&needle)?;
-    let rest = &line[p + needle.len()..];
-    let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end].trim().parse::<usize>().ok()
-}
-
-fn field_str(line: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\": \"");
-    let p = line.find(&needle)?;
-    let rest = &line[p + needle.len()..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
+// Field readers shared via `crate::jsonl` (the canonical copy).
+use crate::jsonl::*;
 
 /// One manifest crop's geometry, indexed by its `(draw_index, comp, palette)` key.
 struct Crop {

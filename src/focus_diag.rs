@@ -50,29 +50,8 @@ struct FrameSpec {
 }
 
 // ---------- hand-rolled JSONL field parsers (one frame object per line) -------
-// (Same lightweight approach as `gate_diag::parse_manifest` — no serde dep.)
-
-fn field_f64(line: &str, key: &str) -> Option<f64> {
-    let needle = format!("\"{key}\": ");
-    let p = line.find(&needle).or_else(|| line.find(&format!("\"{key}\":")))?;
-    let after = if line[p..].starts_with(&needle) {
-        p + needle.len()
-    } else {
-        p + format!("\"{key}\":").len()
-    };
-    let rest = line[after..].trim_start();
-    let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end].trim().parse::<f64>().ok()
-}
-
-fn field_str(line: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\":");
-    let p = line.find(&needle)? + needle.len();
-    let rest = line[p..].trim_start();
-    let rest = rest.strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
+// Field readers shared via `crate::jsonl` (no serde dep).
+use crate::jsonl::*;
 
 fn parse_frames(text: &str, default_width: u32) -> Result<Vec<FrameSpec>, String> {
     let mut out = Vec::new();

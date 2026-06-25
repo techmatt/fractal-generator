@@ -1109,8 +1109,8 @@ fn parse_search_nodes(text: &str) -> Vec<(u64, f64, u32)> {
         let block = &text[start..end];
         let bytes = block.as_bytes();
         let (id, _) = read_uint(bytes, 5); // after "id":
-        let busyness = field_f64(block, "\"busyness\":").unwrap_or(f64::NAN);
-        let period = field_f64(block, "\"period\":").unwrap_or(0.0) as u32;
+        let busyness = field_f64(block, "busyness").unwrap_or(f64::NAN);
+        let period = field_f64(block, "period").unwrap_or(0.0) as u32;
         if let Some(idv) = id {
             out.push((idv, busyness, period));
         }
@@ -1146,19 +1146,9 @@ fn read_bool(s: &str, mut pos: usize) -> bool {
     s.get(pos..pos + 4).map(|x| x == "true").unwrap_or(false)
 }
 
-/// Read a finite f64 (or scientific) value following `key` in `block`; `null` →
-/// None.
-fn field_f64(block: &str, key: &str) -> Option<f64> {
-    let p = block.find(key)? + key.len();
-    let rest = block[p..].trim_start();
-    if rest.starts_with("null") {
-        return None;
-    }
-    let end = rest
-        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E'))
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
+// Numeric field reader shared via `crate::jsonl` (the canonical copy; tolerates
+// `null` → None via parse failure, matching the prior local behavior).
+use crate::jsonl::field_f64;
 
 // ===========================================================================
 // Audit table + report

@@ -46,6 +46,7 @@ pub mod gate_diag;
 pub mod generate;
 pub mod guided_descend;
 pub mod hp;
+pub mod jsonl;
 pub mod maxiter_diag;
 pub mod navigate;
 pub mod palette;
