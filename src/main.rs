@@ -11,7 +11,6 @@ use std::time::Instant;
 use clap::Parser;
 use num_complex::Complex;
 
-use fractal_generator::aa_study;
 use fractal_generator::backend::{F64Backend, JuliaBackend, PerturbationBackend, Trap};
 use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs};
@@ -355,7 +354,6 @@ fn run() -> Result<(), String> {
         Some(Command::Dedup(args)) => energy::run_dedup(args),
         Some(Command::Muster(args)) => energy::run_muster(args),
         Some(Command::PalettePick(args)) => palette_pick::run_palette_pick(args),
-        Some(Command::AaStudy(args)) => aa_study::run_aa_study(args),
         Some(Command::RenderOne(args)) => render_one::run_render_one(args),
         Some(Command::PaletteProbe(args)) => palette_probe::run_palette_probe(args),
         Some(Command::Enrich(args)) => enrich::run_enrich(args),

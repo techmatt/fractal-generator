@@ -29,7 +29,6 @@ pub fn ensure_parent_dir(path: impl AsRef<Path>) -> Result<(), String> {
     Ok(())
 }
 
-pub mod aa_study;
 pub mod backend;
 pub mod buffet;
 pub mod cli;

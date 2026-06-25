@@ -291,15 +291,6 @@ pub enum Command {
     /// sheet. Diagnosis-only — no band, no scoring, no render-path change; Matt
     /// picks. Sheet + reproducibility legend land under `data/palette_pick/`.
     PalettePick(crate::palette_pick::PalettePickArgs),
-    /// Antialiasing bake-off at the 2560×1440 target: one view × one cyclic
-    /// palette, rendered under five AA schemes (ordered grid ss2/ss3/ss4 +
-    /// rotated-grid 4-rooks + stratified jitter) so two axes — sample count and
-    /// sub-sample placement — can be eyeballed at 1:1. Reuses `present`'s f64
-    /// render path; varies only `render::SubsamplePattern`. Per cell: wall-clock,
-    /// the full PNG, and a matched 1:1 crop of one auto-picked high-frequency
-    /// region. Emits `tools/viz/aa_study.html` + a JSON log (stable path, not
-    /// `out/`). Box downsample fixed; the reconstruction-filter study is next.
-    AaStudy(crate::aa_study::AaStudyArgs),
     /// Locked wallpaper-render default: render ONE (location × palette) at the
     /// settled quality — grid ss4 + Lanczos-3 @ 2560×1440 — to a caller-chosen
     /// stable path, reporting iterate / filter / total wall-clock. An extract of
