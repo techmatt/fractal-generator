@@ -20,7 +20,6 @@ use fractal_generator::coherence;
 use fractal_generator::corpus;
 use fractal_generator::energy;
 use fractal_generator::enrich;
-use fractal_generator::focus_diag;
 use fractal_generator::generate;
 use fractal_generator::guided_descend;
 use fractal_generator::maxiter_diag;
@@ -367,7 +366,6 @@ fn run() -> Result<(), String> {
         Some(Command::RenderOne(args)) => render_one::run_render_one(args),
         Some(Command::MaxiterDiag(args)) => maxiter_diag::run_maxiter_diag(args),
         Some(Command::PaletteProbe(args)) => palette_probe::run_palette_probe(args),
-        Some(Command::FocusDiag(args)) => focus_diag::run_focus_diag(args),
         Some(Command::Enrich(args)) => enrich::run_enrich(args),
         None => run_render(&cli),
     }

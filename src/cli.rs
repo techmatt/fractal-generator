@@ -353,15 +353,6 @@ pub enum Command {
     /// worst-first) under `data/palette_probe/`. The viewer
     /// (`tools/viz/palette_probe.html`) writes the verdict; this picks nothing.
     PaletteProbe(crate::palette_probe::PaletteProbeArgs),
-    /// Measurement-only dynamics-FIELD dumper for the smoothed-escape focal-point +
-    /// scale-space-organization exploration (sibling of `gate-diag`, but full 2D
-    /// arrays not scalars). For each frame in a JSONL frames file, re-render the
-    /// cheap f64 screen (DE channel on) and dump three row-major arrays — `mu`
-    /// (smooth escape, NaN interior), `de_px` (DE in 2560-px units), `interior`
-    /// mask — plus a manifest. The Python side derives the potential `G ≈ 2^-mu`,
-    /// the P/Q/R smoothed focus fields, scale-space persistence, and the
-    /// organization scalars. Builds NO gate, modifies NO gating.
-    FocusDiag(crate::focus_diag::FocusDiagArgs),
     /// v2-filtered enrichment batch render bridge (two disjoint modes). `score`
     /// iterates each guided-descend pool location once at the label geometry,
     /// applies the present gates (black<0.30 + occ>=0.321), recolors survivors
