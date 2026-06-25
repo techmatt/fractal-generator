@@ -36,7 +36,7 @@ use std::time::Instant;
 
 use num_complex::Complex;
 
-use crate::backend::{F64Backend, Trap, TrapShape};
+use crate::backend::{Trap, TrapShape};
 use crate::cli::{EnrichArgs, EnrichMode};
 use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::color_params;
@@ -44,21 +44,15 @@ use crate::palette::{builtin, Palette};
 use crate::palette_pick::{parse_colormaps, Colormap};
 use crate::probe::SplitMix64;
 use crate::render::{self, black_fraction, DownsampleFilter, Frame};
-use crate::{coloring, ensure_parent_dir};
+use crate::ensure_parent_dir;
 
 const BAILOUT: f64 = 1e6;
 const FULL_FILTER: DownsampleFilter = DownsampleFilter::Lanczos3;
 /// f64 quantization floor on pixel spacing (matches `palette-probe`/`render-one`).
 const PERTURB_SPACING: f64 = 1e-13;
 
-/// JPEG save at an explicit quality (mirrors `palette_probe::save_jpeg`).
-fn save_jpeg(img: &image::RgbImage, path: &Path, quality: u8) -> Result<(), String> {
-    let f = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
-    let mut w = BufWriter::new(f);
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, quality);
-    enc.encode(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
-        .map_err(|e| format!("encode jpeg {}: {e}", path.display()))
-}
+// JPEG crop writer shared via `crate::render::save_jpeg`.
+use crate::render::save_jpeg;
 
 // ---------- hand-rolled JSONL field readers ----------------------------------
 // Shared canonical copy lives in `crate::jsonl` (this module's variant was the
@@ -152,7 +146,6 @@ fn run_score(args: &EnrichArgs) -> Result<(), String> {
     );
 
     let params = color_params();
-    let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
     let gate_palette = builtin("default", false).expect("default palette");
 
@@ -194,8 +187,7 @@ fn run_score(args: &EnrichArgs) -> Result<(), String> {
             continue;
         }
 
-        let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
-        let buf = render::iterate_samples_f64(&backend, &frame, ss, channels);
+        let (buf, _) = render::iterate_crop_buffer_f64(&frame, ss, args.maxiter, BAILOUT, trap, &params);
         let bf = black_fraction(&buf.samples);
         let gate_img = render::shade_and_downsample_filtered(
             &buf.samples, args.width, args.height, ss, &gate_palette, &params, pixel_spacing,
@@ -327,7 +319,6 @@ fn run_render(args: &EnrichArgs) -> Result<(), String> {
     std::fs::create_dir_all(crops_dir).map_err(|e| format!("mkdir {}: {e}", crops_dir.display()))?;
 
     let params = color_params();
-    let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
     eprintln!(
@@ -358,13 +349,11 @@ fn run_render(args: &EnrichArgs) -> Result<(), String> {
                 s.image_id
             ));
         }
-        let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
-        let buf = render::iterate_samples_f64(&backend, &frame, ss, channels);
         let palette = Palette::from_srgb8_stops_mirrored(
             cm.name.clone(), &cm.stops, false, cm.mirror_needed,
         );
-        let img = render::shade_and_downsample_filtered(
-            &buf.samples, args.width, args.height, ss, &palette, &params, pixel_spacing, FULL_FILTER,
+        let img = render::render_crop_f64(
+            &frame, ss, args.maxiter, BAILOUT, trap, &palette, &params, FULL_FILTER,
         );
         // image_id is already fs-safe (built Python-side in enrich_select.py).
         save_jpeg(&img, &crops_dir.join(format!("{}.jpg", s.image_id)), args.jpg_quality)?;

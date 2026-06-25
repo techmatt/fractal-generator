@@ -35,7 +35,7 @@ use image::imageops::FilterType;
 use image::RgbImage;
 use num_complex::Complex;
 
-use crate::backend::{F64Backend, Trap, TrapShape};
+use crate::backend::{Trap, TrapShape};
 use crate::cli::PresentArgs;
 use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::color_params;
@@ -165,16 +165,8 @@ struct CompareRow {
     content_thumb: String,
 }
 
-/// Save an `RgbImage` as JPEG at the given quality (the `image::save` default is
-/// 75; we want q≈90), via the explicit encoder.
-fn save_jpeg(img: &RgbImage, path: &Path, quality: u8) -> Result<(), String> {
-    let f = std::fs::File::create(path)
-        .map_err(|e| format!("create {}: {e}", path.display()))?;
-    let mut w = std::io::BufWriter::new(f);
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, quality);
-    enc.encode(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
-        .map_err(|e| format!("encode jpeg {}: {e}", path.display()))
-}
+// JPEG crop writer shared via `crate::render::save_jpeg`.
+use crate::render::save_jpeg;
 
 // ---------- hand-rolled NDJSON field parsers ---------------------------------
 
@@ -299,7 +291,6 @@ fn render_and_gate(
     new_fw: f64,
     args: &PresentArgs,
     trap: Trap,
-    channels: coloring::ChannelSet,
     gate_palette: &Palette,
     params: &coloring::ColorParams,
 ) -> GateRender {
@@ -309,9 +300,8 @@ fn render_and_gate(
         out_width: args.width,
         out_height: args.height,
     };
-    let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
-    let buf = render::iterate_samples_f64(&backend, &frame, args.ss, channels);
-    let pixel_spacing = new_fw / args.width as f64;
+    let (buf, pixel_spacing) =
+        render::iterate_crop_buffer_f64(&frame, args.ss, args.maxiter, BAILOUT, trap, params);
     let gate_img = render::shade_and_downsample_filtered(
         &buf.samples,
         args.width,
@@ -339,7 +329,6 @@ fn content_focus(
     seed: &Seed,
     args: &PresentArgs,
     trap: Trap,
-    channels: coloring::ChannelSet,
     gate_palette: &Palette,
     params: &coloring::ColorParams,
 ) -> FocusResult {
@@ -350,9 +339,8 @@ fn content_focus(
         out_width: CHEAP_W,
         out_height: CHEAP_H,
     };
-    let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
-    let buf = render::iterate_samples_f64(&backend, &frame, CHEAP_SS, channels);
-    let pixel_spacing = fw / CHEAP_W as f64;
+    let (buf, pixel_spacing) =
+        render::iterate_crop_buffer_f64(&frame, CHEAP_SS, args.maxiter, BAILOUT, trap, params);
     let img = render::shade_and_downsample_filtered(
         &buf.samples,
         CHEAP_W,
@@ -442,7 +430,6 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
 
     let mut rng = SplitMix64(args.seed);
     let params = color_params();
-    let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
     // 3. Output directory. `--flat-out` writes straight into `--out-dir`
@@ -511,7 +498,7 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
 
         // --- both focuses: content-centered (energy centroid over the seed
         //     frame) and seed-center. ---
-        let content = content_focus(seed, args, trap, channels, &gate_palette, &params);
+        let content = content_focus(seed, args, trap, &gate_palette, &params);
         if content.void_guard {
             void_guard_fires += 1;
         }
@@ -520,9 +507,9 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
         // occupancy scored on each. The active-focus center render is reused by
         // the main batch below (no third render of the same frame).
         let seed_center =
-            render_and_gate(seed.cx, seed.cy, new_fw, args, trap, channels, &gate_palette, &params);
+            render_and_gate(seed.cx, seed.cy, new_fw, args, trap, &gate_palette, &params);
         let content_center = render_and_gate(
-            content.cx, content.cy, new_fw, args, trap, channels, &gate_palette, &params,
+            content.cx, content.cy, new_fw, args, trap, &gate_palette, &params,
         );
         full_renders += 2;
         let rh = (REJECT_THUMB_W as f64 * args.height as f64 / args.width as f64).round() as u32;
@@ -571,8 +558,8 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
                 out_width: CHEAP_W,
                 out_height: CHEAP_H,
             };
-            let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
-            let buf = render::iterate_samples_f64(&backend, &frame, CHEAP_SS, channels);
+            let (buf, _) =
+                render::iterate_crop_buffer_f64(&frame, CHEAP_SS, args.maxiter, BAILOUT, trap, &params);
             let bf = black_fraction(&buf.samples);
             comp_bf.push((comp_name, ccx, ccy, bf));
         }
@@ -609,7 +596,7 @@ pub fn run_present(args: &PresentArgs) -> Result<(), String> {
                 active_center
             } else {
                 owned = render_and_gate(
-                    comp_cx, comp_cy, new_fw, args, trap, channels, &gate_palette, &params,
+                    comp_cx, comp_cy, new_fw, args, trap, &gate_palette, &params,
                 );
                 full_renders += 1;
                 &owned

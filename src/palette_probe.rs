@@ -36,14 +36,14 @@ use std::time::Instant;
 
 use num_complex::Complex;
 
-use crate::backend::{F64Backend, Trap, TrapShape};
+use crate::backend::{Trap, TrapShape};
 use crate::cli::PaletteProbeArgs;
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
 use crate::probe::SplitMix64;
 use crate::render::{self, DownsampleFilter, Frame};
-use crate::{coloring, ensure_parent_dir};
+use crate::ensure_parent_dir;
 
 /// Escape radius (matches the generate/present/render-one regime).
 const BAILOUT: f64 = 1e6;
@@ -71,15 +71,8 @@ fn safe_name(name: &str) -> String {
     name.replace(['/', '\\', ' ', ':', '*', '?', '"', '<', '>', '|'], "_")
 }
 
-/// Save an `RgbImage` as JPEG at the given quality via the explicit encoder
-/// (the `image::save` default is 75; we want q≈90). Mirrors `present::save_jpeg`.
-fn save_jpeg(img: &image::RgbImage, path: &Path, quality: u8) -> Result<(), String> {
-    let f = std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
-    let mut w = std::io::BufWriter::new(f);
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, quality);
-    enc.encode(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
-        .map_err(|e| format!("encode jpeg {}: {e}", path.display()))
-}
+// JPEG crop writer shared via `crate::render::save_jpeg`.
+use crate::render::save_jpeg;
 
 // ---------- labels parsing ---------------------------------------------------
 
@@ -273,7 +266,6 @@ pub fn run_palette_probe(args: &PaletteProbeArgs) -> Result<(), String> {
     ensure_parent_dir(out_dir.join("x"))?;
 
     let params = color_params();
-    let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
     // --- render: iterate once per location, recolor across the whole pool ---
@@ -295,9 +287,8 @@ pub fn run_palette_probe(args: &PaletteProbeArgs) -> Result<(), String> {
             ));
         }
 
-        let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
         let t_iter = Instant::now();
-        let buf = render::iterate_samples_f64(&backend, &frame, ss, channels);
+        let (buf, _) = render::iterate_crop_buffer_f64(&frame, ss, args.maxiter, BAILOUT, trap, &params);
         let iter_secs = t_iter.elapsed().as_secs_f64();
 
         let t_color = Instant::now();

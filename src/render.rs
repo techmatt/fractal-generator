@@ -28,7 +28,7 @@ use image::RgbImage;
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{F64Backend, FractalBackend, PixelSample, PHASE_GATED};
+use crate::backend::{F64Backend, FractalBackend, PixelSample, Trap, PHASE_GATED};
 use crate::coloring::{self, ChannelSet, ColorParams};
 use crate::palette::{linear_to_srgb, Palette};
 use crate::probe::SplitMix64;
@@ -573,4 +573,67 @@ pub fn black_fraction(samples: &[PixelSample]) -> f32 {
     }
     let n = samples.iter().filter(|s| !s.escaped).count();
     n as f32 / samples.len() as f32
+}
+
+/// Iterate one shallow-f64 wallpaper frame **once**, returning the cached
+/// supersampled buffer and the colorer's pixel spacing. This is the shared crop
+/// primitive: present / palette_probe / enrich iterate here and shade the buffer
+/// one or many times, so re-coloring never re-iterates. Channels are derived
+/// from `params` (palette-independent), so the buffer holds exactly what the
+/// colorer reads across every palette in a recolor set.
+///
+/// **Shallow f64 only** — callers assert the pixel spacing stays clear of the
+/// f64 quantization floor (`probe::PERTURB_SPACING`) before calling.
+pub fn iterate_crop_buffer_f64(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    bailout: f64,
+    trap: Trap,
+    params: &ColorParams,
+) -> (SampleBuffer, f64) {
+    let channels = coloring::required_channels(params);
+    let backend = F64Backend::new(maxiter, bailout, trap);
+    let buf = iterate_samples_f64(&backend, frame, ss, channels);
+    let pixel_spacing = frame.frame_width / frame.out_width as f64;
+    (buf, pixel_spacing)
+}
+
+/// Iterate + shade one shallow-f64 crop under a single palette — the single-shot
+/// convenience over [`iterate_crop_buffer_f64`] (recolor-many callers keep the
+/// buffer instead). Byte-identical to the inline iterate→shade the crop writers
+/// used.
+#[allow(clippy::too_many_arguments)]
+pub fn render_crop_f64(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    bailout: f64,
+    trap: Trap,
+    palette: &Palette,
+    params: &ColorParams,
+    filter: DownsampleFilter,
+) -> RgbImage {
+    let (buf, pixel_spacing) = iterate_crop_buffer_f64(frame, ss, maxiter, bailout, trap, params);
+    shade_and_downsample_filtered(
+        &buf.samples,
+        frame.out_width,
+        frame.out_height,
+        ss,
+        palette,
+        params,
+        pixel_spacing,
+        filter,
+    )
+}
+
+/// Save an `RgbImage` as JPEG at an explicit quality via the explicit encoder
+/// (the `image::save` default is 75; the wallpaper crops want q≈90). Shared by
+/// the present/palette_probe/enrich crop writers.
+pub fn save_jpeg(img: &RgbImage, path: &std::path::Path, quality: u8) -> Result<(), String> {
+    let f = std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    let mut w = std::io::BufWriter::new(f);
+    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, quality);
+    enc.encode(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
+        .map_err(|e| format!("encode jpeg {}: {e}", path.display()))
 }
