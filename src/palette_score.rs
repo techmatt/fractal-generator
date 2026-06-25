@@ -41,7 +41,7 @@ use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
 use crate::backend::{F64Backend, Trap, TrapShape};
-use crate::cli::PaletteScoreArgs;
+use clap::Args;
 use crate::coloring::{self, ColorParams};
 use crate::generate::color_params;
 use crate::palette::Palette;
@@ -397,4 +397,54 @@ pub fn run_palette_score(args: &PaletteScoreArgs) -> Result<(), String> {
     println!("grids dir: {}", grids_dir.display());
     println!("manifest: {}", manifest_path.display());
     Ok(())
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `palette-score` subcommand: see `palette_score::run_palette_score`. Builds the
+/// hand-scoring surface — 4 fixed views iterated once, recolored under each of the
+/// 224 survivors into clean 2×2 grids. Deterministic; reuses `present`'s coloring
+/// config + the selective-mirror path verbatim so scores transfer to the location
+/// pass.
+#[derive(Args, Debug)]
+pub struct PaletteScoreArgs {
+    /// The 4-view fixture: `[{name, cx, cy, fw, composition?}, …]` (exactly 4).
+    #[arg(long, default_value = "data/palette_score/views.json")]
+    pub views: String,
+
+    /// Survivor colormap library (the 224 clean maps, inline cycle/mirror_needed).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub palette_file: String,
+
+    /// Per-cell width in pixels (one view per cell).
+    #[arg(long, default_value_t = 480)]
+    pub cell_width: u32,
+
+    /// Per-cell height in pixels (keep 16:9 with cell_width).
+    #[arg(long, default_value_t = 270)]
+    pub cell_height: u32,
+
+    /// Linear supersampling factor (S×S box downsample) per cell.
+    #[arg(long, default_value_t = 2)]
+    pub ss: u32,
+
+    /// Gutter (px) between/around the 2×2 cells — kept thin, no burned-in text.
+    #[arg(long, default_value_t = 6)]
+    pub gutter: u32,
+
+    /// Maximum iterations (matches `present`'s default for config parity).
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Diagnostic palette for the preview grid (the views-fixture eyeball gate).
+    #[arg(long, default_value = "twilight_shifted")]
+    pub diagnostic_palette: String,
+
+    /// Render the full 224-palette sweep. Without it, stop at the preview grid.
+    #[arg(long)]
+    pub full: bool,
+
+    /// Output directory (outside `out/` — Matt clears `out/`).
+    #[arg(long, default_value = "data/palette_score/")]
+    pub out_dir: String,
 }

@@ -41,8 +41,9 @@ use std::path::Path;
 
 use num_complex::Complex;
 
-use crate::backend::Trap;
-use crate::cli::{BackendChoice, CohereArgs};
+use crate::backend::{Trap, TrapShape};
+use clap::Args;
+use crate::cli::{parse_complex, BackendChoice};
 use crate::hp;
 use crate::probe;
 use crate::render::SampleBuffer;
@@ -1010,7 +1011,7 @@ fn swept_maxiter(base_maxiter: u32, base_width: f64, width: f64) -> u32 {
 ///    report `coverage` at each — the "rich spot is speckle at one zoom, magical one
 ///    zoom out" check (does a different scale lift a boundary-packed frame into the
 ///    band).
-pub fn run_cover(args: &crate::cli::CoverArgs) -> Result<(), String> {
+pub fn run_cover(args: &CoverArgs) -> Result<(), String> {
     if args.frame_width <= 0.0 {
         return Err("--frame-width must be > 0".into());
     }
@@ -1135,7 +1136,7 @@ fn print_cover_row(label: &str, r: &CoverRow) {
 }
 
 fn build_cover_json(
-    args: &crate::cli::CoverArgs,
+    args: &CoverArgs,
     cp: &CoverageParams,
     primary: &CoverRow,
     band_table: &[(f64, f64, f64)],
@@ -1543,5 +1544,198 @@ mod tests {
         assert!((bp.reject_hi - cp.cover_hi).abs() < 1e-12);
         assert!((bp.band_center - 0.5 * (cp.cover_lo + cp.cover_hi)).abs() < 1e-12);
         assert!((bp.busy_floor - cp.busy_floor).abs() < 1e-12);
+    }
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `cohere` subcommand: isolation validation of the DE-coherence gate. Renders
+/// one frame at a modest probe resolution (f64, asserted) and reports the
+/// per-frame coherence statistic — `subpixel_frac` (escaped pixels with
+/// `de_px < θ`, the speckle indicator), `esc_frac`, and the median `de_px`,
+/// all with `de_px` pinned to the target wallpaper spacing so a cheap probe
+/// predicts the full-resolution gate. Pure over the cached buffer; never
+/// re-iterates. Does not modify any scoring (the wiring is the follow-up).
+#[derive(Args, Debug)]
+pub struct CohereArgs {
+    /// Frame center, real part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "-0.5", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.0", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Probe render width in pixels (height follows 16:9). Cheap — only the
+    /// sampled set changes with this; `de_px` is taken against `--target-width`.
+    #[arg(long, default_value_t = 640)]
+    pub probe_width: u32,
+
+    /// Target wallpaper width in pixels — `de_px = de / (frame_width /
+    /// target_width)`. Pins the gate to the final render's spacing (default the
+    /// 2560-wide wallpaper) so the cheap probe is predictive.
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Sub-pixel threshold θ: an escaped pixel with `de_px < θ` is speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub theta: f64,
+
+    /// Linear supersampling factor (S×S) for the probe render.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Window size K (K×K) for the windowed-max busyness diagnostic (mirrors the
+    /// selector's `--window`, so `busy_win` matches `wallpaper.json`'s
+    /// `max_available_busyness`).
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Label for the printed data row / JSON (e.g. `noise`, `flat_L8`, `control`).
+    #[arg(long, default_value = "frame")]
+    pub label: String,
+
+    /// Optional JSON sidecar path (one frame per file).
+    #[arg(long)]
+    pub json: Option<String>,
+}
+
+/// `cover` subcommand: single-frame **coverage-dominance** scorer (Prompt
+/// coverage-dominance). Renders one frame f64 and reports `coverage` (the fraction
+/// of the escaped frame whose boundary is a few pixels wide at the target spacing),
+/// the speckle / interior / busy gates, and the gate verdict. Always emits a
+/// band-sensitivity table (re-scoring the same buffer over several `[lo,hi]` bands);
+/// with `--scale-sweep n` it re-renders the same center at `n` log-spaced widths to
+/// check whether a different zoom lifts a boundary-packed frame into the band.
+#[derive(Args, Debug)]
+pub struct CoverArgs {
+    /// Frame center, real part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "-0.5", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.0", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Probe render width in pixels (height follows 16:9). `de_px` is taken against
+    /// `--target-width`, not this.
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S) for the probe render.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Target wallpaper width `de_px` is pinned to (resolution-invariant `de`).
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Sub-pixel threshold θ: an escaped pixel with `de_px < θ` is speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub theta: f64,
+
+    /// Window size K (K×K) for the windowed-max busyness richness floor.
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape (matches the harvest default).
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Override the coverage band low edge `de_px` (default: the module const 2.0).
+    #[arg(long)]
+    pub cover_lo: Option<f64>,
+
+    /// Override the coverage band high edge `de_px` (default: the const 14.0).
+    #[arg(long)]
+    pub cover_hi: Option<f64>,
+
+    /// Override the speckle reject cap `subpixel_frac` (default: 0.12).
+    #[arg(long)]
+    pub spx_cap: Option<f64>,
+
+    /// Override the interior reject cap `interior_frac` (default: 0.30).
+    #[arg(long)]
+    pub int_cap: Option<f64>,
+
+    /// Override the coverage floor reject `coverage` (default: 0.45).
+    #[arg(long)]
+    pub cover_min: Option<f64>,
+
+    /// Override the windowed-busyness richness floor (default: 0.02).
+    #[arg(long)]
+    pub busy_floor: Option<f64>,
+
+    /// Scale-sweep step count: re-render the same center at `n` log-spaced widths in
+    /// `[frame_width·scale_lo, frame_width·scale_hi]`. `0` (default) → no sweep.
+    #[arg(long, default_value_t = 0)]
+    pub scale_sweep: usize,
+
+    /// Low multiplier of `frame_width` for the scale sweep (zoom *in*; <1).
+    #[arg(long, default_value_t = 0.25)]
+    pub scale_lo: f64,
+
+    /// High multiplier of `frame_width` for the scale sweep (zoom *out*; >1).
+    #[arg(long, default_value_t = 16.0)]
+    pub scale_hi: f64,
+
+    /// Label for the printed `COVER` row / JSON.
+    #[arg(long, default_value = "frame")]
+    pub label: String,
+
+    /// Optional JSON sidecar path.
+    #[arg(long)]
+    pub json: Option<String>,
+}
+
+impl CoverArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Effective coverage params: each field overridden by its flag if present.
+    pub fn coverage_params(&self) -> crate::coherence::CoverageParams {
+        let d = crate::coherence::CoverageParams::default();
+        crate::coherence::CoverageParams {
+            cover_lo: self.cover_lo.unwrap_or(d.cover_lo),
+            cover_hi: self.cover_hi.unwrap_or(d.cover_hi),
+            spx_cap: self.spx_cap.unwrap_or(d.spx_cap),
+            int_cap: self.int_cap.unwrap_or(d.int_cap),
+            cover_min: self.cover_min.unwrap_or(d.cover_min),
+            busy_floor: self.busy_floor.unwrap_or(d.busy_floor),
+        }
     }
 }

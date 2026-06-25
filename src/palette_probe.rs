@@ -37,7 +37,7 @@ use std::time::Instant;
 use num_complex::Complex;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::PaletteProbeArgs;
+use clap::Args;
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
@@ -445,4 +445,57 @@ fn build_index_json(
     s.push_str("  ]\n");
     s.push_str("}\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `palette-probe` subcommand: see `palette_probe::run_palette_probe`. Picks N
+/// label-3 locations at random (fixed seed) from the labels+manifest, iterates
+/// each once at the render-one quality path, and recolors across the full score-3
+/// palette pool. Shallow f64 by construction (asserted per location).
+#[derive(Args, Debug)]
+pub struct PaletteProbeArgs {
+    /// Location labels (the `draw|comp|palette` → label-1/2/3 map).
+    #[arg(long, default_value = "labels/location_labels.json")]
+    pub labels: String,
+
+    /// `present` manifest the labels were drawn against (recovers crop geometry).
+    #[arg(long, default_value = "data/label_crops/loose0_v3/manifest.json")]
+    pub manifest: String,
+
+    /// Palette pool to recolor across (the score-3 survivors).
+    #[arg(long, default_value = "data/palettes/score3_colormaps.json")]
+    pub colormaps: String,
+
+    /// Number of distinct label-3 locations to sample (uses all if fewer exist).
+    #[arg(long, default_value_t = 5)]
+    pub n_locations: usize,
+
+    /// SplitMix64 seed for the location pick (logged; fixed for reproducibility).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Output width in px (height follows 16:9). Probe crops are 1280×720.
+    #[arg(long, default_value_t = 1280)]
+    pub width: u32,
+
+    /// Output height in px.
+    #[arg(long, default_value_t = 720)]
+    pub height: u32,
+
+    /// Linear supersample factor (the lock: 4 → 16 spp).
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Maximum iterations / orbit cap (the present/render-one current default).
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// JPEG quality for the output crops.
+    #[arg(long, default_value_t = 90)]
+    pub jpg_quality: u8,
+
+    /// Stable output directory (not under `out/`).
+    #[arg(long, default_value = "data/palette_probe/")]
+    pub out_dir: String,
 }

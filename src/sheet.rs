@@ -10,8 +10,10 @@
 //! top-left (a hand-rolled 5×7 bitmap font — no font crate). Tiles paste into a
 //! grid PNG; the caller prints a `tile N → <name>` legend.
 
+use clap::Args;
 use image::RgbImage;
 
+use crate::cli::{LocationArgs, ShadeArgs};
 use crate::coloring::ColorParams;
 use crate::palette::{linear_to_srgb, Palette};
 use crate::render::{shade_and_downsample, SampleBuffer};
@@ -197,3 +199,39 @@ const DIGITS: [[u8; 7]; 10] = [
     // 9
     [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
 ];
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `sheet` subcommand: same location + shading, multiple palettes.
+#[derive(Args, Debug)]
+pub struct SheetArgs {
+    #[command(flatten)]
+    pub location: LocationArgs,
+
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    /// Palette file paths (`.ugr`/`.map`). For multi-block `.ugr`, every block
+    /// is included as its own tile.
+    #[arg(long, num_args = 0.., value_delimiter = ' ')]
+    pub palettes: Vec<String>,
+
+    /// Built-in palette names (`default`, `cubehelix`, `viridis`).
+    #[arg(long, num_args = 0.., value_delimiter = ' ')]
+    pub builtins: Vec<String>,
+
+    /// Grid columns (default: ≈ √N).
+    #[arg(long)]
+    pub cols: Option<usize>,
+
+    /// Per-tile width in pixels (height follows aspect). Modest, e.g. 320–512.
+    #[arg(long, default_value_t = 384)]
+    pub tile_width: u32,
+
+    /// Reverse every palette's gradient direction.
+    #[arg(long, default_value_t = false)]
+    pub palette_reverse: bool,
+
+    /// Output PNG path.
+    #[arg(long, default_value = "out/strips/sheet.png")]
+    pub output: String,
+}

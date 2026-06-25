@@ -36,7 +36,7 @@ use image::RgbImage;
 use num_complex::Complex;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::PresentArgs;
+use clap::Args;
 use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::color_params;
 use crate::palette::{builtin, Palette};
@@ -974,4 +974,102 @@ h1{{font-size:15px;margin:0 0 4px;color:#eee}}h2{{font-size:13px;color:#e0b24a;m
         cell = cell,
         rcell = rcell,
     )
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `present` subcommand: see `present::run_present`. Takes a `locations.jsonl`
+/// from a `generate` run and produces presentation-ready crops. Zooms in on each
+/// seed center, tries three composition offsets at cheap 320×180 resolution,
+/// picks the one with the lowest black fraction, gates on < 40% black, then
+/// renders at full resolution across random palettes.
+#[derive(Args, Debug)]
+pub struct PresentArgs {
+    /// Path to `locations.jsonl` from a `generate` run (required).
+    #[arg(long)]
+    pub input: String,
+
+    /// Output directory root; a `<run_stem>/` subdirectory is created inside.
+    #[arg(long, default_value = "out/present/")]
+    pub out_dir: String,
+
+    /// Full-resolution render width in pixels.
+    #[arg(long, default_value_t = 1920)]
+    pub width: u32,
+
+    /// Full-resolution render height in pixels.
+    #[arg(long, default_value_t = 1080)]
+    pub height: u32,
+
+    /// Linear supersampling factor for the full-resolution render.
+    #[arg(long, default_value_t = 2)]
+    pub ss: u32,
+
+    /// Zoom factor: `new_fw = seed_fw × this`.
+    #[arg(long, default_value_t = 0.4)]
+    pub zoom_factor: f64,
+
+    /// Which composition offsets to try: "center", "thirds", "golden", or "all".
+    #[arg(long, default_value = "all")]
+    pub compositions: String,
+
+    /// Path to the colormap library JSON.
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub palette_file: String,
+
+    /// Number of random palettes to apply per accepted crop.
+    #[arg(long, default_value_t = 3)]
+    pub palettes_per_crop: usize,
+
+    /// Emit a distinct crop for **every** composition that passes the black gate
+    /// (labeling mode: each (seed × composition) is its own location to judge),
+    /// instead of the default pick-the-lowest-black single crop per seed.
+    #[arg(long, default_value_t = false)]
+    pub all_compositions: bool,
+
+    /// Maximum iterations / orbit cap ("max_orbit") for both cheap-screen and
+    /// full-resolution renders. Raised 1000 → 8000 (the `maxiter-blackgate`
+    /// pass, Matt's pick = the measured escalation knee): resolves the pinned
+    /// spiral-core fringe so the black gate sees true interior, not under-iterated
+    /// pixels. The gate (`BLACK_THRESH`) is calibrated against the no-escape
+    /// distribution at this cap.
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// SplitMix64 seed for reproducible palette selection.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Detail-occupancy gate threshold applied **after** full-res iteration and
+    /// **before** palettes: discard the (seed × composition) crop if its
+    /// occupancy (fraction of 32×18 tiles with mean edge energy > 0.010) is below
+    /// this. `0` disables the gate (legacy behaviour). The loose0 calibration
+    /// floor was 0.23; gate-diag (loose0_v3) raised it to 0.321 (now the
+    /// default) — the low occupancy tail's bottom decile is ~96% doomed
+    /// (geo_label==1) and holds zero label-3 crops (min label-3 occupancy
+    /// 0.4184), so 0.321 rejects ~52 geometries at zero good-crop cost.
+    #[arg(long, default_value_t = 0.321)]
+    pub occupancy_floor: f64,
+
+    /// Output image format for emitted crops: `png` or `jpg`.
+    #[arg(long, default_value = "png")]
+    pub format: String,
+
+    /// JPEG quality (1..=100) when `--format jpg`.
+    #[arg(long, default_value_t = 90)]
+    pub jpg_quality: u8,
+
+    /// Write crops directly into `--out-dir` instead of an `<run_stem>/`
+    /// subdirectory (avoids the doubled `loose0/loose0` nesting).
+    #[arg(long, default_value_t = false)]
+    pub flat_out: bool,
+
+    /// Crop focus: `content` = energy-weighted centroid of a cheap edge-energy
+    /// screen over the seed frame (re-frame on where structure actually is, with
+    /// a peak-tile void guard + in-frame clamp); `seed-center` = the raw seed
+    /// center (legacy / comparison fallback). Both focuses are always rendered
+    /// for the side-by-side `focus_compare.html`; this only picks which one the
+    /// emitted batch uses.
+    #[arg(long, default_value = "content")]
+    pub focus: String,
 }

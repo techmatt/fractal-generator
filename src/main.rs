@@ -15,7 +15,7 @@ use fractal_generator::aa_filter;
 use fractal_generator::aa_study;
 use fractal_generator::backend::{F64Backend, JuliaBackend, PerturbationBackend, Trap};
 use fractal_generator::buffet;
-use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs, SheetArgs};
+use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs};
 use fractal_generator::coherence;
 use fractal_generator::corpus;
 use fractal_generator::descend;
@@ -42,7 +42,7 @@ use fractal_generator::hp;
 use fractal_generator::palette::{builtin, Palette};
 use fractal_generator::palette_io::{load_palette, load_palette_file};
 use fractal_generator::render::{self, Frame};
-use fractal_generator::sheet;
+use fractal_generator::sheet::{self, SheetArgs};
 
 
 /// Frame width below which f64 deltas approach denormals — the v1 cap

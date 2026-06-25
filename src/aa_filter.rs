@@ -26,7 +26,7 @@ use num_complex::Complex;
 
 use crate::aa_study::pick_crop;
 use crate::backend::{F64Backend, Trap, TrapShape};
-use crate::cli::AaFilterArgs;
+use clap::Args;
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
@@ -336,4 +336,87 @@ fn build_html(
     }
     s.push_str("</div>\n</body>\n</html>\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `aa-filter` subcommand: see `aa_filter::run_aa_filter`. One fixed view + cyclic
+/// palette iterated once at grid ss4; the sole axis is the downsample
+/// reconstruction filter (box / Mitchell / Lanczos). Shallow f64 (asserted).
+#[derive(Args, Debug)]
+pub struct AaFilterArgs {
+    /// Frame center, real part — arbitrary-precision decimal string. Default is
+    /// the aa-study view (so the pinned crop lands on identical pixels).
+    #[arg(long, default_value = "-0.746339", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.112242", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Width of the view in the complex plane (aa-study default).
+    #[arg(long, default_value_t = 0.000583)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// Output width in pixels (height follows 16:9). The study's real target.
+    #[arg(long, default_value_t = 2560)]
+    pub width: u32,
+
+    /// Supersample factor (grid). The study locks this to 4 (16 spp); exposed for
+    /// experimentation only.
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Cyclic (mirror-safe) palette name, looked up in `--colormaps`.
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Survivor colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// 1:1 crop width (px). The matched crop is auto-picked at this size only if
+    /// `--crop` is empty.
+    #[arg(long, default_value_t = 384)]
+    pub crop_width: u32,
+
+    /// 1:1 crop height (px).
+    #[arg(long, default_value_t = 384)]
+    pub crop_height: u32,
+
+    /// Explicit crop box `x,y,w,h`. Default pins the aa-study's selected box so
+    /// the three filters are judged on identical pixels; pass an empty string to
+    /// auto-pick by edge energy instead.
+    #[arg(long, default_value = "928,464,384,384")]
+    pub crop: String,
+
+    /// Output directory for the PNGs/crops/JSON (HTML lands in its parent).
+    /// Stable path by design — not under `out/`.
+    #[arg(long, default_value = "tools/viz/aa_filter_study")]
+    pub out_dir: String,
+}
+
+impl AaFilterArgs {
+    /// Parse `--crop` (`x,y,w,h`). Empty string → auto-pick (returns `None`).
+    pub fn resolved_crop(&self) -> Result<Option<(u32, u32, u32, u32)>, String> {
+        if self.crop.trim().is_empty() {
+            return Ok(None);
+        }
+        let p: Vec<&str> = self.crop.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --crop '{}', expected x,y,w,h", self.crop));
+        }
+        let mut v = [0u32; 4];
+        for (i, s) in p.iter().enumerate() {
+            v[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --crop component '{}'", s.trim()))?;
+        }
+        Ok(Some((v[0], v[1], v[2], v[3])))
+    }
 }

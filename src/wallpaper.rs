@@ -31,8 +31,9 @@ use astro_float::{BigFloat, RoundingMode};
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
-use crate::backend::{F64Backend, Trap};
-use crate::cli::WallpaperArgs;
+use crate::backend::{F64Backend, Trap, TrapShape};
+use clap::Args;
+use crate::cli::{parse_complex, ShadeArgs};
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode};
 use crate::font;
 use crate::hp;
@@ -859,4 +860,122 @@ fn build_json(
     s.push_str("  ]\n");
     s.push_str("}\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `wallpaper` subcommand: see the module docs in `wallpaper.rs`. Everything here
+/// stays in the f64 regime by construction (the floor is sized so the deepest
+/// level renders f64-clean at the wallpaper resolution).
+#[derive(Args, Debug)]
+pub struct WallpaperArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    /// Per-level zoom factor (`width_{i+1} = width_i / zoom`).
+    #[arg(long, default_value_t = 4.0)]
+    pub zoom: f64,
+
+    /// Start frame center as `re,im` (arbitrary-precision decimals).
+    #[arg(long, default_value = "-0.5,0", allow_hyphen_values = true)]
+    pub start_center: String,
+
+    /// Start frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub start_width: f64,
+
+    /// Final wallpaper width in pixels (height follows 16:9).
+    #[arg(long, default_value_t = 2560)]
+    pub wallpaper_width: u32,
+
+    /// Low-res descent panel width in pixels (height follows 16:9).
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S) for the descent panels and the wallpaper.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// f64-floor safety margin: deepest width must stay ≥ `wallpaper_width ·
+    /// 1e-13 · margin`, keeping pixel spacing comfortably above f64's ~1e-13 limit.
+    #[arg(long, default_value_t = 4.0)]
+    pub margin: f64,
+
+    /// Hard cap on descent levels (the floor normally stops it first).
+    #[arg(long, default_value_t = 64)]
+    pub max_levels: u32,
+
+    /// Score window size K (K×K window over the feature map).
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// DE-coherence sub-pixel threshold θ: an escaped pixel with `de_px < θ` (at
+    /// the wallpaper spacing) is sub-pixel-boundary speckle. The descent rejects
+    /// windows over the speckle fraction and soft-penalizes borderline ones.
+    #[arg(long, default_value_t = 1.0)]
+    pub coherence_theta: f64,
+
+    /// RNG seed for sampling a target from each level's top in-band windows.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(mag))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of magnification).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape (used by the `trap` coloring panel of the matrix).
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Corpus targets (`targets.json`): supplies the busyness band `[lo,hi]` used
+    /// for ranking and the color block used to build the `corpus` palette.
+    #[arg(long, default_value = "out/corpus/targets.json")]
+    pub targets: String,
+
+    /// Descent strip PNG. Per-level panels go in `<stem>_panels/`.
+    #[arg(long, default_value = "out/strips/wallpaper_strip.png")]
+    pub strip: String,
+
+    /// Output prefix for the 6 wallpapers (`<prefix>_<coloring>_<palette>.png`).
+    #[arg(long, default_value = "out/wallpaper/wallpaper")]
+    pub out_prefix: String,
+
+    /// JSON log path.
+    #[arg(long, default_value = "out/wallpaper/wallpaper.json")]
+    pub json: String,
+}
+
+impl WallpaperArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--start-center` (`re,im`) into two decimal strings.
+    pub fn resolved_start_center(&self) -> Result<(String, String), String> {
+        let parts: Vec<&str> = self.start_center.split(',').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "invalid --start-center '{}', expected re,im",
+                self.start_center
+            ));
+        }
+        Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
+    }
 }

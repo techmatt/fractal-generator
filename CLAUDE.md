@@ -125,14 +125,21 @@ The tree is `out/{renders,strips,search,corpus,wallpaper,demos}/`. Use `crate::e
 
 > **Persistent-store convention (`data/`).** `out/` is *disposable* — anything that must survive `rm -r out/*` lives under `data/` instead (committed, NOT gitignored). Use this for **load-bearing artifacts that are part of a metric's definition** and that you don't want silently regenerated: e.g. `data/calibration/energy_calibration.json` (the `calibrate` frozen quantile bins + per-image histograms — see `energy::ARTIFACT_PATH`). Regenerable *views* (PNG sheets) stay in `out/`. When something reads such an artifact back, expose the default path as a `pub const` (e.g. `energy::ARTIFACT_PATH`) shared by writer and reader rather than re-deriving the string.
 
-> **Adding a subcommand** (until the `cli.rs` split lands, the `Args` struct still
-> lives in `cli.rs`). Four edit sites: (1) the `Args` struct in `src/cli.rs` (or
-> the subcommand's own module — clap derive works on a struct defined anywhere),
-> (2) a `Command` enum variant in `cli.rs` referencing it, (3) `src/main.rs` `use`
-> + dispatch arm, (4) `src/lib.rs` `pub mod`. New subcommands MUST default outputs
-> under `out/<subcommand>/` (disposable) or `data/<subcommand>/` (load-bearing
-> artifacts) — never the repo root. Keep `#[derive(Args)]`/`#[arg(...)]` attributes
-> and all default values/flag names stable (batch reproducibility depends on them).
+> **Adding a subcommand.** The per-subcommand `Args` struct (+ its `impl
+> { resolved_* }` helpers) lives **in the subcommand's own module**, next to its
+> `run_*` (the P0 `cli.rs` decomposition moved every struct out of `cli.rs`). Four
+> edit sites: (1) the `#[derive(Args)]` struct in the subcommand's module (e.g.
+> `EnrichArgs` in `src/enrich.rs`; the `energy.rs`-hosted diagnostics' structs in
+> `src/energy.rs`), `use`-importing any shared groups it flattens from `cli`
+> (`crate::cli::{LocationArgs, ShadeArgs, PaletteSelectArgs, BackendChoice,
+> parse_complex}`); (2) a `Command` enum variant in `cli.rs` referencing it by path
+> (`Enrich(crate::enrich::EnrichArgs)`); (3) `src/main.rs` `use` + dispatch arm;
+> (4) `src/lib.rs` `pub mod`. **`cli.rs` keeps only** the shared cross-cutting types
+> (`BackendChoice`, `LocationArgs`, `ShadeArgs`, `PaletteSelectArgs`, `Cli`,
+> `Command`, `parse_complex`). New subcommands MUST default outputs under
+> `out/<subcommand>/` (disposable) or `data/<subcommand>/` (load-bearing artifacts)
+> — never the repo root. Keep `#[derive(Args)]`/`#[arg(...)]` attributes and all
+> default values/flag names stable (batch reproducibility depends on them).
 
 - Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png only), astro-float. The descend JSON is hand-rolled rather than pulling in serde.
 - Matt is expert (graphics + ML PhD) — be terse and precise; skip basics.

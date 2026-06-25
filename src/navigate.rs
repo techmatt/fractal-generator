@@ -27,8 +27,9 @@ use astro_float::{BigFloat, RoundingMode};
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
-use crate::backend::Trap;
-use crate::cli::NavigateArgs;
+use crate::backend::{Trap, TrapShape};
+use clap::Args;
+use crate::cli::{parse_complex, BackendChoice, PaletteSelectArgs, ShadeArgs};
 use crate::font;
 use crate::hp;
 use crate::palette_io::load_palette;
@@ -1309,5 +1310,124 @@ mod tests {
             (mismatches as f64) < 0.01 * checked as f64,
             "too many atom_period mismatches: {mismatches}/{checked}"
         );
+    }
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `navigate` subcommand: deterministic single-path navigation toward minibrot
+/// nuclei via atom-domain period detection, Newton refinement, and a size
+/// estimate. Same filmstrip/JSON format as `descend` for a direct comparison;
+/// the zoom is minibrot-driven (each minibrot framed at `|size|·frame_multiple`)
+/// rather than a fixed factor.
+#[derive(Args, Debug)]
+pub struct NavigateArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Number of navigation levels (each re-frames at the chosen nucleus).
+    #[arg(long, default_value_t = 20)]
+    pub levels: u32,
+
+    /// Frame width as a multiple of the chosen minibrot's `|size|`.
+    #[arg(long, default_value_t = 8.0)]
+    pub frame_multiple: f64,
+
+    /// Mandelbrot/Julia panel width in pixels (height follows 16:9).
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) for both panels.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Start frame center as `re,im` (arbitrary-precision decimals).
+    #[arg(long, default_value = "-0.5,0", allow_hyphen_values = true)]
+    pub start_center: String,
+
+    /// Start frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub start_width: f64,
+
+    /// RNG seed for tie-breaks among near-equal top candidates.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(mag))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of magnification).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// Early-stop if the scheduled maxiter would exceed this ceiling.
+    #[arg(long, default_value_t = 250_000)]
+    pub maxiter_ceiling: u32,
+
+    /// Early-stop if a chosen nucleus period exceeds this cap.
+    #[arg(long, default_value_t = 100_000)]
+    pub period_cap: u32,
+
+    /// Also render the parallel base-scale Julia column in the filmstrip. Off by
+    /// default: a good Mandelbrot region implies a good Julia, so the automated
+    /// render is pure cost. The on-demand `render --julia` is unaffected.
+    #[arg(long, default_value_t = false)]
+    pub with_julia: bool,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow). Only used when
+    /// `--with-julia` is set.
+    #[arg(long, default_value_t = 3000)]
+    pub julia_maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Precision backend: f64, perturb, or auto (default; switches per level).
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    pub backend: BackendChoice,
+
+    /// Output filmstrip PNG path. Per-level panels go in `<stem>_panels/`.
+    #[arg(long, default_value = "out/strips/navigate_strip.png")]
+    pub output: String,
+
+    /// Output JSON log path.
+    #[arg(long, default_value = "out/strips/navigate.json")]
+    pub json: String,
+}
+
+impl NavigateArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--start-center` (`re,im`) into two decimal strings (kept as
+    /// strings for arbitrary-precision parsing downstream).
+    pub fn resolved_start_center(&self) -> Result<(String, String), String> {
+        let parts: Vec<&str> = self.start_center.split(',').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "invalid --start-center '{}', expected re,im",
+                self.start_center
+            ));
+        }
+        Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
     }
 }

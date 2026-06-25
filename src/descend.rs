@@ -25,8 +25,9 @@ use astro_float::{BigFloat, RoundingMode};
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
-use crate::backend::Trap;
-use crate::cli::DescendArgs;
+use crate::backend::{Trap, TrapShape};
+use clap::Args;
+use crate::cli::{parse_complex, BackendChoice, PaletteSelectArgs, ShadeArgs};
 use crate::font;
 use crate::hp;
 use crate::palette_io::load_palette;
@@ -578,4 +579,118 @@ fn build_json(logs: &[LevelLog], zoom: f64, strip: &str) -> String {
     }
     s.push_str("]\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `descend` subcommand: greedy quality-scored descent emitting a tall
+/// Mandelbrot|Julia filmstrip and a JSON log. A diagnostic for *where* deep-zoom
+/// quality falls off (and a prototype of the per-window interest score the real
+/// beam search will need) — deliberately the naive greedy baseline.
+#[derive(Args, Debug)]
+pub struct DescendArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Number of descent levels (each zooms in by `--zoom`).
+    #[arg(long, default_value_t = 20)]
+    pub levels: u32,
+
+    /// Per-level zoom factor (`width_{i+1} = width_i / zoom`).
+    #[arg(long, default_value_t = 6.0)]
+    pub zoom: f64,
+
+    /// Mandelbrot/Julia panel width in pixels (height follows 16:9).
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) for both panels.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Start frame center as `re,im` (arbitrary-precision decimals).
+    #[arg(long, default_value = "-0.5,0", allow_hyphen_values = true)]
+    pub start_center: String,
+
+    /// Start frame width in the complex plane.
+    #[arg(long, default_value_t = 3.0)]
+    pub start_width: f64,
+
+    /// RNG seed for sampling a target from each level's top-1% scored windows.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Score window size K (K×K window over the feature map).
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(mag))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of magnification).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// Also render the parallel base-scale Julia column in the filmstrip. Off by
+    /// default: a good Mandelbrot region implies a good Julia, so the automated
+    /// render is pure cost. The on-demand `render --julia` is unaffected.
+    #[arg(long, default_value_t = false)]
+    pub with_julia: bool,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow). Only used when
+    /// `--with-julia` is set.
+    #[arg(long, default_value_t = 3000)]
+    pub julia_maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Precision backend: f64, perturb, or auto (default; switches per level).
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    pub backend: BackendChoice,
+
+    /// Output filmstrip PNG path. Per-level panels go in `<stem>_panels/`.
+    #[arg(long, default_value = "out/strips/descend_strip.png")]
+    pub output: String,
+
+    /// Output JSON log path.
+    #[arg(long, default_value = "out/strips/descend.json")]
+    pub json: String,
+}
+
+impl DescendArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--start-center` (`re,im`) into two decimal strings (kept as
+    /// strings for arbitrary-precision parsing downstream).
+    pub fn resolved_start_center(&self) -> Result<(String, String), String> {
+        let parts: Vec<&str> = self.start_center.split(',').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "invalid --start-center '{}', expected re,im",
+                self.start_center
+            ));
+        }
+        Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
+    }
 }

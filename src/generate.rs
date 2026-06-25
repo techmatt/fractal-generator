@@ -48,7 +48,8 @@ use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::{BackendChoice, GenerateArgs};
+use clap::Args;
+use crate::cli::BackendChoice;
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use crate::energy::{self, distance, region_energies, Signature};
 use crate::palette::Palette;
@@ -722,4 +723,130 @@ fn build_manifest(
     let _ = writeln!(s, "  \"corpus_size\": {corpus_size}");
     s.push_str("}\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `generate` subcommand: see `generate::run_generate`. Promotes probe 1's
+/// discovery sampler to a real generator — draw → cheap screen → accept band →
+/// keep, run to a target keeper count K, persisting the full per-image log vector
+/// (`locations.jsonl`) + a run manifest under `data/generated/<run>/`, plus an
+/// annotated keeper contact sheet. The accept band is centralized
+/// (`generate::AcceptBand`); its three flags are the deferred boundary-retune knob
+/// (FLAG: band not yet eye-validated). Defaults reproduce probe 1's keeper stream.
+#[derive(Args, Debug)]
+pub struct GenerateArgs {
+    /// Target keeper count: draw until this many keepers pass the band (capped by
+    /// `--max-draws`).
+    #[arg(long, default_value_t = 50)]
+    pub keepers: usize,
+
+    /// SplitMix64 seed (deterministic). Default = probe 1's seed, so the
+    /// probe-1-default config reproduces the probe-1 keeper stream.
+    #[arg(long, default_value_t = 20_260_622)]
+    pub seed: u64,
+
+    /// Sampling box `re_lo,re_hi,im_lo,im_hi` (uniform center draw).
+    #[arg(long = "box", default_value = "-2.0,0.7,-1.2,1.2", allow_hyphen_values = true)]
+    pub box_bounds: String,
+
+    /// Log-uniform frame-width range, low edge (shallow cap; f64 cheap regime).
+    #[arg(long, default_value_t = 0.003)]
+    pub fw_lo: f64,
+
+    /// Log-uniform frame-width range, high edge.
+    #[arg(long, default_value_t = 0.05)]
+    pub fw_hi: f64,
+
+    /// Cheap-screen render width in px (height follows 16:9; ss1). Every draw.
+    #[arg(long, default_value_t = 320)]
+    pub screen_width: u32,
+
+    /// Maximum iterations for the screen + keeper renders.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Accept-band override: middle-90% smooth-iter spread floor (default from
+    /// the label-retuned `AcceptBand`).
+    #[arg(long)]
+    pub spread_min: Option<f64>,
+
+    /// Accept-band override: interior (max-iter) fraction cap.
+    #[arg(long)]
+    pub interior_max: Option<f64>,
+
+    /// Accept-band override: escape-median smooth-iter floor.
+    #[arg(long)]
+    pub esc_median_min: Option<f64>,
+
+    /// Max-draws safeguard (0 → K×500). The loop stops and reports if it hits this
+    /// before reaching K keepers.
+    #[arg(long, default_value_t = 0)]
+    pub max_draws: usize,
+
+    /// Keeper contact-sheet thumbnail width in px (height follows 16:9).
+    #[arg(long, default_value_t = 256)]
+    pub thumb_width: u32,
+
+    /// Keeper contact-sheet grid columns.
+    #[arg(long, default_value_t = 6)]
+    pub cols: usize,
+
+    /// Corpus calibration artifact (frozen bins + per-image signatures) for the
+    /// keeper-only descriptor feature.
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Preview colormap name (from `data/palettes/clean_colormaps.json`) for the
+    /// keeper thumbnails/sheet only — purely cosmetic, structure-finding is
+    /// palette-independent and the 3-palette labeling stage is downstream.
+    #[arg(long, default_value = "cubehelix")]
+    pub palette: String,
+
+    /// Output directory for the batch (`locations.jsonl`, `manifest.json`,
+    /// `keeper_sheet.png`, `thumbs/`). Outside `out/` — a durable location store.
+    /// Use a distinct dir per batch.
+    #[arg(long, default_value = "data/generated/run0")]
+    pub out_dir: String,
+}
+
+impl GenerateArgs {
+    /// Parse `--box` (`re_lo,re_hi,im_lo,im_hi`) into bounds.
+    pub fn resolved_box(&self) -> Result<(f64, f64, f64, f64), String> {
+        let p: Vec<&str> = self.box_bounds.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!(
+                "invalid --box '{}', expected re_lo,re_hi,im_lo,im_hi",
+                self.box_bounds
+            ));
+        }
+        let parse = |s: &str, what: &str| -> Result<f64, String> {
+            s.trim()
+                .parse()
+                .map_err(|_| format!("invalid --box {what} in '{}'", self.box_bounds))
+        };
+        let re_lo = parse(p[0], "re_lo")?;
+        let re_hi = parse(p[1], "re_hi")?;
+        let im_lo = parse(p[2], "im_lo")?;
+        let im_hi = parse(p[3], "im_hi")?;
+        if re_hi <= re_lo || im_hi <= im_lo {
+            return Err(format!("--box bounds must be lo < hi in '{}'", self.box_bounds));
+        }
+        Ok((re_lo, re_hi, im_lo, im_hi))
+    }
+
+    /// Effective accept band: each clause overridden by its flag if present, else
+    /// the centralized `generate::AcceptBand` default (FLAG: one-place retune).
+    pub fn band(&self) -> crate::generate::AcceptBand {
+        let d = crate::generate::AcceptBand::default();
+        crate::generate::AcceptBand {
+            spread_min: self.spread_min.unwrap_or(d.spread_min),
+            interior_max: self.interior_max.unwrap_or(d.interior_max),
+            esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
+        }
+    }
 }

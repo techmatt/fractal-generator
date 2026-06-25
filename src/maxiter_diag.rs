@@ -43,7 +43,7 @@ use std::time::Instant;
 use num_complex::Complex;
 
 use crate::backend::{F64Backend, Trap, TrapShape};
-use crate::cli::MaxiterDiagArgs;
+use clap::Args;
 use crate::energy::{occupancy, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::color_params;
 use crate::palette::Palette;
@@ -572,4 +572,68 @@ fn load_palette(colormaps: &str, name: &str) -> Result<Palette, String> {
         .find(|c| c.name == name)
         .ok_or_else(|| format!("palette '{name}' not found in {colormaps}"))?;
     Ok(Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, false, cm.mirror_needed))
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `maxiter-diag` subcommand: see `maxiter_diag::run_maxiter_diag`. Diagnosis-only
+/// iteration-cap escalation harness. All caps/crops/resolution overridable; the
+/// defaults reproduce the loose0_v3 worst-offender escalation.
+#[derive(Args, Debug)]
+pub struct MaxiterDiagArgs {
+    /// `present` manifest mined for worst-offender crops (highest recorded
+    /// `black_fraction` per seed × composition — the grayest spiral cores).
+    #[arg(long, default_value = "data/label_crops/loose0_v3/manifest.json")]
+    pub manifest: String,
+
+    /// Number of worst-offender crops to escalate (the test location is appended).
+    #[arg(long, default_value_t = 3)]
+    pub offenders: usize,
+
+    /// Escalating iteration-cap series (comma-separated).
+    #[arg(long, default_value = "2000,8000,32000,128000")]
+    pub caps: String,
+
+    /// Render width in px (height follows 16:9). The locked quality is otherwise
+    /// fixed: grid ss4 + Lanczos-3 (the `render-one` path).
+    #[arg(long, default_value_t = 1280)]
+    pub width: u32,
+
+    /// Linear supersample factor (the lock: 4 → 16 spp).
+    #[arg(long, default_value_t = 4)]
+    pub supersample: u32,
+
+    /// Palette name, looked up in `--colormaps` (selective-mirror load).
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Standard test location (minibrot eye), real part. Matches `render-one`.
+    #[arg(long, default_value = "-0.746339", allow_hyphen_values = true)]
+    pub test_cx: String,
+
+    /// Standard test location, imaginary part.
+    #[arg(long, default_value = "0.112242", allow_hyphen_values = true)]
+    pub test_cy: String,
+
+    /// Standard test location, frame width.
+    #[arg(long, default_value_t = 0.000583)]
+    pub test_fw: f64,
+
+    /// Knee-detection epsilon: the first cap past which the max-over-crops residual
+    /// change drops below this is the provisional knee.
+    #[arg(long, default_value_t = 0.02)]
+    pub knee_eps: f32,
+
+    /// Number of manifest crops re-rendered (cheap gate res) at the knee cap to
+    /// report the no-escape-fraction distribution. `0` skips gate calibration.
+    #[arg(long, default_value_t = 80)]
+    pub gate_sample: usize,
+
+    /// Stable output directory (not under `out/`).
+    #[arg(long, default_value = "data/calibration/maxiter_diag/")]
+    pub out_dir: String,
 }

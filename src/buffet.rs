@@ -36,8 +36,9 @@ use astro_float::BigFloat;
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
-use crate::backend::Trap;
-use crate::cli::{BackendChoice, BuffetArgs};
+use crate::backend::{Trap, TrapShape};
+use clap::Args;
+use crate::cli::{parse_complex, BackendChoice, PaletteSelectArgs, ShadeArgs};
 use crate::coherence::{coverage_stats, windowed_busyness_max, CoverageStats, COVER_HI, COVER_LO};
 use crate::coloring::ColorParams;
 use crate::font;
@@ -751,4 +752,161 @@ fn build_json(args: &BuffetArgs, records: &[TileRecord]) -> String {
     }
     s.push_str("  ]\n}\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `buffet` subcommand: deliberately un-engineered, visual-first sampling of what
+/// "scale-uniform decoration away from a cusp" looks like (Prompt visual-buffet-v2).
+/// Reuses `coherence::coverage_stats` purely to **label** tiles (coverage,
+/// `subpixel_frac`, `interior_frac`, de_px median + IQR spread); none of it feeds
+/// any selection. Three sources — (A) main-set boundary neighborhoods, (B) off-cusp
+/// signature-filtered frames (a light two-threshold filter on trial, not a scorer),
+/// (C) a small minibrot control block — each rendered over rows = off-boundary
+/// offset × columns = scale. f64 cheap-regime throughout (asserted).
+#[derive(Args, Debug)]
+pub struct BuffetArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Source-A (main-boundary neighborhood) location count.
+    #[arg(long, default_value_t = 6)]
+    pub a_count: usize,
+
+    /// Source-B (off-cusp signature-filtered) location count.
+    #[arg(long, default_value_t = 6)]
+    pub b_count: usize,
+
+    /// Source-C (minibrot control) location count.
+    #[arg(long, default_value_t = 4)]
+    pub c_count: usize,
+
+    /// Per-tile panel width in px (height follows 16:9).
+    #[arg(long, default_value_t = 240)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) for every tile.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Target wallpaper width `de_px` is pinned to (resolution-invariant `de`), so
+    /// the cheap tiles' labels predict the final render's spacing.
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// Sub-pixel threshold θ: an escaped pixel with `de_px < θ` is speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub theta: f64,
+
+    /// Window size K (K×K) for the windowed-max busyness label.
+    #[arg(long, default_value_t = 5)]
+    pub window: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Base frame width for source-A boundary neighborhoods (the `BASE` scale).
+    #[arg(long, default_value_t = 0.08)]
+    pub base_width_a: f64,
+
+    /// Base frame width for the source-B signature scan and its tiles.
+    #[arg(long, default_value_t = 0.05)]
+    pub base_width_b: f64,
+
+    /// Source-C minibrot framing: base width = `|size| · frame_multiple`.
+    #[arg(long, default_value_t = 8.0)]
+    pub frame_multiple: f64,
+
+    /// Source-B filter (on trial): keep only frames with `interior_frac` below this.
+    #[arg(long, default_value_t = 0.15)]
+    pub b_interior_max: f64,
+
+    /// Source-B filter (on trial): keep only frames whose in-band `[2,14]` de_px
+    /// fraction (`coverage`) is above this (tight de_px spread). Default set
+    /// relative to the achievable ceiling — the harvest's best whole-frame coverage
+    /// was 0.339, so 0.35+ selects nothing; 0.15 picks meaningfully-covered frames.
+    #[arg(long, default_value_t = 0.15)]
+    pub b_coverage_min: f64,
+
+    /// Light pre-filter: drop a candidate base frame whose `interior_frac` exceeds
+    /// this (pure interior). Applied to A/B selection; C is kept regardless (the
+    /// minibrot body is the control's whole point).
+    #[arg(long, default_value_t = 0.60)]
+    pub interior_max: f64,
+
+    /// Coarse-scan candidate budget for the source-B random sample.
+    #[arg(long, default_value_t = 800)]
+    pub scan_tries: usize,
+
+    /// Broad scan region `re_lo,re_hi,im_lo,im_hi` (the main-set neighborhood the
+    /// B sample draws from).
+    #[arg(long, default_value = "-1.8,0.45,-1.15,1.15", allow_hyphen_values = true)]
+    pub scan_region: String,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(3/width))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of zoom past width 3).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// RNG seed for the source-B random scan (deterministic for a fixed seed).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Output directory for the per-source sheets.
+    #[arg(long, default_value = "out/buffet")]
+    pub out_dir: String,
+
+    /// Flat per-tile metrics table (JSON) path.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub json: String,
+}
+
+impl BuffetArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--scan-region` (`re_lo,re_hi,im_lo,im_hi`) into bounds.
+    pub fn resolved_scan_region(&self) -> Result<(f64, f64, f64, f64), String> {
+        let p: Vec<&str> = self.scan_region.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!(
+                "invalid --scan-region '{}', expected re_lo,re_hi,im_lo,im_hi",
+                self.scan_region
+            ));
+        }
+        let parse = |s: &str, what: &str| -> Result<f64, String> {
+            s.trim()
+                .parse()
+                .map_err(|_| format!("invalid --scan-region {what} in '{}'", self.scan_region))
+        };
+        let re_lo = parse(p[0], "re_lo")?;
+        let re_hi = parse(p[1], "re_hi")?;
+        let im_lo = parse(p[2], "im_lo")?;
+        let im_hi = parse(p[3], "im_hi")?;
+        if re_hi <= re_lo || im_hi <= im_lo {
+            return Err(format!("--scan-region bounds must be lo < hi in '{}'", self.scan_region));
+        }
+        Ok((re_lo, re_hi, im_lo, im_hi))
+    }
 }

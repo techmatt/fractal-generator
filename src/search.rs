@@ -34,8 +34,9 @@ use astro_float::{BigFloat, RoundingMode};
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
-use crate::backend::Trap;
-use crate::cli::SearchArgs;
+use crate::backend::{Trap, TrapShape};
+use clap::Args;
+use crate::cli::{parse_complex, BackendChoice, PaletteSelectArgs, ShadeArgs};
 use crate::coloring::ColorParams;
 use crate::font;
 use crate::hp;
@@ -2258,4 +2259,265 @@ fn build_cov_json(
     s.push_str("  ]\n");
     s.push_str("}\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `search` subcommand: a global best-first frontier over a tree of minibrot
+/// locations. Each pop renders a frame, finds child minibrots (atom-domain →
+/// Newton → size, the `navigate` primitives), filters re-selections (the
+/// anti-cascade fix), and pushes diversity-adjusted children. Bounded by a
+/// wall-clock budget. Outputs: a best-path filmstrip, a farthest-point-sampled
+/// top-N contact sheet of diverse candidate locations, and `search.json`.
+#[derive(Args, Debug)]
+pub struct SearchArgs {
+    #[command(flatten)]
+    pub shade: ShadeArgs,
+
+    #[command(flatten)]
+    pub palette: PaletteSelectArgs,
+
+    /// Wall-clock budget in seconds (the runtime knob; the search expands
+    /// best-first until this elapses, then composes outputs).
+    #[arg(long, default_value_t = 600.0)]
+    pub time_budget: f64,
+
+    /// Children kept (pushed to the frontier) per expanded node.
+    #[arg(long, default_value_t = 6)]
+    pub beam_width: usize,
+
+    /// Diversity penalty λ in `adjusted = score − λ·similarity` (frontier
+    /// priority). Larger → the frontier spreads across distinct families faster.
+    #[arg(long, default_value_t = 0.15)]
+    pub diversity: f64,
+
+    /// Number of diverse high-scoring locations in the top-N contact sheet.
+    #[arg(long, default_value_t = 12)]
+    pub top_n: usize,
+
+    /// Mandelbrot/Julia panel width in pixels (height follows 16:9).
+    #[arg(long, default_value_t = 640)]
+    pub panel_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) for every panel.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Start frame center as `re,im` (arbitrary-precision decimals).
+    #[arg(long, default_value = "-0.5,0", allow_hyphen_values = true)]
+    pub start_center: String,
+
+    /// Start frame width in the complex plane (the base set view).
+    #[arg(long, default_value_t = 3.0)]
+    pub start_width: f64,
+
+    /// RNG seed for deterministic tie-breaks among near-equal priorities.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Frame width as a multiple of the chosen minibrot's `|size|` (the descend
+    /// scale; also sets each child's frame).
+    #[arg(long, default_value_t = 8.0)]
+    pub frame_multiple: f64,
+
+    /// Re-selection filter radius in child-frame-widths: drop a child whose
+    /// nucleus is within `k·(child width)` of an ancestor's nucleus (the
+    /// anti-cascade fix). Distinct off-position sub-minibrots are preserved.
+    #[arg(long, default_value_t = 2.0)]
+    pub reselect_k: f64,
+
+    /// **Broad shallow seed count** (Prompt broad-shallow-harvest). When `> 0`, the
+    /// root frontier is seeded by a coarse global atom-domain scan deduped
+    /// *spatially* — keeping up to this many distinct low-period nuclei spread
+    /// across the base region, instead of `beam_width`. The source of breadth for
+    /// the shallow harvest. `0` (default) → legacy single-root-expand behaviour.
+    #[arg(long, default_value_t = 0)]
+    pub seed_count: usize,
+
+    /// Spatial-dedup cell size (panel px) for the broad seed scan: one nucleus per
+    /// `seed_cell_px²` cell. Smaller → more, closer-packed seeds. Only used when
+    /// `--seed-count > 0`.
+    #[arg(long, default_value_t = 24)]
+    pub seed_cell_px: u32,
+
+    /// **Off-nucleus drift drive** (Prompt offnucleus-deband, Phase 4). When set,
+    /// each expanded frame is re-centered: render at the nucleus, find the best
+    /// contiguous in-band `de_px`-band region (the decoration), drift the frame
+    /// center toward its centroid (clamped to `coherence::DRIFT_MAX`), re-render,
+    /// and **surface/rank candidates by band reward**, not busyness — framing the
+    /// decoration around a minibrot instead of its cusp. Off → the existing
+    /// busyness-ranked search is unchanged.
+    #[arg(long, default_value_t = false)]
+    pub drift: bool,
+
+    /// Target wallpaper width in pixels the DE-coherence gate is pinned to:
+    /// `de_px = de / (frame_width / target_width)`. The panels are cheap
+    /// thumbnails, but `de` is resolution-invariant, so a thumbnail predicts the
+    /// final render's speckle gate. Keep at the eventual wallpaper width (2560).
+    #[arg(long, default_value_t = 2560)]
+    pub target_width: u32,
+
+    /// DE-coherence sub-pixel threshold θ: an escaped pixel with `de_px < θ` (at
+    /// the target spacing) counts as sub-pixel-boundary speckle.
+    #[arg(long, default_value_t = 1.0)]
+    pub coherence_theta: f64,
+
+    /// maxiter schedule base: `maxiter = round(base + per_decade·log10(mag))`.
+    #[arg(long, default_value_t = 1000.0)]
+    pub maxiter_base: f64,
+
+    /// maxiter schedule slope (iterations added per decade of magnification).
+    #[arg(long, default_value_t = 1500.0)]
+    pub per_decade: f64,
+
+    /// Hard cap: skip expanding a node whose scheduled maxiter exceeds this.
+    #[arg(long, default_value_t = 250_000)]
+    pub maxiter_ceiling: u32,
+
+    /// Hard cap: don't descend into minibrots of higher period than this.
+    #[arg(long, default_value_t = 100_000)]
+    pub period_cap: u32,
+
+    /// **Magnification ceiling** (Prompt broad-shallow-harvest): don't expand a
+    /// node deeper than this magnification. The depth analog of `--period-cap`: a
+    /// chain of low-period descents nests deep even under a low period cap, and the
+    /// busyness-priority frontier dives there, wasting budget on sub-pixel deep
+    /// frames. Capping mag bounds the harvest to the shallow decoration regime.
+    /// `0` (default) → unlimited (default search unchanged).
+    #[arg(long, default_value_t = 0.0)]
+    pub max_mag: f64,
+
+    /// Also render the parallel base-scale Julia column in the best-path strip.
+    /// Off by default: a good Mandelbrot region implies a good Julia, so the
+    /// automated render is pure cost. The on-demand `render --julia` is unaffected.
+    #[arg(long, default_value_t = false)]
+    pub with_julia: bool,
+
+    /// Fixed maxiter for every Julia panel (base-scale, shallow). Only used when
+    /// `--with-julia` is set.
+    #[arg(long, default_value_t = 3000)]
+    pub julia_maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Orbit-trap shape.
+    #[arg(long, value_enum, default_value_t = TrapShape::Point)]
+    pub trap: TrapShape,
+
+    /// Orbit-trap center as `re,im`.
+    #[arg(long, default_value = "0,0")]
+    pub trap_center: String,
+
+    /// Orbit-trap radius (circle trap only).
+    #[arg(long, default_value_t = 1.0)]
+    pub trap_radius: f64,
+
+    /// Precision backend: f64, perturb, or auto (default; switches per node).
+    #[arg(long, value_enum, default_value_t = BackendChoice::Auto)]
+    pub backend: BackendChoice,
+
+    /// Best-path filmstrip PNG. Per-node panels go in `<stem>_panels/`.
+    #[arg(long, default_value = "out/strips/search_strip.png")]
+    pub strip: String,
+
+    /// Top-N diversity contact-sheet PNG.
+    #[arg(long, default_value = "out/strips/search_sheet.png")]
+    pub sheet: String,
+
+    /// Node-tree JSON output path.
+    #[arg(long, default_value = "out/search/search.json")]
+    pub json: String,
+
+    /// Corpus-derived structural target bands (`corpus` subcommand output). When
+    /// present, its busyness/period bands replace the hand-tuned score constants
+    /// (per-band, only where provenance ≠ "default"); absent → current constants.
+    #[arg(long, default_value = "out/corpus/targets.json")]
+    pub targets: String,
+
+    /// **Coverage-dominance harvest** (Prompt coverage-dominance). When set, the
+    /// whole drive turns away from the boundary: instead of the deep child-nucleus
+    /// frontier descent, it broad-spatial-seeds the base frame, **scale-optimizes**
+    /// each seed (sweeps `frame_multiple ∈ [scale_min, scale_max]` and keeps the zoom
+    /// that maximizes `coverage` — the fraction of the frame at the magical
+    /// few-pixels boundary spacing — subject to the speckle/interior/coverage gates),
+    /// drifts the center onto the coverage peak, and ranks survivors by `coverage`.
+    /// No descent chain; staying shallow is the point. Off → the existing
+    /// busyness/band frontier search is unchanged.
+    #[arg(long, default_value_t = false)]
+    pub coverage: bool,
+
+    /// Coverage band low edge `de_px` (default: module const 2.0). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_lo: Option<f64>,
+
+    /// Coverage band high edge `de_px` (default: 14.0). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_hi: Option<f64>,
+
+    /// Speckle reject cap `subpixel_frac` (default: 0.12). Only in `--coverage`.
+    #[arg(long)]
+    pub spx_cap: Option<f64>,
+
+    /// Interior reject cap `interior_frac` (default: 0.30). Only in `--coverage`.
+    #[arg(long)]
+    pub int_cap: Option<f64>,
+
+    /// Coverage floor reject `coverage` (default: 0.45). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_min: Option<f64>,
+
+    /// Windowed-busyness richness floor (default: 0.02). Only in `--coverage`.
+    #[arg(long)]
+    pub cover_busy_floor: Option<f64>,
+
+    /// Scale-sweep low multiple of the minibrot `|size|` (zoom in; smaller frame).
+    /// Only in `--coverage`.
+    #[arg(long, default_value_t = 4.0)]
+    pub scale_min: f64,
+
+    /// Scale-sweep high multiple of the minibrot `|size|` (zoom out; wider frame).
+    /// Only in `--coverage`.
+    #[arg(long, default_value_t = 64.0)]
+    pub scale_max: f64,
+
+    /// Number of log-spaced scales swept per seed. Only in `--coverage`.
+    #[arg(long, default_value_t = 8)]
+    pub scale_steps: usize,
+}
+
+impl SearchArgs {
+    /// Effective coverage params: each field overridden by its flag if present.
+    pub fn coverage_params(&self) -> crate::coherence::CoverageParams {
+        let d = crate::coherence::CoverageParams::default();
+        crate::coherence::CoverageParams {
+            cover_lo: self.cover_lo.unwrap_or(d.cover_lo),
+            cover_hi: self.cover_hi.unwrap_or(d.cover_hi),
+            spx_cap: self.spx_cap.unwrap_or(d.spx_cap),
+            int_cap: self.int_cap.unwrap_or(d.int_cap),
+            cover_min: self.cover_min.unwrap_or(d.cover_min),
+            busy_floor: self.cover_busy_floor.unwrap_or(d.busy_floor),
+        }
+    }
+}
+
+impl SearchArgs {
+    /// Parse `--trap-center` (`re,im`) into a complex number.
+    pub fn resolved_trap_center(&self) -> Result<Complex<f64>, String> {
+        parse_complex(&self.trap_center, "--trap-center")
+    }
+
+    /// Parse `--start-center` (`re,im`) into two decimal strings (kept as
+    /// strings for arbitrary-precision parsing downstream).
+    pub fn resolved_start_center(&self) -> Result<(String, String), String> {
+        let parts: Vec<&str> = self.start_center.split(',').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "invalid --start-center '{}', expected re,im",
+                self.start_center
+            ));
+        }
+        Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
+    }
 }

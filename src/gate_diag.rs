@@ -42,7 +42,7 @@ use num_complex::Complex;
 use rayon::prelude::*;
 
 use crate::backend::{F64Backend, Trap, TrapShape};
-use crate::cli::GateDiagArgs;
+use clap::Args;
 use crate::coloring::ChannelSet;
 use crate::energy::{self, region_energies};
 use crate::render::{self, Frame};
@@ -293,4 +293,52 @@ pub fn run_gate_diag(args: &GateDiagArgs) -> Result<(), String> {
     );
     println!("wrote: {}", csv_path.display());
     Ok(())
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `gate-diag` subcommand: see `gate_diag::run_gate_diag`. Measurement-only signal
+/// extractor for the reject-the-bad gate study. Re-renders each manifest geometry's
+/// cheap f64 screen (DE channel on) at the stored crop frame and emits per-geometry
+/// dynamics + energy-descriptor signals to a CSV. Builds no gate.
+#[derive(Args, Debug)]
+pub struct GateDiagArgs {
+    /// `present` manifest whose crop geometries (cx/cy/fw per draw_index×comp) are
+    /// re-rendered. The label join + AUC analysis happen Python-side off this CSV.
+    #[arg(long, default_value = "data/label_crops/loose0_v3/manifest.json")]
+    pub manifest: String,
+
+    /// Persisted energy calibration (frozen quantile bins) — the `fine_energy_frac`
+    /// signal bins each JPG's region energies under these corpus-frozen edges.
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Per-scale EMD weights are irrelevant here (no distance), but the frozen bins
+    /// come from the same artifact; this is unused and kept only for symmetry.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Iteration cap for the diagnostic re-render. Defaults to `present`'s 8000
+    /// (the manifest's embedded "maxiter 2000" note is a stale hardcoded string).
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// Escape (bailout) radius. ≥1e6 is required for a stable DE estimate; the
+    /// default matches `present`/`generate` (1e6 ≈ 2^20, already in the ideal band).
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Diagnostic cheap-screen width (px); height follows 16:9. The DE field is
+    /// smooth, so a sub-full-res screen samples `de_small_frac` faithfully and fast.
+    #[arg(long, default_value_t = 640)]
+    pub screen_width: u32,
+
+    /// Reference width the DE-in-pixels normalization is pinned to (so `de_px` reads
+    /// as "DE in final-wallpaper pixels", independent of `screen_width`).
+    #[arg(long, default_value_t = 2560)]
+    pub de_ref_width: u32,
+
+    /// Stable output dir (not under `out/`). Emits `signals.csv`.
+    #[arg(long, default_value = "data/gate_diag/")]
+    pub out_dir: String,
 }

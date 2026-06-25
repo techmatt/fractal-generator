@@ -49,7 +49,8 @@ use num_complex::Complex;
 use rayon::prelude::*;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::{BackendChoice, GuidedDescendArgs};
+use clap::Args;
+use crate::cli::BackendChoice;
 use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
 use crate::generate::{self, color_params};
 use crate::palette::Palette;
@@ -1611,4 +1612,311 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         ladders = ladders,
         flat = flat,
     )
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `guided-descend` subcommand: see `guided_descend::run_guided_descend`.
+/// Stochastic guided descent from the fixed base-Mandelbrot root; geometric
+/// policy only (no CNN). Reuses the `generate` cheap screen + `AcceptBand` and a
+/// freshly-built μ scale-space focus finder.
+#[derive(Args, Debug)]
+pub struct GuidedDescendArgs {
+    /// Number of independent, decorrelated walks (each starts at the root).
+    #[arg(long, default_value_t = 80)]
+    pub n_walks: usize,
+
+    /// Minimum terminal walk depth (inclusive). rev3: raised 3→4 (the shallow
+    /// d3 frames were too zoomed-out / set-dominated to be useful wallpapers).
+    #[arg(long, default_value_t = 4)]
+    pub depth_min: u32,
+
+    /// Maximum terminal walk depth (inclusive).
+    #[arg(long, default_value_t = 10)]
+    pub depth_max: u32,
+
+    /// LEGACY fixed per-step zoom (rev1–3). rev4 B4 samples the per-step zoom from
+    /// a log-uniform band `[--zoom-lo, --zoom-hi]` instead; this value is reported
+    /// as the nominal but no longer drives stepping. Set `--zoom-lo`=`--zoom-hi`=x
+    /// to ablate B4 back to a fixed x.
+    #[arg(long, default_value_t = 0.4)]
+    pub zoom_per_step: f64,
+
+    /// rev4 B4: per-step zoom-jitter band, low edge. Each depth-≥2 step draws its
+    /// zoom log-uniform in `[zoom_lo, zoom_hi]` (default [0.35,0.50], centered near
+    /// the old fixed 0.4) — restores the flat method's scale diversity.
+    #[arg(long, default_value_t = 0.35)]
+    pub zoom_lo: f64,
+
+    /// rev4 B4: per-step zoom-jitter band, high edge.
+    #[arg(long, default_value_t = 0.50)]
+    pub zoom_hi: f64,
+
+    /// LEGACY (rev1–3 boundary-sampler root, retired in rev4). The root is now a
+    /// 50/50 sampler mixture (Part A); the 8k root uses `--root-zoom-8k` and the
+    /// flat root uses its own sampled fw. Kept only so old invocations still parse.
+    #[arg(long, default_value_t = 0.08)]
+    pub root_zoom: f64,
+
+    // --- rev4 Part A: root sampler mixture ------------------------------------
+    /// `P(8k-field root)` vs `P(flat-sampler root)` at depth-1 (rev4 Part A). 1.0 =
+    /// always the 8k field; 0.0 = always the flat sampler. Both emit a permissive
+    /// (≤80% black) depth-1 node, then hand to the same per-node descent loop.
+    #[arg(long, default_value_t = 0.5)]
+    pub root_mix: f64,
+
+    /// 8k-field root depth-1 frame width (rev4 A1, significant — past the old 0.24,
+    /// folds in "push past base"). At 0.10 the 8k field gives a ~234px window.
+    #[arg(long, default_value_t = 0.10)]
+    pub root_zoom_8k: f64,
+
+    /// 8k-root window criterion: max interior (black) fraction (rev4 A1, permissive;
+    /// subsumes the retired 5-feature exclusion list).
+    #[arg(long, default_value_t = 0.80)]
+    pub root8k_black_max: f64,
+
+    /// 8k-root window criterion: escaped smooth-iter mean lower bound (rejects empty
+    /// far-exterior). Stats over escaped pixels only.
+    #[arg(long, default_value_t = 8.0)]
+    pub root8k_mean_lo: f64,
+
+    /// 8k-root window criterion: escaped smooth-iter mean upper bound (rejects
+    /// set-dominated thickets).
+    #[arg(long, default_value_t = 120.0)]
+    pub root8k_mean_hi: f64,
+
+    /// 8k-root window criterion: escaped smooth-iter variance floor (not-flat).
+    #[arg(long, default_value_t = 6.0)]
+    pub root8k_var_floor: f64,
+
+    // --- rev4 Part A2: flat-sampler root (the prior `generate` method) ---------
+    /// Flat-root center box `re_lo,re_hi,im_lo,im_hi` (rev4 A2 — reuses `generate`'s
+    /// uniform-in-plane box verbatim).
+    #[arg(long = "flat-box", default_value = "-2.0,0.7,-1.2,1.2", allow_hyphen_values = true)]
+    pub flat_box: String,
+
+    /// Flat-root log-uniform fw range, low edge (reuses `generate`'s shallow range).
+    #[arg(long, default_value_t = 0.003)]
+    pub flat_fw_lo: f64,
+
+    /// Flat-root log-uniform fw range, high edge.
+    #[arg(long, default_value_t = 0.05)]
+    pub flat_fw_hi: f64,
+
+    /// Flat-root cheap-screen render width (height 16:9, ss1) — reuses `generate`'s
+    /// screen + `AcceptBand`.
+    #[arg(long, default_value_t = 320)]
+    pub flat_screen_width: u32,
+
+    /// Target-policy weight: descend into a detected μ-focus (renormalized).
+    /// rev4 B1: lowered 0.85→0.70 (raise measure-uniformity via `random`).
+    #[arg(long, default_value_t = 0.70)]
+    pub w_foci: f64,
+
+    /// Target-policy weight: descend into the energy-weighted density focus.
+    #[arg(long, default_value_t = 0.10)]
+    pub w_density: f64,
+
+    /// Target-policy weight: descend into a near-boundary-band point (rev4 B2 —
+    /// the per-step measure-uniformity injection). rev4 B1: raised 0.05→0.20.
+    #[arg(long, default_value_t = 0.20)]
+    pub w_random: f64,
+
+    /// Placement mixture `center,horizon,random` (where the chosen target lands in
+    /// the child frame). Applied to the foci/density branches; the random branch
+    /// is always centered. Lowered center vs run0 (was 0.50,0.25,0.25) to
+    /// decorrelate the shallow layers — this is the repetition dial.
+    #[arg(long, default_value = "0.25,0.40,0.35")]
+    pub placement: String,
+
+    /// Focus-finder σ band in field px (comma-separated). Persistence is measured
+    /// within this band; the sampling score is peak×isolation (NOT persistence).
+    #[arg(long, default_value = "16,20,24,28,32")]
+    pub sigma_band: String,
+
+    /// rev4 B3: foci-diversity radius as a fraction of the node frame width. Before
+    /// score-weighted sampling, foci are value-ordered and distance-thresholded (a
+    /// focus within this radius of an already-kept, higher-scoring focus is dropped)
+    /// so the densest-ridge peak stops dominating every step. 0 disables (ablate B3
+    /// → plain top-score sampling).
+    #[arg(long, default_value_t = 0.12)]
+    pub foci_diversity_radius: f64,
+
+    /// rev4 B2: random branch draws from the current frame's near-boundary band
+    /// (exterior pixels near the set) instead of a uniform interior point. Default
+    /// on; `--random-boundary=false` ablates back to the rev3 interior point.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub random_boundary: bool,
+
+    /// Cheap field/screen render width in px (height follows 16:9, ss1). Drives
+    /// both the AcceptBand screen and the μ-field the focus finder reads. Default
+    /// 768 so the σ band {16..32} runs at the frame-fraction it was tuned at
+    /// (run0 ran 256 → σ ~3× too coarse). Alias `--node-size`.
+    #[arg(long, alias = "node-size", default_value_t = 768)]
+    pub node_width: u32,
+
+    /// Preview render width in px (height follows 16:9, ss1).
+    #[arg(long, default_value_t = 640)]
+    pub preview_width: u32,
+
+    /// Preview colormap name (from the colormaps JSON) — diagnostic only.
+    /// `twilight_shifted` is cyclic (seam-free, mirror-moot).
+    #[arg(long, default_value = "twilight_shifted")]
+    pub preview_palette: String,
+
+    /// Colormap library JSON (for the preview palette).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Maximum iterations for the field/screen and preview renders.
+    #[arg(long, default_value_t = 1000)]
+    pub maxiter: u32,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Accept-band override: middle-90% smooth-iter spread floor.
+    #[arg(long)]
+    pub spread_min: Option<f64>,
+
+    /// Accept-band override: interior (max-iter) fraction cap.
+    #[arg(long)]
+    pub interior_max: Option<f64>,
+
+    /// Accept-band override: escape-median smooth-iter floor.
+    #[arg(long)]
+    pub esc_median_min: Option<f64>,
+
+    /// Best-of-N candidate count per step (rev3 Change 2). Each step draws this
+    /// many candidate next-centers from the per-node policy and two-stage screens
+    /// them (cheap interior cap → 768 occupancy floor) before selecting the
+    /// least-set survivor. 1 reproduces rev2's accept-first behaviour.
+    #[arg(long, default_value_t = 4)]
+    pub descent_candidates: usize,
+
+    /// Best-of-N **Stage 1** interior/black cap (rev3, lowered 0.45→0.30 — the
+    /// aggressive set-avoidance hard ceiling). Each candidate is probed at ~128px
+    /// escape-time and rejected if its `render::black_fraction` (interior counts as
+    /// black) is ≥ this; interior fraction is scale-robust so the cheap probe is
+    /// fine. Default-on at 0.30; 0 or ≥1.0 disables. Black/interior-fraction ONLY
+    /// (busyness is known-unseparable by magnitude).
+    #[arg(long, default_value_t = 0.30)]
+    pub descent_black_cap: f64,
+
+    /// Best-of-N **Stage 2** occupancy floor (rev3, reuses present's 0.321). Stage-1
+    /// survivors are rendered at the 768 node size, shaded, and scored with the
+    /// `energy::occupancy` parity scorer; candidates below this are rejected (keeps
+    /// walks feature-rich, not empty). Among the rest the **least interior** wins.
+    /// Default-on at 0.321; 0 or ≥1.0 disables. CAVEAT: 0.321 was calibrated on the
+    /// labeling-crop distribution, not navigation frames — a tunable knob.
+    #[arg(long, default_value_t = 0.321)]
+    pub descent_occ_floor: f64,
+
+    /// Apply the Stage-2 occupancy floor at the **depth-1→2** step too. The occ
+    /// floor over-fires at that first descent transition (12 of 17 run4 early
+    /// deaths were occ-floor kills at d1→d2 — the wide depth-1 root frame is still
+    /// resolving structure the tight depth-2 node hasn't entered yet). **Default
+    /// off:** the occ floor is skipped at d1→d2 and kept for every d≥3 step. Pass
+    /// this flag to restore the legacy behaviour (occ floor at every depth). The
+    /// Stage-1 interior cap and least-interior selection are unaffected at every
+    /// depth; the *presentation* occ floor (`present --occupancy-floor`) is a
+    /// separate, correctly-calibrated gate and is untouched by this flag.
+    #[arg(long, default_value_t = false)]
+    pub descent_occ_at_d1d2: bool,
+
+    /// Flat-grid PNG columns.
+    #[arg(long, default_value_t = 10)]
+    pub cols: usize,
+
+    /// SplitMix64 seed (deterministic).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Output directory (`pool_sheet.html`, `pool.jsonl`, `pool_grid.png`,
+    /// `tiles/`). Outside `out/` — durable. Use a distinct dir per run.
+    #[arg(long, default_value = "data/guided_descend/run4")]
+    pub out_dir: String,
+}
+
+impl GuidedDescendArgs {
+    /// Effective accept band (each clause flag-overridable; shared default).
+    pub fn band(&self) -> crate::generate::AcceptBand {
+        let d = crate::generate::AcceptBand::default();
+        crate::generate::AcceptBand {
+            spread_min: self.spread_min.unwrap_or(d.spread_min),
+            interior_max: self.interior_max.unwrap_or(d.interior_max),
+            esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
+        }
+    }
+
+    /// Parse `--placement` (`center,horizon,random`) raw weights (un-normalized).
+    pub fn resolved_placement(&self) -> Result<(f64, f64, f64), String> {
+        let p: Vec<&str> = self.placement.split(',').collect();
+        if p.len() != 3 {
+            return Err(format!("invalid --placement '{}', expected center,horizon,random", self.placement));
+        }
+        let parse = |s: &str| -> Result<f64, String> {
+            s.trim().parse::<f64>().map_err(|_| format!("invalid --placement value '{}'", s.trim()))
+        };
+        let (c, h, r) = (parse(p[0])?, parse(p[1])?, parse(p[2])?);
+        if c < 0.0 || h < 0.0 || r < 0.0 || c + h + r <= 0.0 {
+            return Err("--placement weights must be non-negative and sum > 0".into());
+        }
+        Ok((c, h, r))
+    }
+
+    /// Parse `--flat-box` (`re_lo,re_hi,im_lo,im_hi`) for the flat-sampler root.
+    pub fn resolved_flat_box(&self) -> Result<(f64, f64, f64, f64), String> {
+        let p: Vec<&str> = self.flat_box.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --flat-box '{}', expected re_lo,re_hi,im_lo,im_hi", self.flat_box));
+        }
+        let parse = |s: &str, what: &str| -> Result<f64, String> {
+            s.trim().parse().map_err(|_| format!("invalid --flat-box {what} in '{}'", self.flat_box))
+        };
+        let (re_lo, re_hi, im_lo, im_hi) =
+            (parse(p[0], "re_lo")?, parse(p[1], "re_hi")?, parse(p[2], "im_lo")?, parse(p[3], "im_hi")?);
+        if re_hi <= re_lo || im_hi <= im_lo {
+            return Err(format!("--flat-box bounds must be lo < hi in '{}'", self.flat_box));
+        }
+        Ok((re_lo, re_hi, im_lo, im_hi))
+    }
+
+    /// The 8k-root window score config (the hand criterion's tunables).
+    pub fn root8k_score_cfg(&self) -> crate::root_field::ScoreCfg {
+        crate::root_field::ScoreCfg {
+            black_max: self.root8k_black_max,
+            mean_lo: self.root8k_mean_lo,
+            mean_hi: self.root8k_mean_hi,
+            var_floor: self.root8k_var_floor,
+        }
+    }
+
+    /// Resolved per-step zoom-jitter band `(lo, hi)` (rev4 B4). `lo==hi` ⇒ fixed.
+    pub fn resolved_zoom_band(&self) -> Result<(f64, f64), String> {
+        if self.zoom_lo <= 0.0 || self.zoom_hi <= 0.0 || self.zoom_hi < self.zoom_lo {
+            return Err(format!(
+                "need 0 < zoom_lo <= zoom_hi (got {}, {})",
+                self.zoom_lo, self.zoom_hi
+            ));
+        }
+        Ok((self.zoom_lo, self.zoom_hi))
+    }
+
+    /// Parse `--sigma-band` (comma-separated px) into ascending σ values.
+    pub fn resolved_sigmas(&self) -> Result<Vec<f64>, String> {
+        let mut v: Vec<f64> = Vec::new();
+        for s in self.sigma_band.split(',') {
+            let x: f64 = s.trim().parse().map_err(|_| format!("invalid --sigma-band value '{}'", s.trim()))?;
+            if x <= 0.0 {
+                return Err(format!("--sigma-band values must be > 0 (got {x})"));
+            }
+            v.push(x);
+        }
+        if v.is_empty() {
+            return Err("--sigma-band is empty".into());
+        }
+        Ok(v)
+    }
 }

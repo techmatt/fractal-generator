@@ -36,7 +36,7 @@ use std::path::Path;
 use num_complex::Complex;
 
 use crate::backend::{F64Backend, Trap, TrapShape};
-use crate::cli::FocusDiagArgs;
+use clap::Args;
 use crate::coloring::ChannelSet;
 use crate::render::{self, Frame};
 
@@ -156,4 +156,41 @@ pub fn run_focus_diag(args: &FocusDiagArgs) -> Result<(), String> {
     println!("frames: {}  elapsed: {:.1}s", frames.len(), t0.elapsed().as_secs_f64());
     println!("wrote fields/ + {}", mpath.display());
     Ok(())
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `focus-diag` subcommand: see `focus_diag::run_focus_diag`. Field-array dumper —
+/// renders each frame's f64 dynamics fields (mu / de_px / interior) at a modest
+/// res and writes them as raw arrays for the Python scale-space analysis.
+#[derive(Args, Debug)]
+pub struct FocusDiagArgs {
+    /// JSONL frames file (one compact `{name,cx,cy,fw,width}` object per line),
+    /// emitted by the Python driver after it picks the contrast + sample frames.
+    #[arg(long, default_value = "data/focus_diag/frames.jsonl")]
+    pub frames: String,
+
+    /// Iteration cap. Production default 8000 (the manifest's "maxiter 2000" string
+    /// is a stale hardcoded note; ignore it).
+    #[arg(long, default_value_t = 8000)]
+    pub maxiter: u32,
+
+    /// Escape (bailout) radius. ≥1e6 for a stable DE estimate / ideal smooth band;
+    /// 1e6 ≈ 2^20 matches `present`/`generate` — do not bump.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Default field width (px) for frames that don't carry their own `width`;
+    /// height follows 16:9. Modest by design — we need smooth peaks, not AA.
+    #[arg(long, default_value_t = 768)]
+    pub width: u32,
+
+    /// Reference width the DE-in-pixels normalization is pinned to (so `de_px`
+    /// reads as "DE in final-wallpaper pixels", independent of field res).
+    #[arg(long, default_value_t = 2560)]
+    pub de_ref_width: u32,
+
+    /// Stable output dir (not under `out/`). Emits `fields/` + `fields_manifest.json`.
+    #[arg(long, default_value = "data/focus_diag/")]
+    pub out_dir: String,
 }

@@ -18,7 +18,8 @@ use std::fmt::Write as _;
 use num_complex::Complex;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::{BackendChoice, PalettePickArgs};
+use clap::Args;
+use crate::cli::BackendChoice;
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use crate::hp;
 use crate::palette::Palette;
@@ -494,4 +495,61 @@ mod tests {
     fn rejects_non_array_root() {
         assert!(parse_colormaps(r#"{"name": "a"}"#).is_err());
     }
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `palette-pick` subcommand: see `palette_pick::run_palette_pick`. Reproducible
+/// for a fixed `--seed`; the field is shallow (f64 cheap-regime, asserted by the
+/// auto backend staying f64).
+#[derive(Args, Debug)]
+pub struct PalettePickArgs {
+    /// Field center, real part — the handoff's preferred palette-reading spiral.
+    #[arg(long, default_value = "-0.7453", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Field center, imaginary part.
+    #[arg(long, default_value = "0.1127", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Frame width in the complex plane. Default frames a dense spiral; shrink it
+    /// (or move the center) if the density read says the field is flat.
+    #[arg(long, default_value_t = 0.012)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// Per-tile width in pixels (height follows 16:9). Modest diagnostic size.
+    #[arg(long, default_value_t = 320)]
+    pub tile_width: u32,
+
+    /// Linear supersampling factor (S×S box downsample) per tile.
+    #[arg(long, default_value_t = 1)]
+    pub supersample: u32,
+
+    /// Number of palettes to sample from the library.
+    #[arg(long, default_value_t = 100)]
+    pub count: usize,
+
+    /// SplitMix64 seed for the deterministic palette sample (reproducible).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Escape radius. Large (1e6) for smooth-coloring accuracy.
+    #[arg(long, default_value_t = 1e6)]
+    pub bailout: f64,
+
+    /// Grid columns (default ≈ √N).
+    #[arg(long)]
+    pub cols: Option<usize>,
+
+    /// Survivor colormap library (JSON array of name/source/stops objects).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// Output directory for the sheet + reproducibility legend.
+    #[arg(long, default_value = "out/palette_pick")]
+    pub out_dir: String,
 }

@@ -24,7 +24,7 @@ use image::RgbImage;
 use num_complex::Complex;
 
 use crate::backend::{F64Backend, Trap, TrapShape};
-use crate::cli::AaStudyArgs;
+use clap::Args;
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
@@ -400,4 +400,81 @@ fn build_html(
     }
     s.push_str("</div>\n</body>\n</html>\n");
     s
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `aa-study` subcommand: see `aa_study::run_aa_study`. One fixed view + cyclic
+/// palette rendered under the five AA schemes; reports per-cell wall-clock and
+/// emits the 1:1-crop comparison HTML. Shallow f64 by construction (asserted).
+#[derive(Args, Debug)]
+pub struct AaStudyArgs {
+    /// Frame center, real part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "-0.7453", allow_hyphen_values = true)]
+    pub center_re: String,
+
+    /// Frame center, imaginary part — arbitrary-precision decimal string.
+    #[arg(long, default_value = "0.1127", allow_hyphen_values = true)]
+    pub center_im: String,
+
+    /// Width of the view in the complex plane.
+    #[arg(long, default_value_t = 0.0035)]
+    pub frame_width: f64,
+
+    /// Maximum iterations before a pixel is treated as interior.
+    #[arg(long, default_value_t = 2000)]
+    pub maxiter: u32,
+
+    /// Output width in pixels (height follows 16:9). The study's real target.
+    #[arg(long, default_value_t = 2560)]
+    pub width: u32,
+
+    /// Cyclic (mirror-safe) palette name, looked up in `--colormaps`.
+    #[arg(long, default_value = "twilight")]
+    pub palette: String,
+
+    /// Survivor colormap library (carries the inline `mirror_needed` flag).
+    #[arg(long, default_value = "data/palettes/clean_colormaps.json")]
+    pub colormaps: String,
+
+    /// SplitMix64 seed for the stratified-jitter cell (deterministic).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// 1:1 crop width (px). The matched high-frequency crop is auto-picked at
+    /// this size unless `--crop` pins an explicit box.
+    #[arg(long, default_value_t = 384)]
+    pub crop_width: u32,
+
+    /// 1:1 crop height (px).
+    #[arg(long, default_value_t = 384)]
+    pub crop_height: u32,
+
+    /// Explicit crop box `x,y,w,h` (overrides the auto edge-energy pick).
+    #[arg(long)]
+    pub crop: Option<String>,
+
+    /// Output directory for the PNGs/crops/JSON (the HTML lands in its parent).
+    /// Stable path by design — not under `out/`.
+    #[arg(long, default_value = "tools/viz/aa_study")]
+    pub out_dir: String,
+}
+
+impl AaStudyArgs {
+    /// Parse `--crop` (`x,y,w,h`) into an explicit box, or `None` for auto-pick.
+    pub fn resolved_crop(&self) -> Result<Option<(u32, u32, u32, u32)>, String> {
+        let Some(spec) = &self.crop else { return Ok(None) };
+        let p: Vec<&str> = spec.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --crop '{spec}', expected x,y,w,h"));
+        }
+        let mut v = [0u32; 4];
+        for (i, s) in p.iter().enumerate() {
+            v[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --crop component '{}'", s.trim()))?;
+        }
+        Ok(Some((v[0], v[1], v[2], v[3])))
+    }
 }

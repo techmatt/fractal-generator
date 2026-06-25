@@ -29,7 +29,7 @@ use image::imageops::FilterType;
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
 
-use crate::cli::CorpusArgs;
+use clap::Args;
 use crate::font;
 use crate::palette::{linear_srgb_to_oklab, srgb_to_linear};
 use crate::probe::{jf, js, SplitMix64};
@@ -1404,4 +1404,86 @@ fn oklab_to_srgb8(lab: [f64; 3]) -> [u8; 3] {
         (linear_to_srgb(lin[1]) * 255.0 + 0.5).clamp(0.0, 255.0) as u8,
         (linear_to_srgb(lin[2]) * 255.0 + 0.5).clamp(0.0, 255.0) as u8,
     ]
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `corpus` subcommand: bootstrap the search's target bands from a folder of
+/// admired reference images, then (with `--labels`/`--search`) blend toward the
+/// search's own labeled picks in native units. Exact color/aesthetic targets are
+/// recovered directly from the images; structural bands from images are proxies
+/// (dark-fraction ≈ interior, edge-density ≈ busyness) that labels later correct.
+#[derive(Args, Debug)]
+pub struct CorpusArgs {
+    /// Folder of reference images (top level only — no recursion).
+    #[arg(long)]
+    pub dir: String,
+
+    /// Optional `labels.json` (kept/discarded `search` node ids) — enables the
+    /// transition from bootstrap proxy bands toward labeled native bands.
+    #[arg(long)]
+    pub labels: Option<String>,
+
+    /// `search.json` providing the labeled nodes' native structural features.
+    /// Required when `--labels` is given.
+    #[arg(long)]
+    pub search: Option<String>,
+
+    /// Output `targets.json` path (the search consumes this).
+    #[arg(long, default_value = "out/corpus/targets.json")]
+    pub targets_out: String,
+
+    /// Output per-image features JSON path.
+    #[arg(long, default_value = "out/corpus/corpus_features.json")]
+    pub features_out: String,
+
+    /// Output rejected-thumbnails contact-sheet PNG (eyeball the ~5% tossed).
+    #[arg(long, default_value = "out/corpus/corpus_rejected.png")]
+    pub rejected_sheet: String,
+
+    /// Longest-edge pixels to downscale each image to before feature extraction.
+    #[arg(long, default_value_t = 1024)]
+    pub max_edge: u32,
+
+    /// Smoothing constant `k` in the label-blend weight `α = n/(n+k)`.
+    #[arg(long, default_value_t = 20.0)]
+    pub blend_k: f64,
+
+    /// Uniform-reject edge floor: below this mean Sobel edge density AND below
+    /// `--uniform-spread`, an image is a gradient/solid. Conservative — kept low
+    /// so smooth flame fractals (also low-edge) are not swept up.
+    #[arg(long, default_value_t = 0.010)]
+    pub edge_min: f64,
+
+    /// Uniform-reject spread ceiling: a gradient/solid has *evenly* low detail
+    /// (low per-tile CoV); a smooth fractal still varies more. Gates the edge
+    /// reject so the two don't get confused.
+    #[arg(long, default_value_t = 0.30)]
+    pub uniform_spread: f64,
+
+    /// Dead-flat reject: near-flat 8×8 tile fraction above this AND a poor
+    /// palette → a sparse non-fractal. High by default (rarely fires; a rich dark
+    /// fractal on black also has many flat tiles, so the palette gate protects it).
+    #[arg(long, default_value_t = 0.92)]
+    pub flat_max: f64,
+
+    /// Text/logo reject: per-tile edge-density CoV above this AND a poor palette →
+    /// concentrated detail with few colors. High by default — high spread alone is
+    /// unreliable (fractals concentrate detail too), so this rarely fires.
+    #[arg(long, default_value_t = 1.60)]
+    pub spread_max: f64,
+
+    /// Color-poverty gate: reject if the effective OKLab color count
+    /// (chroma-weighted) is below this — near-grayscale / solid. Also the palette
+    /// gate (×2) that spares dark-but-vivid fractals from the structural rules.
+    #[arg(long, default_value_t = 1.50)]
+    pub entropy_min: f64,
+
+    /// Comma-separated filename substrings to force-keep (overrides heuristic).
+    #[arg(long, default_value = "")]
+    pub include: String,
+
+    /// Comma-separated filename substrings to force-reject (overrides heuristic).
+    #[arg(long, default_value = "")]
+    pub exclude: String,
 }

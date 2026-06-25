@@ -46,10 +46,8 @@ use num_complex::Complex;
 use rayon::prelude::*;
 
 use crate::backend::{Trap, TrapShape};
-use crate::cli::{
-    AnchorArgs, ArchetypeArgs, BackendChoice, CalibrateArgs, DedupArgs, MusterArgs, OverbusyArgs,
-    RescoreArgs,
-};
+use clap::Args;
+use crate::cli::BackendChoice;
 use crate::coloring::{ColorChannel, ColorParams, InteriorMode, TrapCurve};
 use crate::hp;
 use crate::palette::{builtin, srgb8_to_oklab, Palette};
@@ -3836,4 +3834,496 @@ fn write_muster_json(
     crate::ensure_parent_dir(&args.out_json)?;
     fs::write(&args.out_json, s).map_err(|e| format!("writing {}: {e}", args.out_json))?;
     Ok(())
+}
+
+
+// ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// `muster` subcommand: see `energy::run_muster`. Diagnosis-only — produces the
+/// busyness-scalar corpus distribution + non-saturation check, the per-tile
+/// per-palette percentile table, the full band sweep, and three eye-check sheets.
+/// Selects nothing.
+#[derive(Args, Debug)]
+pub struct MusterArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Corpus image folder root (for the colocated-pair montage).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub corpus_dir: String,
+
+    /// Buffet metrics JSON (source-B DEEP tile centers — the 18 okay/sparse tiles).
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Dedup drop-list (its `descriptor_near_but_distinct` pairs → colocated sheet).
+    #[arg(long, default_value = "data/calibration/dedup_droplist.json")]
+    pub droplist: String,
+
+    /// Per-tile per-palette percentile table + corpus distribution + band sweep.
+    #[arg(long, default_value = "data/calibration/palette_muster.json")]
+    pub out_json: String,
+
+    /// The 22-tile × legit-palette recolor grid (+ random/flat control columns).
+    #[arg(long, default_value = "out/palette_muster.png")]
+    pub out_grid: String,
+
+    /// Any speckle (OB_*) recolor that passed muster (redemption-vs-blind-leak).
+    #[arg(long, default_value = "out/speckle_passing_recolors.png")]
+    pub out_speckle: String,
+
+    /// Descriptor-near-but-distinct corpus pairs (the within-busy blind spot).
+    #[arg(long, default_value = "out/colocated_pairs.png")]
+    pub out_colocated: String,
+
+    /// Render width (px) per tile (iterated once, recolored per palette).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for the per-tile iteration.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Thumbnail width (px) for the sheet tiles (height follows 16:9).
+    #[arg(long, default_value_t = 300)]
+    pub thumb_width: u32,
+
+    /// Max descriptor-near-but-distinct pairs to montage on the colocated sheet.
+    #[arg(long, default_value_t = 12)]
+    pub colocated_pairs: usize,
+
+    /// RNG seed for the degenerate random palette (per-entry random LUT).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+}
+
+/// `dedup` subcommand: see `energy::run_dedup`. Removes accidental near-pixel
+/// duplicates from the corpus before it is used as a band reference. Trivial only
+/// — descriptor-near is the cheap finder, the pixel check is the verdict; no
+/// aesthetic/quality judgment. Filters at use-time via a drop-list; the calibration
+/// artifact is left intact.
+#[derive(Args, Debug)]
+pub struct DedupArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Corpus image folder root (the `name` fields in the artifact resolve here).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub corpus_dir: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Candidate-pair EMD cutoff: pairs with descriptor distance below this are
+    /// pixel-checked. Generous on purpose — the pixel check, not this, decides.
+    #[arg(long, default_value_t = 0.13)]
+    pub epsilon: f64,
+
+    /// Pixel-confirm threshold: a candidate pair is a duplicate only if the mean
+    /// absolute 16×16 gray difference (0..255 scale) is at/below this.
+    #[arg(long, default_value_t = 8.0)]
+    pub pixel_threshold: f64,
+
+    /// Side length of the gray confirmation thumbnail (S×S, center-cropped 16:9).
+    #[arg(long, default_value_t = 16)]
+    pub thumb_side: u32,
+
+    /// Drop-list output (dropped filenames + kept representative + pixel distance).
+    #[arg(long, default_value = "data/calibration/dedup_droplist.json")]
+    pub out_json: String,
+}
+
+impl DedupArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `anchor` subcommand: see `energy::run_anchor`. Diagnosis-only — produces the
+/// pairs, distances, and calibration; selects nothing.
+#[derive(Args, Debug)]
+pub struct AnchorArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Corpus image folder root (the `name` fields in the artifact resolve here).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub corpus_dir: String,
+
+    /// Buffet metrics JSON (source-B DEEP tile centers, for the montage re-render).
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Cached buffet DEEP-tile histograms (okay/sparse anchors).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Cached over-busy/speckle control histograms.
+    #[arg(long, default_value = "data/calibration/control_histograms.json")]
+    pub control_hist: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Number of smallest intrinsic corpus-corpus pairs to surface (Task B).
+    #[arg(long, default_value_t = 20)]
+    pub top_pairs: usize,
+
+    /// Task-A montage sheet (tile | nearest individual corpus wallpaper).
+    #[arg(long, default_value = "out/adversarial_anchor.png")]
+    pub out_sheet_a: String,
+
+    /// Task-B montage sheet (smallest intrinsic corpus-corpus pairs).
+    #[arg(long, default_value = "out/corpus_collisions.png")]
+    pub out_sheet_b: String,
+
+    /// Per-tile + Task-0 distribution + Task-B pair dump.
+    #[arg(long, default_value = "data/calibration/collision_distances.json")]
+    pub out_json: String,
+
+    /// Thumbnail width (px) for the montage sheets (height follows 16:9).
+    #[arg(long, default_value_t = 384)]
+    pub thumb_width: u32,
+
+    /// Render width (px) for re-rendering each known-answer tile (montage image).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for the known-answer tile re-renders.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+}
+
+impl AnchorArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `calibrate` subcommand: see the module docs in `energy.rs`. Calibration +
+/// eye-check only — it freezes the metric (bins) and produces the visual gates
+/// (NN pairs, buffet ranking, cluster sheet). It proposes no objective and runs
+/// no search.
+#[derive(Args, Debug)]
+pub struct CalibrateArgs {
+    /// Corpus folder of reference wallpapers (top level only — no recursion).
+    #[arg(long, default_value = "C:/Users/techm/Desktop/Wallpapers")]
+    pub dir: String,
+
+    /// Output directory for the calibration artifact + eye-check sheets.
+    #[arg(long, default_value = "out/calibrate")]
+    pub out_dir: String,
+
+    /// Buffet metrics JSON whose source-B DEEP tiles are the candidate eye-check.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal).
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Number of corpus images sampled for the NN-pair eye-check sheet.
+    #[arg(long, default_value_t = 16)]
+    pub nn_samples: usize,
+
+    /// k for the buffet EMD-to-nearest-k score.
+    #[arg(long, default_value_t = 5)]
+    pub knn: usize,
+
+    /// k-means archetype count for the corpus-structure sheet (`<2` disables).
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// Exemplars per cluster in the archetype sheet (one row each).
+    #[arg(long, default_value_t = 6)]
+    pub exemplars: usize,
+
+    /// Thumbnail width (px) for the eye-check sheets (height follows 16:9).
+    #[arg(long, default_value_t = 384)]
+    pub thumb_width: u32,
+
+    /// Render width (px) for each buffet candidate tile (height follows 16:9).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for candidate renders.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// RNG seed for k-means seeding.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+}
+
+impl CalibrateArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `rescore` subcommand: diagnosis-only re-scoring of the buffet source-B DEEP
+/// tiles under several candidate scoring rules, using only what is already on
+/// disk (the persisted calibration artifact + a buffet-histogram cache). See
+/// `energy::run_rescore`.
+#[derive(Args, Debug)]
+pub struct RescoreArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    /// Default mirrors `energy::ARTIFACT_PATH`.
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Buffet metrics JSON whose source-B DEEP tiles are the candidates.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Cached buffet DEEP-tile histograms (written on first run, reused after).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Full per-tile per-rule score dump.
+    #[arg(long, default_value = "data/calibration/rescore_buffet.json")]
+    pub out_json: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// k for the nearest-k rules (R1, R4).
+    #[arg(long, default_value_t = 5)]
+    pub knn: usize,
+
+    /// k-means archetype count (R2). Recomputed here — not stored in the artifact.
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// RNG seed for the k-means recompute (matches calibrate's default).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Render width (px) for a buffet candidate tile, only used on a cache miss.
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for candidate renders (cache miss only).
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+}
+
+impl RescoreArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `overbusy` subcommand: see `energy::run_overbusy`. Adds over-busy/speckle
+/// controls to the known-answer set, quarantines the degenerate reference cluster,
+/// and re-scores the surviving typicality rules. Diagnosis-only; no winner picked.
+#[derive(Args, Debug)]
+pub struct OverbusyArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Buffet metrics JSON whose source-B DEEP tiles are the okay/sparse anchors.
+    #[arg(long, default_value = "out/buffet/buffet.json")]
+    pub buffet_json: String,
+
+    /// Cached buffet DEEP-tile histograms (reused; rendered once on a cache miss).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Cached over-busy/speckle control histograms (written first run, reused).
+    #[arg(long, default_value = "data/calibration/control_histograms.json")]
+    pub control_hist: String,
+
+    /// Full per-tile per-rule score dump.
+    #[arg(long, default_value = "data/calibration/rescore_controls.json")]
+    pub out_json: String,
+
+    /// Output dir for the eyeballable control sheet (regenerable view).
+    #[arg(long, default_value = "out/controls")]
+    pub out_dir: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// k-means archetype count (must match calibrate/rescore for stable clusters).
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// Cluster index to quarantine from the typicality statistics (the degenerate
+    /// reference-render cluster; C4 under seed 0 / k=6).
+    #[arg(long, default_value_t = 4)]
+    pub quarantine: usize,
+
+    /// RNG seed for the k-means recompute (matches calibrate's default).
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+
+    /// Render width (px) for each control + buffet tile (height follows 16:9).
+    #[arg(long, default_value_t = 1280)]
+    pub candidate_width: u32,
+
+    /// Supersample for control / buffet candidate renders.
+    #[arg(long, default_value_t = 2)]
+    pub supersample: u32,
+
+    /// Thumbnail width (px) for the control sheet (height follows 16:9).
+    #[arg(long, default_value_t = 480)]
+    pub thumb_width: u32,
+
+    /// Force re-render of the control tiles even if a cache exists.
+    #[arg(long, default_value_t = false)]
+    pub refresh_controls: bool,
+}
+
+impl OverbusyArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+}
+
+/// `archetype` subcommand: see `energy::run_archetype`. Scores the 22-tile
+/// known-answer set under nearest-good-archetype (min EMD to the k centroids of
+/// the C4-quarantined survivor corpus), swept over `--ks`. Diagnosis-only:
+/// reuses the cached histograms, frozen bins, EMD, and k-means unchanged;
+/// renders nothing.
+#[derive(Args, Debug)]
+pub struct ArchetypeArgs {
+    /// Persisted calibration artifact (frozen bins + per-image histograms).
+    #[arg(long, default_value = "data/calibration/energy_calibration.json")]
+    pub artifact: String,
+
+    /// Cached buffet DEEP-tile histograms (okay/sparse anchors).
+    #[arg(long, default_value = "data/calibration/buffet_histograms.json")]
+    pub buffet_hist: String,
+
+    /// Cached over-busy/speckle control histograms.
+    #[arg(long, default_value = "data/calibration/control_histograms.json")]
+    pub control_hist: String,
+
+    /// Full per-tile per-k score dump.
+    #[arg(long, default_value = "data/calibration/rescore_archetype.json")]
+    pub out_json: String,
+
+    /// Per-scale EMD weights `w16,w8,w4,w2` (default equal). Must match calibrate.
+    #[arg(long, default_value = "1,1,1,1")]
+    pub weights: String,
+
+    /// Cluster granularities to sweep (the re-cluster k values over survivors).
+    #[arg(long, default_value = "5,8,12,16")]
+    pub ks: String,
+
+    /// k-means archetype count used to FIND the quarantine cluster (must match the
+    /// overbusy/calibrate clustering so C4 is the same n=93 degenerate cluster).
+    #[arg(long, default_value_t = 6)]
+    pub clusters: usize,
+
+    /// Cluster index to quarantine before re-clustering (the degenerate reference
+    /// cluster; C4 under seed 0 / k=6).
+    #[arg(long, default_value_t = 4)]
+    pub quarantine: usize,
+
+    /// RNG seed for both the quarantine clustering and the per-k re-clustering.
+    #[arg(long, default_value_t = 0)]
+    pub seed: u64,
+}
+
+impl ArchetypeArgs {
+    /// Parse `--weights` (`w16,w8,w4,w2`) into the per-scale weight array.
+    pub fn resolved_weights(&self) -> Result<[f64; 4], String> {
+        let p: Vec<&str> = self.weights.split(',').collect();
+        if p.len() != 4 {
+            return Err(format!("invalid --weights '{}', expected w16,w8,w4,w2", self.weights));
+        }
+        let mut w = [0.0; 4];
+        for (i, s) in p.iter().enumerate() {
+            w[i] = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid --weights component '{}'", s.trim()))?;
+        }
+        Ok(w)
+    }
+
+    /// Parse `--ks` (comma-separated) into the granularity sweep.
+    pub fn resolved_ks(&self) -> Result<Vec<usize>, String> {
+        let mut out = Vec::new();
+        for s in self.ks.split(',') {
+            let t = s.trim();
+            if t.is_empty() {
+                continue;
+            }
+            out.push(t.parse::<usize>().map_err(|_| format!("invalid --ks component '{t}'"))?);
+        }
+        if out.is_empty() {
+            return Err("--ks parsed to no values".into());
+        }
+        Ok(out)
+    }
 }
