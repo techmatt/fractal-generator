@@ -52,6 +52,5 @@ pub mod probe;
 pub mod render;
 pub mod render_one;
 pub mod root_field;
-pub mod search;
 pub mod sheet;
 pub mod wallpaper;

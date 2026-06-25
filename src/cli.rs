@@ -202,10 +202,6 @@ pub enum Command {
     GuidedDescend(crate::guided_descend::GuidedDescendArgs),
     /// Deterministic feature navigation (atom-domain + Newton nuclei) filmstrip.
     Navigate(crate::navigate::NavigateArgs),
-    /// Best-first frontier search (beam + backtracking + diversity) over a tree
-    /// of minibrot locations; emits a best-path strip, a top-N diversity sheet,
-    /// and the full node tree as JSON.
-    Search(crate::search::SearchArgs),
     /// Corpus feature extractor: decode a wallpaper folder, reject non-fractal
     /// outliers, extract exact color targets + proxy structural priors, and emit
     /// `targets.json` (bootstrap bands, optionally blended toward labeled picks).
