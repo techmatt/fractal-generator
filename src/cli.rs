@@ -353,17 +353,6 @@ pub enum Command {
     /// worst-first) under `data/palette_probe/`. The viewer
     /// (`tools/viz/palette_probe.html`) writes the verdict; this picks nothing.
     PaletteProbe(crate::palette_probe::PaletteProbeArgs),
-    /// Measurement-only signal-separation diagnostic for an explicit reject-the-bad
-    /// gate. For each distinct (draw_index, composition) geometry in a `present`
-    /// manifest, re-render the cheap f64 screen at the stored crop frame (DE channel
-    /// on) and compute dynamics signals — `de_small_frac` (escaped pixels whose
-    /// DE-in-2560px < k, swept k∈{0.5,1,2,4}), `slow_escape_frac` (escape iter near
-    /// `maxiter`), `interior_frac` — plus image-space signals on the representative
-    /// JPG via the `energy.rs` descriptor under the frozen corpus bins
-    /// (`fine_energy_frac` = s16 density, coarse density, mean edge energy). Writes
-    /// one CSV row per geometry (signals + crop frame + manifest occupancy/black).
-    /// Builds NO gate, modifies NO gating; the Python side does the AUC/sheet.
-    GateDiag(crate::gate_diag::GateDiagArgs),
     /// Measurement-only dynamics-FIELD dumper for the smoothed-escape focal-point +
     /// scale-space-organization exploration (sibling of `gate-diag`, but full 2D
     /// arrays not scalars). For each frame in a JSONL frames file, re-render the
