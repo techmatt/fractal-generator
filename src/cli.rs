@@ -285,13 +285,6 @@ pub enum Command {
     /// sparse-rejection. Marginal control only — no good-busy vs bad-busy split.
     /// Picks no band, builds no loop. Matt judges the eye-check sheets.
     Muster(crate::energy::MusterArgs),
-    /// Diagnosis-only audit of the `generate` accept-band detail-floor: draw with
-    /// a fresh seed, log EVERY draw (full screen vector + reject clause + per-clause
-    /// margins), and render a keeper-res contact sheet of the un-eyeballed SPRD
-    /// corridor (interior-ok, not-flat, straddling `spread_min`) marked CUT/KEEP,
-    /// plus a few flat / interior-black bulk reps. Reuses `generate`'s screen + band
-    /// verbatim; changes no band default, builds no new metric.
-    RejectCorridor(crate::reject_corridor::RejectCorridorArgs),
     /// Diagnostic palette favorite-picker: iterate one fixed dense field (the
     /// seahorse-valley spiral) ONCE and re-shade it across N palettes sampled
     /// (fixed seed) from the survivor colormap library, into one labeled contact

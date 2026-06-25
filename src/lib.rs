@@ -53,7 +53,6 @@ pub mod palette_probe;
 pub mod palette_score;
 pub mod present;
 pub mod probe;
-pub mod reject_corridor;
 pub mod render;
 pub mod render_one;
 pub mod root_field;
