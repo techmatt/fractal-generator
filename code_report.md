@@ -53,7 +53,7 @@ drifted slightly (e.g. `palette_probe::field_f64` matches `"key": ` with a space
 the more robust one).
 
 **Where.** `fn field_f64 / field_str / field_usize` duplicated in:
-`src/corpus.rs`, `src/enrich.rs`, `src/focus_diag.rs`, `src/gate_diag.rs`,
+`src/enrich.rs`, `src/focus_diag.rs`, `src/gate_diag.rs`,
 `src/maxiter_diag.rs`, `src/palette_probe.rs`.
 
 **Do.** Add a tiny `src/jsonl.rs` (`pub fn field_f64/field_usize/field_str/field_bool`
