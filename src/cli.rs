@@ -285,13 +285,6 @@ pub enum Command {
     /// sparse-rejection. Marginal control only — no good-busy vs bad-busy split.
     /// Picks no band, builds no loop. Matt judges the eye-check sheets.
     Muster(crate::energy::MusterArgs),
-    /// Diagnosis-only f64 render-path profiler: time the phase breakdown
-    /// (setup / iterate / shade+downsample / encode / write) of one f64 render,
-    /// build an escape-time histogram (max_iter-pixel fraction, mean/total
-    /// iterations, interior-vs-escaper iteration split), and run a thread-scaling
-    /// sweep (wall-clock / speedup / efficiency vs 1 thread) over the iteration
-    /// pass. Release-build only. Changes no render behavior; picks no optimization.
-    Profile(crate::profile::ProfileArgs),
     /// Diagnosis-only audit of the `generate` accept-band detail-floor: draw with
     /// a fresh seed, log EVERY draw (full screen vector + reject clause + per-clause
     /// margins), and render a keeper-res contact sheet of the un-eyeballed SPRD

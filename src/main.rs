@@ -31,7 +31,6 @@ use fractal_generator::palette_score;
 use fractal_generator::palette_probe;
 use fractal_generator::present;
 use fractal_generator::probe::PERTURB_SPACING;
-use fractal_generator::profile;
 use fractal_generator::reject_corridor;
 use fractal_generator::render_one;
 use fractal_generator::search;
@@ -361,7 +360,6 @@ fn run() -> Result<(), String> {
         Some(Command::Anchor(args)) => energy::run_anchor(args),
         Some(Command::Dedup(args)) => energy::run_dedup(args),
         Some(Command::Muster(args)) => energy::run_muster(args),
-        Some(Command::Profile(args)) => profile::run_profile(args),
         Some(Command::RejectCorridor(args)) => reject_corridor::run_reject_corridor(args),
         Some(Command::PalettePick(args)) => palette_pick::run_palette_pick(args),
         Some(Command::PaletteScore(args)) => palette_score::run_palette_score(args),
