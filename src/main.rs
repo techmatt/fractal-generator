@@ -12,7 +12,6 @@ use clap::Parser;
 use num_complex::Complex;
 
 use fractal_generator::backend::{F64Backend, JuliaBackend, PerturbationBackend, Trap};
-use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs};
 use fractal_generator::coherence;
 use fractal_generator::corpus;
@@ -342,7 +341,6 @@ fn run() -> Result<(), String> {
         Some(Command::Wallpaper(args)) => wallpaper::run_wallpaper(args),
         Some(Command::Cohere(args)) => coherence::run_cohere(args),
         Some(Command::Cover(args)) => coherence::run_cover(args),
-        Some(Command::Buffet(args)) => buffet::run_buffet(args),
         Some(Command::Calibrate(args)) => energy::run_calibrate(args),
         Some(Command::Rescore(args)) => energy::run_rescore(args),
         Some(Command::Overbusy(args)) => energy::run_overbusy(args),

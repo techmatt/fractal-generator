@@ -30,7 +30,6 @@ pub fn ensure_parent_dir(path: impl AsRef<Path>) -> Result<(), String> {
 }
 
 pub mod backend;
-pub mod buffet;
 pub mod cli;
 pub mod coherence;
 pub mod coloring;

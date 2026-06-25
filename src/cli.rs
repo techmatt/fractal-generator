@@ -229,12 +229,6 @@ pub enum Command {
     /// pairs + buffet source-B DEEP ranking) plus a k-means archetype sheet. No
     /// descent, no search, no candidate scoring beyond the buffet eye-check.
     Calibrate(crate::energy::CalibrateArgs),
-    /// Visual buffet: sample three sources (main-boundary neighborhoods,
-    /// off-cusp signature-filtered frames, minibrot control), render each across
-    /// an off-boundary-offset × scale grid, label every tile with its metrics,
-    /// and compose one sheet per source. No objective / ranking / drift — sample,
-    /// render, label, so a human can point at what reads "magical".
-    Buffet(crate::buffet::BuffetArgs),
     /// Throwaway diagnostic: re-score the buffet source-B DEEP tiles against the
     /// persisted corpus calibration under five candidate scoring rules (nearest-k,
     /// nearest-archetype, global-centroid, tail-pruned nearest-k, two-sided density
