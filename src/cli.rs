@@ -317,17 +317,6 @@ pub enum Command {
     /// the bare render path's fast-preview defaults are untouched. Shallow f64 by
     /// construction (asserted).
     RenderOne(crate::render_one::RenderOneArgs),
-    /// Diagnosis-only iteration-cap escalation harness. Auto-selects the
-    /// worst-offender crops (grayest spiral cores) from a `present` manifest +
-    /// the standard test location, renders each at the locked wallpaper quality
-    /// (grid ss4 + Lanczos-3) across an escalating `maxiter` series, and reports
-    /// per (crop × cap) the residual pinned-at-cap fraction + wall-time, an HTML
-    /// escalation sheet, residual-vs-`frame_width` (depth question), occupancy
-    /// drift, a cost multiplier, and — at the auto-detected knee cap — the
-    /// no-escape-fraction distribution grounding the new black gate. Reuses
-    /// `energy.rs` + the `render-one` path; picks nothing. Stable output under
-    /// `data/calibration/maxiter_diag/` (not `out/`). Shallow f64 (asserted).
-    MaxiterDiag(crate::maxiter_diag::MaxiterDiagArgs),
     /// Palette universality probe: pick N label-3 ("great") locations at random
     /// (fixed seed) from the `loose0_v3` labels+manifest, iterate each ONCE at the
     /// `render-one` quality path (grid ss4 + Lanczos-3), and recolor across the
