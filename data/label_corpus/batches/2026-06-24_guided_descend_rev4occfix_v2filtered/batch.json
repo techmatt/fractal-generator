@@ -1,0 +1,204 @@
+{
+  "batch_id": "2026-06-24_guided_descend_rev4occfix_v2filtered",
+  "schema_version": 1,
+  "created": "2026-06-24",
+  "labeler": null,
+  "generator_version": "guided_descend_rev4occfix",
+  "source_run": "data/guided_descend/run5/pool.jsonl",
+  "bias_statement": "THIS BATCH IS v2-SELECTION-BIASED. The `enriched` rows (selection_role) were chosen as the top locations by v2 P(not-bad) (best over K palettes), so their labeled positive rate will look BETTER than reality. Only the `random_eval` rows are an unbiased, uniform sample of the post-gate pool and form the honest rev4 eval set for v3. Provenance.filter_score + selection_role keep the bias fully recoverable. Training (corpus_reader) unions crops blind to this; evaluation of rev4 for v3 MUST restrict to selection_role==random_eval.",
+  "note": "guided_descend rev4 policy + the d1->d2 occupancy-floor disable (Part-0 fix, default-on: --descent-occ-at-d1d2 NOT passed). Locations are labeled at center composition under the v2-argmax score-3 palette (1 palette per location); no present zoom/composition search. black_fraction/occupancy are from the cheap scoring render (ss1), not the final ss4 crop.",
+  "sampling_metaparameters": {
+    "root_mix": 0.5,
+    "root_zoom_8k": 0.1,
+    "root8k_criterion": {
+      "black_max": 0.8,
+      "mean_lo": 8.0,
+      "mean_hi": 120.0,
+      "var_floor": 6.0
+    },
+    "flat_root": {
+      "box": "-2.0,0.7,-1.2,1.2",
+      "fw_lo": 0.003,
+      "fw_hi": 0.05,
+      "screen_width": 320
+    },
+    "target_mix": {
+      "w_foci": 0.7,
+      "w_density": 0.1,
+      "w_random": 0.2
+    },
+    "placement": "0.25,0.40,0.35",
+    "zoom_band": [
+      0.35,
+      0.5
+    ],
+    "depth_range": [
+      4,
+      10
+    ],
+    "n_walks": 660,
+    "sigma_band": "16,20,24,28,32",
+    "foci_diversity_radius": 0.12,
+    "random_boundary": true,
+    "node_width": 768,
+    "descent_candidates": 4,
+    "descent_black_cap": 0.3,
+    "descent_occ_floor": 0.321,
+    "descent_occ_at_d1d2": false,
+    "field_maxiter": 1000,
+    "bailout": 1000000.0,
+    "seed": 5,
+    "observed_pool": {
+      "candidates": 4155,
+      "root_src_counts": {
+        "flat": 2148,
+        "8k": 2007
+      },
+      "depth_range_seen": [
+        1,
+        10
+      ]
+    }
+  },
+  "v2_filter": {
+    "model_id": "data/classifier/v2/model_best.pt",
+    "transform": "1280x720 -> 384x224 bicubic stretch + normalize (inference.py deploy mirror)",
+    "filter_score": "max over K palettes of P(not-bad) = sigmoid(logit_0), CORN ordinal head",
+    "k_palettes": 4,
+    "palette_sampling": "per-location seeded draw from the score-3 roster",
+    "roster": "data/palettes/score3_colormaps.json",
+    "roster_size": 76,
+    "palette_seed": 0,
+    "score_ss": 1,
+    "implied_tau_enriched": 0.7083134651184082
+  },
+  "present_gates": {
+    "black_thresh": 0.3,
+    "occupancy_floor": 0.321,
+    "edge_floor": 0.01,
+    "tile_grid": [
+      32,
+      18
+    ]
+  },
+  "render_defaults": {
+    "maxiter": 8000,
+    "width": 1280,
+    "height": 720,
+    "ss": 4,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "composition": "center",
+    "palette_roster": "data/palettes/score3_colormaps.json",
+    "palettes_per_location": 1
+  },
+  "counts": {
+    "units": 1068,
+    "labeled": 0,
+    "by_selection_role": {
+      "enriched": 968,
+      "random_eval": 100
+    },
+    "by_palette": {
+      "YlOrRd": 40,
+      "cet_linear_kryw_5_100_c67": 37,
+      "cmr.pride": 13,
+      "afmhot": 66,
+      "YlOrBr": 49,
+      "cet_linear_kryw_5_100_c64": 42,
+      "cmr.sunburst": 16,
+      "turbo": 23,
+      "cmr.fusion": 16,
+      "YlGnBu": 10,
+      "cet_cyclic_wrwbw_40_90_c42": 9,
+      "cet_linear_kryw_0_100_c71": 39,
+      "twilight": 7,
+      "cmr.seasons_s": 16,
+      "cet_linear_kry_5_98_c75": 29,
+      "RdGy": 18,
+      "Blues": 7,
+      "cmr.torch": 4,
+      "cmr.jungle": 17,
+      "cet_diverging_bwr_40_95_c42": 14,
+      "CMRmap": 6,
+      "RdPu": 37,
+      "cmr.savanna": 21,
+      "cet_linear_kry_0_97_c73": 44,
+      "coolwarm": 16,
+      "cet_linear_kry_5_95_c72": 34,
+      "cmr.wildfire": 9,
+      "cmr.amber": 24,
+      "cmr.waterlily": 7,
+      "Spectral": 7,
+      "cmr.emergency_s": 13,
+      "GnBu": 9,
+      "cet_linear_bmy_10_95_c71": 9,
+      "cet_cyclic_wrkbw_10_90_c43": 17,
+      "gist_heat": 26,
+      "cet_linear_protanopic_deuteranopic_kbw_5_98_c40": 2,
+      "seismic": 1,
+      "cmr.seasons": 11,
+      "gist_stern": 4,
+      "cmr.fall": 19,
+      "cet_cyclic_protanopic_deuteranopic_bwyk_16_96_c31": 14,
+      "PuOr": 10,
+      "cet_cyclic_wrkbw_10_90_c43_s25": 29,
+      "berlin": 13,
+      "cmr.lilac": 1,
+      "cmr.ember": 14,
+      "cet_linear_tritanopic_krjcw_5_98_c46": 28,
+      "twilight_shifted": 10,
+      "cet_linear_tritanopic_krw_5_95_c46": 15,
+      "cet_linear_protanopic_deuteranopic_kbjyw_5_95_c25": 3,
+      "cmr.voltage": 5,
+      "cmr.copper": 5,
+      "cet_linear_bmy_10_95_c78": 3,
+      "cmr.rainforest": 7,
+      "cet_linear_protanopic_deuteranopic_kbw_5_95_c34": 2,
+      "RdYlBu": 16,
+      "bwr": 12,
+      "BrBG": 4,
+      "cmr.swamp": 11,
+      "cmr.viola": 4,
+      "magma": 13,
+      "inferno": 9,
+      "cmr.redshift": 9,
+      "RdBu": 8,
+      "cet_cyclic_protanopic_deuteranopic_wywb_55_96_c33": 9,
+      "managua": 4,
+      "cmr.prinsenvlag": 4,
+      "cet_linear_bgyw_15_100_c68": 1,
+      "cet_cyclic_rygcbmr_50_90_c64_s25": 5,
+      "plasma": 4,
+      "cet_linear_bmw_5_95_c86": 3,
+      "cmr.toxic": 2,
+      "cet_cyclic_mybm_20_100_c48_s25": 2,
+      "cmr.ocean": 1
+    },
+    "by_root_src": {
+      "flat": 646,
+      "8k": 422
+    },
+    "by_branch": {
+      "foci": 688,
+      "random": 240,
+      "density": 90,
+      "rootflat": 45,
+      "root8k": 5
+    },
+    "by_depth": {
+      "1": 50,
+      "2": 135,
+      "3": 179,
+      "4": 191,
+      "5": 159,
+      "6": 123,
+      "7": 86,
+      "8": 76,
+      "9": 41,
+      "10": 28
+    },
+    "distinct_palettes": 74,
+    "missing_provenance": 0
+  }
+}
