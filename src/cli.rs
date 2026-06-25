@@ -206,12 +206,6 @@ pub enum Command {
     /// outliers, extract exact color targets + proxy structural priors, and emit
     /// `targets.json` (bootstrap bands, optionally blended toward labeled picks).
     Corpus(crate::corpus::CorpusArgs),
-    /// Cheap (f64-only) descent ranked by corpus-band proximity, hard-stopped at
-    /// the f64 floor for the wallpaper resolution; emits a descent strip, one
-    /// deepest-level wallpaper reshaded across a coloring×palette matrix, and a
-    /// JSON log. Tests whether the corpus busyness band's upper bound rejects
-    /// high-noise regions.
-    Wallpaper(crate::wallpaper::WallpaperArgs),
     /// DE-coherence gate isolation probe: render one frame (f64) and report the
     /// `subpixel_frac` speckle indicator (escaped pixels with `de_px < θ`),
     /// `esc_frac`, and median `de_px`, with `de_px` pinned to the target

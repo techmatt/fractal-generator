@@ -24,7 +24,6 @@ use fractal_generator::palette_probe;
 use fractal_generator::present;
 use fractal_generator::probe::PERTURB_SPACING;
 use fractal_generator::render_one;
-use fractal_generator::wallpaper;
 use fractal_generator::coloring::{self, ChannelSet, ColorParams};
 use fractal_generator::hp;
 use fractal_generator::palette::{builtin, Palette};
@@ -338,7 +337,6 @@ fn run() -> Result<(), String> {
         Some(Command::GuidedDescend(args)) => guided_descend::run_guided_descend(args),
         Some(Command::Navigate(args)) => navigate::run_navigate(args),
         Some(Command::Corpus(args)) => corpus::run_corpus(args),
-        Some(Command::Wallpaper(args)) => wallpaper::run_wallpaper(args),
         Some(Command::Cohere(args)) => coherence::run_cohere(args),
         Some(Command::Cover(args)) => coherence::run_cover(args),
         Some(Command::Calibrate(args)) => energy::run_calibrate(args),
