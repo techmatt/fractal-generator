@@ -211,52 +211,6 @@ pub enum Command {
     /// pairs + buffet source-B DEEP ranking) plus a k-means archetype sheet. No
     /// descent, no search, no candidate scoring beyond the buffet eye-check.
     Calibrate(crate::energy::CalibrateArgs),
-    /// Throwaway diagnostic: re-score the buffet source-B DEEP tiles against the
-    /// persisted corpus calibration under five candidate scoring rules (nearest-k,
-    /// nearest-archetype, global-centroid, tail-pruned nearest-k, two-sided density
-    /// band) and print a PASS/FAIL table per rule. Loads everything from disk
-    /// (persisted artifact + buffet histogram cache); the only render is a
-    /// deterministic re-render of the fixed buffet set if its histograms aren't
-    /// cached. No search, no descent, no new-location rendering, no winner picked.
-    Rescore(crate::energy::RescoreArgs),
-    /// Diagnosis-only: add non-sparse-but-bad over-busy/speckle controls to the
-    /// known-answer set, quarantine the degenerate reference cluster (C4) from the
-    /// typicality statistics, and re-score the survivor rules (R3 global-centroid,
-    /// R5 density band, raw s16-bin0 scalar) against okay + sparse + the controls.
-    /// Renders only the fixed control set (a known-answer set, same category as the
-    /// buffet re-render). No search, no descent, no winner picked.
-    Overbusy(crate::energy::OverbusyArgs),
-    /// Diagnosis-only: score the 22-tile known-answer set under nearest-good-archetype
-    /// (min EMD to the k centroids of the C4-quarantined corpus), swept over cluster
-    /// granularity k ∈ {5,8,12,16}. Loads everything from disk (artifact + both
-    /// histogram caches); renders nothing. Prints a per-k ranking + PASS/FAIL plus the
-    /// control-match / straddle / sparse-survivor diagnostics. No winner picked.
-    Archetype(crate::energy::ArchetypeArgs),
-    /// Diagnosis-only adversarial anchor probe: tests the founding axiom
-    /// ("good = resembles some real wallpaper") at the level of *individual* corpus
-    /// members, not centroids. Calibrates the corpus 1-NN distance distribution
-    /// (real wallpaper-to-wallpaper similarity), then finds each known-answer tile's
-    /// nearest individual corpus wallpaper and the smallest intrinsic corpus-corpus
-    /// pairs, rendering both as side-by-side montages for Matt's eye. EMD on cached
-    /// histograms; re-renders only the fixed known-answer set (controls + buffet DEEP)
-    /// for the montage images (flagged). Picks no pivot, wires nothing.
-    Anchor(crate::energy::AnchorArgs),
-    /// Diagnosis-only trivial corpus dedup: find descriptor-near corpus pairs
-    /// (EMD < epsilon), confirm each as near-pixel-identical via a 16×16 gray
-    /// thumbnail diff, union confirmed pairs into duplicate groups (keep the
-    /// lexically-first member), and emit a drop-list plus the corpus 1-NN
-    /// distribution before vs after the drop. Reads corpus PNGs + cached
-    /// histograms only — no fractal renders. Does NOT mutate the artifact.
-    Dedup(crate::energy::DedupArgs),
-    /// Diagnosis-only palette-sweep muster: does a corpus-marginal density band
-    /// filter the 22-tile known-answer set? Renders each fixed tile's iteration
-    /// data ONCE, recolors across a legit palette sweep (+ random/flat degenerate
-    /// controls), scores a two-sided busyness scalar (mean fine s16 edge energy,
-    /// recovered from the frozen-bin histogram), places each recolor as a corpus
-    /// percentile, and sweeps an accept band reporting okay-recall / speckle-leak /
-    /// sparse-rejection. Marginal control only — no good-busy vs bad-busy split.
-    /// Picks no band, builds no loop. Matt judges the eye-check sheets.
-    Muster(crate::energy::MusterArgs),
     /// Locked wallpaper-render default: render ONE (location × palette) at the
     /// settled quality — grid ss4 + Lanczos-3 @ 2560×1440 — to a caller-chosen
     /// stable path, reporting iterate / filter / total wall-clock. An extract of
