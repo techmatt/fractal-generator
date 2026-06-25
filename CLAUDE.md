@@ -33,6 +33,33 @@ run holds the exe, build into an isolated target dir:
 `target-test/release/fractal-generator.exe`). `cargo build --release --lib` also
 compile-checks without touching the exe. `target-*/` is gitignored.
 
+**Compile-time model + build lanes.** A full incremental `cargo build --release`
+is **~100s** on this machine, and that cost is almost entirely codegen, not the
+frontend: the `[profile.release]` in `Cargo.toml` is tuned for *render
+throughput* (`opt-level=3`, `lto="thin"`, `codegen-units=1`), so every edit
+re-optimizes the whole crate as a single LLVM unit with no parallelism. Measured
+breakdown of one edit→rebuild: `cargo check --release` ≈ **3s** (type/borrow-check
+only, no codegen) vs the full ~100s. Pick the lightest lane that answers your
+question:
+- **Inner loop — just "does it compile?":** `cargo check --release` (~3s) or
+  `cargo build --release --lib`. This is the default during a refactor; reach for
+  it before a full build. (Use `--release` check so it shares the release
+  dependency artifacts already on disk — a bare `cargo check` rebuilds deps in the
+  `dev` profile, ~15s the first time.)
+- **Need a runnable binary fast (smoke-test, eyeball a render):**
+  `cargo build --profile quick` (~16s incremental; `lto=false`,
+  `codegen-units=16`). Binary lands at **`target/quick/fractal-generator.exe`**,
+  not `target/release/`. Runtime is ~10-30% slower (the per-pixel kernel loses
+  cross-module inlining), so it's for correctness/visual checks, **not** perf
+  timing.
+- **Production renders, batch reproducibility, perf timing:**
+  `cargo build --release` (~100s). The `release` profile is load-bearing for
+  render speed — don't relax it; the `quick` lane exists so you don't have to.
+
+`cargo test` builds the test binaries under the `release`/`dev` profile you pass
+it (`cargo test --release` reuses the release artifacts). The test suite itself
+runs in seconds; the cost is the compile, so the same lane logic applies.
+
 ## Architecture
 
 Two deliberate seams structure everything (`src/lib.rs` is the module root; `src/main.rs` is a thin CLI wrapper):
