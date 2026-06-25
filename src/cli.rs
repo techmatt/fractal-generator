@@ -193,8 +193,6 @@ pub enum Command {
     /// renders the accepted composition at full resolution across random palettes.
     /// Emits per-crop PNGs, a contact sheet, and a manifest.json.
     Present(crate::present::PresentArgs),
-    /// Greedy Mandelbrot→Julia descent filmstrip + JSON (depth-falloff probe).
-    Descend(crate::descend::DescendArgs),
     /// Stochastic guided descent: many decorrelated root-down walks to random
     /// depth, each step picking the next center by a probabilistic policy (mostly
     /// into a detected μ-focus). Every visited frame is a candidate; emits a

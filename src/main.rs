@@ -18,7 +18,6 @@ use fractal_generator::buffet;
 use fractal_generator::cli::{BackendChoice, Cli, Command, LocationArgs, ShadeArgs};
 use fractal_generator::coherence;
 use fractal_generator::corpus;
-use fractal_generator::descend;
 use fractal_generator::energy;
 use fractal_generator::enrich;
 use fractal_generator::focus_diag;
@@ -347,7 +346,6 @@ fn run() -> Result<(), String> {
         Some(Command::Sheet(args)) => run_sheet(args),
         Some(Command::Generate(args)) => generate::run_generate(args),
         Some(Command::Present(args)) => present::run_present(args),
-        Some(Command::Descend(args)) => descend::run_descend(args),
         Some(Command::GuidedDescend(args)) => guided_descend::run_guided_descend(args),
         Some(Command::Navigate(args)) => navigate::run_navigate(args),
         Some(Command::Search(args)) => search::run_search(args),
