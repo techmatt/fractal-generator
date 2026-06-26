@@ -48,7 +48,7 @@ use image::{Rgb, RgbImage};
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{Trap, TrapShape};
+use crate::backend::{JuliaBackend, Trap, TrapShape};
 use clap::Args;
 use crate::cli::BackendChoice;
 use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
@@ -219,6 +219,33 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         return Err("target weights sum to zero".into());
     }
     let (p_foci, p_density) = (w_foci / wsum, w_density / wsum); // random = remainder
+
+    // --- Julia descent mode: parse + f64-project `c` (exactly like render-one). ---
+    let julia_c: Option<Complex<f64>> = match (args.julia, &args.julia_c) {
+        (true, None) => return Err("--julia requires --c <re> <im> (the Julia parameter)".into()),
+        (false, Some(_)) => {
+            return Err("--c given without --julia; --c is the Julia parameter and is \
+                        meaningless without --julia"
+                .into())
+        }
+        (false, None) => None,
+        (true, Some(c)) => {
+            if c.len() != 2 {
+                return Err(format!("--c expects exactly two values <re> <im>, got {}", c.len()));
+            }
+            // Shallow base-scale Julia → modest precision is plenty for the projection.
+            let pr = hp::to_f64(&hp::parse_decimal(&c[0], 64)?);
+            let pi = hp::to_f64(&hp::parse_decimal(&c[1], 64)?);
+            Some(Complex::new(pr, pi))
+        }
+    };
+    if julia_c.is_some() && args.julia_root_fw <= 0.0 {
+        return Err(format!("--julia-root-fw must be > 0 (got {})", args.julia_root_fw));
+    }
+    // The boundary band (rev4 B2 random branch) reads DE; Julia carries none, so
+    // gate it off in Julia mode (the branch then draws a DE-free interior point).
+    let random_boundary = args.random_boundary && julia_c.is_none();
+
     let (pl_center, pl_horizon, pl_random) = args.resolved_placement()?;
     let plsum = pl_center + pl_horizon + pl_random;
     let sigmas = args.resolved_sigmas()?;
@@ -292,21 +319,27 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         out_width: node_w,
         out_height: node_h,
     };
+    let root_desc = match julia_c {
+        Some(c) => format!("JULIA z-plane descent: c=({:.6},{:.6}), root base-scale fw {} @ symmetry center 0", c.re, c.im, args.julia_root_fw),
+        None => format!(
+            "root-mix {root_mix:.2} (8k vs flat); 8k root-zoom {} + criterion black<={} mean[{},{}] var>={}; flat box {flat_box:?} fw[{},{}] screen {}px",
+            args.root_zoom_8k, score_cfg.black_max, score_cfg.mean_lo, score_cfg.mean_hi, score_cfg.var_floor,
+            args.flat_fw_lo, args.flat_fw_hi, args.flat_screen_width,
+        ),
+    };
     eprintln!(
         "guided-descend (rev4): {} walks, depth [{},{}], zoom/step log-uniform [{},{}], seed {}\n  \
-         root-mix {:.2} (8k vs flat); 8k root-zoom {} + criterion black<={} mean[{},{}] var>={}; \
-         flat box {:?} fw[{},{}] screen {}px\n  \
+         {}\n  \
          weights foci/density/random = {:.2}/{:.2}/{:.2}, placement {:.2}/{:.2}/{:.2}, sigma {:?}, \
          foci-diversity {:.0}px, random-boundary {}\n  \
          node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
          descent culls (depth>=2): flat spread>={} + instant-escape esc_med>={}\n  \
          best-of-{}: Stage-1 interior-cap {} (probe {}px), Stage-2 occ-floor {} (@{}px), select min-interior",
         args.n_walks, args.depth_min, args.depth_max, zoom_lo, zoom_hi, args.seed,
-        root_mix, args.root_zoom_8k, score_cfg.black_max, score_cfg.mean_lo, score_cfg.mean_hi, score_cfg.var_floor,
-        flat_box, args.flat_fw_lo, args.flat_fw_hi, args.flat_screen_width,
+        root_desc,
         p_foci, p_density, 1.0 - p_foci - p_density,
         pl_center / plsum, pl_horizon / plsum, pl_random / plsum, sigmas,
-        foci_div_px, args.random_boundary,
+        foci_div_px, random_boundary,
         node_w, node_h, prev_w, prev_h, args.preview_palette, args.maxiter,
         band.spread_min, band.esc_median_min,
         args.descent_candidates.max(1),
@@ -315,41 +348,59 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     );
 
     let render_node = |frame: &Frame| -> render::SampleBuffer {
-        let prec = hp::prec_bits(frame.out_width, frame.frame_width);
-        let cre = BigFloat::from_f64(frame.center.re, prec);
-        let cim = BigFloat::from_f64(frame.center.im, prec);
-        probe::render_mandel_panel(
-            &cre, &cim, frame.center, frame.frame_width, frame.out_width, frame.out_height, 1,
-            args.maxiter, args.bailout, prec, trap, BackendChoice::F64,
-        )
-        .buf
+        match julia_c {
+            // Julia: fixed parameter, frame addresses the z-plane (z₀ = pixel).
+            // Always shallow base-scale → f64 (same path probe::render_julia_panel uses).
+            Some(c) => {
+                let backend = JuliaBackend::new(c, args.maxiter, args.bailout, trap);
+                render::iterate_samples(&backend, frame, 1)
+            }
+            None => {
+                let prec = hp::prec_bits(frame.out_width, frame.frame_width);
+                let cre = BigFloat::from_f64(frame.center.re, prec);
+                let cim = BigFloat::from_f64(frame.center.im, prec);
+                probe::render_mandel_panel(
+                    &cre, &cim, frame.center, frame.frame_width, frame.out_width, frame.out_height, 1,
+                    args.maxiter, args.bailout, prec, trap, BackendChoice::F64,
+                )
+                .buf
+            }
+        }
     };
 
     let t0 = std::time::Instant::now();
-    // --- rev4 A1: load (or build+cache) the durable 8k smooth field, then scan it
-    //     once for windows passing the score seam at the 8k root zoom. ---
-    let rf: RootField = RootField::load_or_build(args.maxiter, args.bailout, trap)?;
-    // 8k window footprint at root-zoom-8k (16:9 to match the node aspect).
-    let win_w = ((args.root_zoom_8k / (rf.re_hi - rf.re_lo)) * rf.w as f64).round().max(1.0) as usize;
-    let win_h = ((args.root_zoom_8k * node_h as f64 / node_w as f64 / (rf.im_hi - rf.im_lo)) * rf.h as f64)
-        .round()
-        .max(1.0) as usize;
-    let stride = ((win_h as f64) * SCAN_STRIDE_FRAC).round().max(1.0) as usize;
-    let windows: Vec<PassWindow> = rf.passing_windows(win_w, win_h, stride, &score_cfg);
-    eprintln!(
-        "  8k field ready in {:.2}s; scanned {}x{} windows (stride {}) → {} passing the score seam",
-        t0.elapsed().as_secs_f64(), win_w, win_h, stride, windows.len()
-    );
-    if windows.is_empty() && root_mix > 0.0 {
-        return Err("8k root window scan left nothing — loosen --root8k-* criterion".into());
-    }
-    match root_start_fw {
-        Some(fw) => eprintln!(
-            "  decoupled start-fw {} (8k selects windows @ {} → content-focus center, flat screens @ sampled fw; both START at {})",
-            fw, args.root_zoom_8k, fw
-        ),
-        None => eprintln!("  start-fw coupled to native proposer scale (no --root-start-fw override)"),
-    }
+    // --- rev4 A1 (Mandelbrot only): load (or build+cache) the durable 8k smooth
+    //     field, then scan it once for windows passing the score seam at the 8k
+    //     root zoom. Julia mode roots at the deterministic base-scale z-plane view,
+    //     so it skips the c-plane field entirely. ---
+    let windows: Vec<PassWindow> = if julia_c.is_some() {
+        eprintln!("  Julia mode: skipping c-plane 8k field (root is the base-scale z-plane view)");
+        Vec::new()
+    } else {
+        let rf: RootField = RootField::load_or_build(args.maxiter, args.bailout, trap)?;
+        // 8k window footprint at root-zoom-8k (16:9 to match the node aspect).
+        let win_w = ((args.root_zoom_8k / (rf.re_hi - rf.re_lo)) * rf.w as f64).round().max(1.0) as usize;
+        let win_h = ((args.root_zoom_8k * node_h as f64 / node_w as f64 / (rf.im_hi - rf.im_lo)) * rf.h as f64)
+            .round()
+            .max(1.0) as usize;
+        let stride = ((win_h as f64) * SCAN_STRIDE_FRAC).round().max(1.0) as usize;
+        let windows = rf.passing_windows(win_w, win_h, stride, &score_cfg);
+        eprintln!(
+            "  8k field ready in {:.2}s; scanned {}x{} windows (stride {}) → {} passing the score seam",
+            t0.elapsed().as_secs_f64(), win_w, win_h, stride, windows.len()
+        );
+        if windows.is_empty() && root_mix > 0.0 {
+            return Err("8k root window scan left nothing — loosen --root8k-* criterion".into());
+        }
+        match root_start_fw {
+            Some(fw) => eprintln!(
+                "  decoupled start-fw {} (8k selects windows @ {} → content-focus center, flat screens @ sampled fw; both START at {})",
+                fw, args.root_zoom_8k, fw
+            ),
+            None => eprintln!("  start-fw coupled to native proposer scale (no --root-start-fw override)"),
+        }
+        windows
+    };
 
     // Best-of-N screen config (shared across every step of every walk).
     let screen = StepScreen {
@@ -409,9 +460,14 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
 
         for d in 1..=target {
             let result = if d == 1 {
-                // --- ROOT STEP (rev4 Part A): 50/50 sampler mixture, permissive
-                //     (≤80% black), occupancy floor NOT applied. ---
-                if rng.unit() < root_mix {
+                if julia_c.is_some() {
+                    // --- JULIA ROOT STEP: deterministic base-scale z-plane view at
+                    //     the z→−z symmetry center 0. Descent then leaves it. ---
+                    cur_root_src = "julia";
+                    root_step_julia(args.julia_root_fw, node_w, node_h, args.maxiter, &render_node)
+                } else if rng.unit() < root_mix {
+                    // --- ROOT STEP (rev4 Part A): 50/50 sampler mixture, permissive
+                    //     (≤80% black), occupancy floor NOT applied. ---
                     cur_root_src = "8k";
                     root_step_8k(
                         &windows, args.root_zoom_8k, start_fw_8k, root_start_fw.is_some(),
@@ -439,7 +495,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     let mut gen = || -> Option<StepCand> {
                         let (focus, branch, fscore) = pick_target(
                             &parent, parent_samples, node_w as usize, node_h as usize, &sigmas,
-                            (p_foci, p_density), foci_div_px, args.random_boundary, &mut rng,
+                            (p_foci, p_density), foci_div_px, random_boundary, &mut rng,
                         );
                         let placement = if branch == Branch::Random {
                             Placement::Center
@@ -462,7 +518,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         "density" => branch_counts[1] += 1,
                         "random" => branch_counts[2] += 1,
                         "root8k" => root8k_count += 1,
-                        _ => rootflat_count += 1, // "rootflat"
+                        _ => rootflat_count += 1, // "rootflat" / "rootjulia"
                     }
                     chosen_interiors.push(interior);
                     cands.push(Candidate {
@@ -530,14 +586,24 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 out_width: prev_w,
                 out_height: prev_h,
             };
-            let prec = hp::prec_bits(prev_w, c.fw);
-            let cre = BigFloat::from_f64(c.cx, prec);
-            let cim = BigFloat::from_f64(c.cy, prec);
-            let panel = probe::render_mandel_panel(
-                &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
-                prec, trap, BackendChoice::F64,
-            );
-            render::shade_and_downsample(&panel.buf.samples, prev_w, prev_h, 1, &palette, &params, panel.spacing)
+            let (samples, spacing) = match julia_c {
+                Some(jc) => {
+                    let backend = JuliaBackend::new(jc, args.maxiter, args.bailout, trap);
+                    let buf = render::iterate_samples(&backend, &frame, 1);
+                    (buf.samples, frame.pixel_size())
+                }
+                None => {
+                    let prec = hp::prec_bits(prev_w, c.fw);
+                    let cre = BigFloat::from_f64(c.cx, prec);
+                    let cim = BigFloat::from_f64(c.cy, prec);
+                    let panel = probe::render_mandel_panel(
+                        &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
+                        prec, trap, BackendChoice::F64,
+                    );
+                    (panel.buf.samples, panel.spacing)
+                }
+            };
+            render::shade_and_downsample(&samples, prev_w, prev_h, 1, &palette, &params, spacing)
         })
         .collect();
     for (c, img) in cands.iter_mut().zip(imgs.iter()) {
@@ -929,6 +995,29 @@ fn root_step_flat(
         return StepResult::Accepted(frame, buf, "rootflat", "center", f64::NAN, node_int);
     }
     StepResult::Died(EndCause::DegenerateExhausted)
+}
+
+/// Julia root: the deterministic base-scale z-plane view (center 0 = the z→−z
+/// symmetry point, width `root_fw`). No sampling — every walk shares this root and
+/// decorrelates downstream via the stochastic per-node policy. Permissive by
+/// construction (a base-scale Julia is well-formed at any in-set `c`); the depth-≥2
+/// best-of-N screen does the tightening from there.
+fn root_step_julia(
+    root_fw: f64,
+    node_w: u32,
+    node_h: u32,
+    maxiter: u32,
+    render_node: &impl Fn(&Frame) -> render::SampleBuffer,
+) -> StepResult {
+    let frame = Frame {
+        center: Complex::new(0.0, 0.0),
+        frame_width: root_fw,
+        out_width: node_w,
+        out_height: node_h,
+    };
+    let buf = render_node(&frame);
+    let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
+    StepResult::Accepted(frame, buf, "rootjulia", "center", f64::NAN, int_frac)
 }
 
 /// Log-uniform draw in `[lo, hi]` (rev4 B4 per-step zoom jitter). `lo == hi` ⇒ `lo`.
@@ -1933,6 +2022,27 @@ pub struct GuidedDescendArgs {
     /// depth>=2 descent/sampler/gate step is unchanged.
     #[arg(long, default_value_t = 0.0)]
     pub root_start_fw: f64,
+
+    // --- Julia descent mode (z-plane descent at fixed c) ----------------------
+    /// Descend in the **z-plane** at a fixed Julia parameter `c` instead of the
+    /// c-plane Mandelbrot. The descent geometry (foci / density / placement /
+    /// best-of-N screen) is fractal-agnostic and reused verbatim; only the root
+    /// step changes (deterministic base-scale Julia view, not the 8k/flat c-plane
+    /// samplers) and the DE-dependent boundary branch is gated off (Julia carries
+    /// no DE). Requires `--c`; `--c` without `--julia` is an error.
+    #[arg(long, default_value_t = false)]
+    pub julia: bool,
+
+    /// Julia parameter `c` as two arbitrary-precision decimal strings:
+    /// `--c <re> <im>` (e.g. `--c -0.8 0.156`). Required iff `--julia`. Parsed and
+    /// f64-projected exactly like `render-one`'s `--c`.
+    #[arg(long = "c", num_args = 2, value_names = ["RE", "IM"], allow_hyphen_values = true)]
+    pub julia_c: Option<Vec<String>>,
+
+    /// Julia z-plane root frame width (the depth-1 base-scale Julia view, centered
+    /// at the z→−z symmetry point 0). Descent then leaves this symmetry center.
+    #[arg(long, default_value_t = 3.0)]
+    pub julia_root_fw: f64,
 
     /// Flat-grid PNG columns.
     #[arg(long, default_value_t = 10)]
