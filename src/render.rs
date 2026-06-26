@@ -28,7 +28,7 @@ use image::RgbImage;
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{F64Backend, FractalBackend, PixelSample, Trap, PHASE_GATED};
+use crate::backend::{F64Backend, FractalBackend, JuliaBackend, PixelSample, Trap, PHASE_GATED};
 use crate::coloring::{self, ChannelSet, ColorParams};
 use crate::palette::{linear_to_srgb, Palette};
 use crate::probe::SplitMix64;
@@ -178,6 +178,25 @@ pub fn iterate_samples_f64_pattern(
             })
         }
     }
+}
+
+/// Julia counterpart of [`iterate_samples_f64_pattern`]: same supersampled-grid
+/// geometry and sub-pixel patterns, but the per-pixel sampler is
+/// [`JuliaBackend::sample`] (`z₀ = pixel`, fixed parameter `c`) instead of the
+/// Mandelbrot f64 backend (`z₀ = 0`, pixel as parameter). The viewport `frame`
+/// now addresses the **z-plane**; the absolute pixel coordinate `c = center + dc`
+/// is the Julia `z₀`. No channel-intent dispatch — `JuliaBackend` carries no `dz`
+/// derivative (`de = 0`) and always computes the gated trap, exactly as its trait
+/// `sample`; the `smooth_iter` it emits is bit-identical in formula to the
+/// Mandelbrot path, so the shared coloring stage applies unchanged.
+pub fn iterate_samples_julia_pattern(
+    backend: &JuliaBackend,
+    frame: &Frame,
+    ss: u32,
+    pattern: SubsamplePattern,
+    seed: u64,
+) -> SampleBuffer {
+    iterate_grid(frame, ss, pattern, seed, |c, dc| backend.sample(c, dc))
 }
 
 /// Shared supersampled-grid iteration: the `dc`-from-pixel-geometry rule and row

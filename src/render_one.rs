@@ -24,7 +24,7 @@ use std::time::Instant;
 
 use num_complex::Complex;
 
-use crate::backend::{F64Backend, Trap, TrapShape};
+use crate::backend::{F64Backend, JuliaBackend, Trap, TrapShape};
 use clap::{Args, ValueEnum};
 use crate::generate::color_params;
 use crate::palette::Palette;
@@ -41,12 +41,45 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     }
     let ss = args.supersample.max(1);
 
+    // Julia/parameter coupling: `--c` is required iff `--julia`, and forbidden
+    // otherwise (so a stray `--c` on a Mandelbrot render is a loud error, not a
+    // silently ignored flag).
+    let julia_param = match (args.julia, &args.julia_c) {
+        (true, None) => {
+            return Err("--julia requires --c <re> <im> (the Julia parameter)".into());
+        }
+        (false, Some(_)) => {
+            return Err("--c given without --julia; --c is the Julia parameter and \
+                        is meaningless on a Mandelbrot render"
+                .into());
+        }
+        (false, None) => None,
+        (true, Some(c)) => {
+            // num_args = 2 guarantees exactly two values; guard anyway.
+            if c.len() != 2 {
+                return Err(format!("--c expects exactly two values <re> <im>, got {}", c.len()));
+            }
+            Some((c[0].clone(), c[1].clone()))
+        }
+    };
+
     // Center at full precision (parsed exactly as render/aa-filter do, so the
     // f64 projection matches bit-for-bit).
     let prec_bits = hp::prec_bits(args.width, args.frame_width);
     let cx = hp::to_f64(&hp::parse_decimal(&args.center_re, prec_bits)?);
     let cy = hp::to_f64(&hp::parse_decimal(&args.center_im, prec_bits)?);
     let center = Complex::new(cx, cy);
+
+    // Julia parameter `c`, parsed as decimal strings exactly like the center and
+    // projected to f64 (Julia is a shallow base-scale render — f64 is accurate).
+    let julia_param = match julia_param {
+        Some((re, im)) => {
+            let pr = hp::to_f64(&hp::parse_decimal(&re, prec_bits)?);
+            let pi = hp::to_f64(&hp::parse_decimal(&im, prec_bits)?);
+            Some(Complex::new(pr, pi))
+        }
+        None => None,
+    };
 
     let frame = Frame {
         center,
@@ -92,8 +125,12 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
+    let mode = match julia_param {
+        Some(p) => format!("julia c=({:.9}, {:.9})", p.re, p.im),
+        None => "mandelbrot".to_string(),
+    };
     eprintln!(
-        "render-one: center ({cx:.9}, {cy:.9}) fw {:.3e}  {}x{}  {} ss{ss}  {}  maxiter {}  palette '{}'",
+        "render-one [{mode}]: center ({cx:.9}, {cy:.9}) fw {:.3e}  {}x{}  {} ss{ss}  {}  maxiter {}  palette '{}'",
         args.frame_width,
         args.width,
         args.height,
@@ -104,16 +141,33 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     );
 
     // --- iterate (the only expensive stage) ---
-    let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
+    // Mandelbrot uses the channel-intent f64 path; Julia uses the JuliaBackend
+    // (z₀ = pixel, fixed parameter). `channels` is irrelevant to Julia (it always
+    // computes the gated trap and never a `dz`), so it is unused on that branch.
     let t_iter = Instant::now();
-    let buf = render::iterate_samples_f64_pattern(
-        &backend,
-        &frame,
-        ss,
-        channels,
-        args.pattern.into(),
-        args.seed,
-    );
+    let buf = match julia_param {
+        None => {
+            let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
+            render::iterate_samples_f64_pattern(
+                &backend,
+                &frame,
+                ss,
+                channels,
+                args.pattern.into(),
+                args.seed,
+            )
+        }
+        Some(param) => {
+            let backend = JuliaBackend::new(param, args.maxiter, BAILOUT, trap);
+            render::iterate_samples_julia_pattern(
+                &backend,
+                &frame,
+                ss,
+                args.pattern.into(),
+                args.seed,
+            )
+        }
+    };
     let iter_secs = t_iter.elapsed().as_secs_f64();
     if buf.glitched_pixels > 0 {
         eprintln!("warning: {} glitched pixel(s)", buf.glitched_pixels);
@@ -238,6 +292,24 @@ pub struct RenderOneArgs {
     /// Frame width in the complex plane (`--fw`).
     #[arg(long = "fw", default_value_t = 0.000583)]
     pub frame_width: f64,
+
+    /// Render a **Julia** set instead of Mandelbrot. Off ⇒ today's Mandelbrot
+    /// behavior exactly (bit-for-bit). When on, the viewport (`--cx`/`--cy`/`--fw`)
+    /// addresses the **z-plane** and `--c` supplies the fixed Julia parameter.
+    /// Requires `--c`; using `--c` without `--julia` is an error.
+    #[arg(long, default_value_t = false)]
+    pub julia: bool,
+
+    /// Julia parameter `c` as two arbitrary-precision decimal strings:
+    /// `--c <re> <im>` (e.g. `--c -0.8 0.156`). Required iff `--julia`; ignored —
+    /// and an error — without `--julia`.
+    #[arg(
+        long = "c",
+        num_args = 2,
+        value_names = ["RE", "IM"],
+        allow_hyphen_values = true
+    )]
+    pub julia_c: Option<Vec<String>>,
 
     /// Palette name, looked up in `--colormaps` (loaded through the selective-mirror
     /// path, so cyclic and sequential maps both render seam-free).
