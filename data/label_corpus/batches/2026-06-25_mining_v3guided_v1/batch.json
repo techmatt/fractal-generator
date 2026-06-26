@@ -1,0 +1,61 @@
+{
+  "batch_id": "2026-06-25_mining_v3guided_v1",
+  "schema_version": 1,
+  "generator_version": "mining_v3guided_v1",
+  "created": null,
+  "labeler": null,
+  "biased": true,
+  "note": "v3-guided BIASED prospecting harvest. Positive-enriched; usable for growing positives, NOT for unbiased eval. Location selected at neutral twilight_shifted; palette spread + T2 gate for labeling pool.",
+  "source_run": "C:\\Code\\fractal-generator\\data\\mining\\run1\\descent\\pool.jsonl",
+  "sampling": {
+    "cap_locations": 800,
+    "budget": 450,
+    "spread_geometry": [
+      640,
+      360
+    ],
+    "render_geometry": [
+      1280,
+      720
+    ],
+    "render_ss": 4,
+    "dedup_thresh": 6,
+    "seed": 0
+  },
+  "gate": {
+    "score_kind": "p_notbad",
+    "t2": 4.0525458189222263e-07,
+    "method": "max-F1 on label>=2, T2 picked on union, holdout=scale_2x2 (v3-blind)"
+  },
+  "funnel": {
+    "descent_locations": 1018,
+    "capped": 800,
+    "spread_scored": 800,
+    "gate_failed_loc": 0,
+    "units_pass_t2": 17007,
+    "dropped_near_dups": 1188,
+    "selected": 450,
+    "crops_written": 450,
+    "budget": 450,
+    "gate": {
+      "score_kind": "p_notbad",
+      "t2": 4.0525458189222263e-07
+    },
+    "family_pass": {
+      "warm": 3830,
+      "cyclic": 4505,
+      "diverging": 4578,
+      "cool": 4094
+    },
+    "family_selected": {
+      "warm": 112,
+      "cool": 112,
+      "cyclic": 114,
+      "diverging": 112
+    },
+    "by_source": {
+      "landmark_mine": 410,
+      "root_mine": 40
+    }
+  }
+}

@@ -33,6 +33,17 @@ PROVENANCE_KEYS = (
     # so the bias is always recoverable (only `random_eval` rows are unbiased).
     "selection_role", "filter_score", "argmax_palette", "k_scores",
     "v2_est_class", "v2_model_id",
+    # v3-guided biased mining batch (2026-06-25): the full selection-bias trail.
+    # `source` ∈ {landmark_mine, root_mine}; `seed_landmark_id` = the good this
+    # walk perturbed (landmark only); `perturbation_frac` = |offset|/fw of the
+    # seed perturbation; `beam_path` = the per-step top-k child indices; `loc_score`
+    # = the v3 [0,2] score at the neutral location-scoring palette; `gate_kind`/
+    # `gate_t2`/`gate_score` = the >=T2 gate (gate_score is the gated value);
+    # `palette_family` ∈ {warm,cool,cyclic,diverging,mono}; `biased`=True (this
+    # batch is biased-positive-enriched — NOT for unbiased eval). Bias loop only.
+    "source", "seed_landmark_id", "perturbation_frac", "beam_path", "loc_score",
+    "location_score_palette", "palette_family", "gate_kind", "gate_t2",
+    "gate_score", "biased", "v3_model_id",
 )
 
 
