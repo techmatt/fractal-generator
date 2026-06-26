@@ -21,6 +21,7 @@ use fractal_generator::palette_probe;
 use fractal_generator::present;
 use fractal_generator::probe::PERTURB_SPACING;
 use fractal_generator::render_one;
+use fractal_generator::v4_cache;
 use fractal_generator::coloring::{self, ChannelSet, ColorParams};
 use fractal_generator::hp;
 use fractal_generator::palette::{builtin, Palette};
@@ -336,6 +337,7 @@ fn run() -> Result<(), String> {
         Some(Command::RenderOne(args)) => render_one::run_render_one(args),
         Some(Command::PaletteProbe(args)) => palette_probe::run_palette_probe(args),
         Some(Command::Enrich(args)) => enrich::run_enrich(args),
+        Some(Command::V4RenderBatch(args)) => v4_cache::run_v4_render_batch(args),
         None => run_render(&cli),
     }
 }

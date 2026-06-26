@@ -33,6 +33,11 @@ PROVENANCE_KEYS = (
     # so the bias is always recoverable (only `random_eval` rows are unbiased).
     "selection_role", "filter_score", "argmax_palette", "k_scores",
     "v2_est_class", "v2_model_id",
+    # scale-controlled 2x2 batch (2026-06-25): the experiment factors. `cell` ∈
+    # {A,B,C,D}; `center_proposer` ∈ {8k_content_focus, flat_acceptband};
+    # `start_fw` ∈ {0.10 wide, 0.014093 narrow}; `rev4_fix` = True (occ-floor
+    # skipped @ d1→d2). Bias-loop / analysis only — never enters training.
+    "cell", "center_proposer", "start_fw", "rev4_fix",
     # v3-guided biased mining batch (2026-06-25): the full selection-bias trail.
     # `source` ∈ {landmark_mine, root_mine}; `seed_landmark_id` = the good this
     # walk perturbed (landmark only); `perturbation_frac` = |offset|/fw of the

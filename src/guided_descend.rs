@@ -121,6 +121,16 @@ enum EndCause {
     /// No candidate cleared the band screen (flat / instant-escape).
     DegenerateExhausted,
 }
+impl EndCause {
+    fn name(self) -> &'static str {
+        match self {
+            EndCause::ReachedTerminalDepth => "terminal",
+            EndCause::BlackCapExhausted => "black_cap",
+            EndCause::OccFloorExhausted => "occ_floor",
+            EndCause::DegenerateExhausted => "degenerate",
+        }
+    }
+}
 
 /// Where the chosen target lands inside the child frame.
 #[derive(Clone, Copy)]
@@ -215,6 +225,13 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let band = args.band();
     // rev4 root-mixture + Part-B graft config.
     let root_mix = args.root_mix.clamp(0.0, 1.0);
+    // Decoupled-start (2x2 experiment seam): `--root-start-fw` forces the depth-1
+    // node width independently of each proposer's native center-selection scale
+    // (8k window scan stays at `--root-zoom-8k`; flat screen stays at its sampled
+    // fw). 0 (default) = coupled/native behaviour — byte-identical to prior runs.
+    let root_start_fw = args.resolved_root_start_fw()?;
+    let start_fw_8k = root_start_fw.unwrap_or(args.root_zoom_8k);
+    let start_fw_flat = root_start_fw; // None ⇒ flat keeps its own sampled fw
     let (zoom_lo, zoom_hi) = args.resolved_zoom_band()?;
     let flat_box = args.resolved_flat_box()?;
     if args.flat_fw_lo <= 0.0 || args.flat_fw_hi <= args.flat_fw_lo {
@@ -326,6 +343,13 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     if windows.is_empty() && root_mix > 0.0 {
         return Err("8k root window scan left nothing — loosen --root8k-* criterion".into());
     }
+    match root_start_fw {
+        Some(fw) => eprintln!(
+            "  decoupled start-fw {} (8k selects windows @ {} → content-focus center, flat screens @ sampled fw; both START at {})",
+            fw, args.root_zoom_8k, fw
+        ),
+        None => eprintln!("  start-fw coupled to native proposer scale (no --root-start-fw override)"),
+    }
 
     // Best-of-N screen config (shared across every step of every walk).
     let screen = StepScreen {
@@ -356,6 +380,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let mut cands: Vec<Candidate> = Vec::new();
     // Per-walk reached depth + intended target (for the ladder view + died-early count).
     let mut walk_reached: Vec<(u32, u32)> = Vec::with_capacity(args.n_walks);
+    // Per-walk terminal cause (instrumentation: the field that didn't survive run4 —
+    // persisted to walks.jsonl for the per-cell generated-fate breakdown).
+    let mut walk_cause: Vec<EndCause> = Vec::with_capacity(args.n_walks);
     let mut branch_counts = [0usize; 3]; // foci, density, random
     let mut root8k_count = 0usize; // depth-1 nodes seeded by the 8k field
     let mut rootflat_count = 0usize; // depth-1 nodes seeded by the flat sampler
@@ -387,13 +414,15 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 if rng.unit() < root_mix {
                     cur_root_src = "8k";
                     root_step_8k(
-                        &windows, args.root_zoom_8k, node_w, node_h, args.maxiter,
+                        &windows, args.root_zoom_8k, start_fw_8k, root_start_fw.is_some(),
+                        node_w, node_h, args.maxiter,
                         score_cfg.black_max, &render_node, &mut rng,
                     )
                 } else {
                     cur_root_src = "flat";
                     root_step_flat(
-                        flat_box, args.flat_fw_lo, args.flat_fw_hi, args.flat_screen_width,
+                        flat_box, args.flat_fw_lo, args.flat_fw_hi, start_fw_flat,
+                        args.flat_screen_width,
                         &band, node_w, node_h, args.maxiter, &render_node, &mut rng,
                     )
                 }
@@ -473,6 +502,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             died_early += 1;
         }
         walk_reached.push((reached, target));
+        walk_cause.push(end_cause);
         if (w + 1) % 20 == 0 || w + 1 == args.n_walks {
             eprintln!(
                 "  walk {}/{}: {} candidates so far ({:.1}s)",
@@ -532,6 +562,41 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     }
     std::fs::write(out_dir.join("pool.jsonl"), jsonl)
         .map_err(|e| format!("write pool.jsonl: {e}"))?;
+
+    // --- walks.jsonl: one row per walk (the per-walk fate instrumentation that
+    //     run4 lacked). cause = terminal cause; death_depth = depth of the step
+    //     that died (= reached+1) or null if the walk reached its target. Root
+    //     center features (cx/cy/fw) are the walk's depth-1 node (null if the walk
+    //     died at the root step). band_energy + finer center features are computed
+    //     post-hoc in Python from (cx,cy,fw) — recorded here, not baked in. ---
+    let mut root_of_walk: std::collections::HashMap<usize, &Candidate> = std::collections::HashMap::new();
+    for c in &cands {
+        if c.depth == 1 {
+            root_of_walk.insert(c.walk, c);
+        }
+    }
+    let mut walks_jsonl = String::new();
+    for w in 0..args.n_walks {
+        let (reached, target) = walk_reached[w];
+        let cause = walk_cause[w];
+        let death_depth = if reached < target {
+            format!("{}", reached + 1)
+        } else {
+            "null".to_string()
+        };
+        let (rcx, rcy, rfw) = match root_of_walk.get(&w) {
+            Some(c) => (jnum(c.cx), jnum(c.cy), jnum(c.fw)),
+            None => ("null".into(), "null".into(), "null".into()),
+        };
+        let _ = writeln!(
+            walks_jsonl,
+            "{{ \"walk\": {}, \"root_src\": \"{}\", \"target_depth\": {}, \"reached_depth\": {}, \
+             \"cause\": \"{}\", \"death_depth\": {}, \"root_cx\": {}, \"root_cy\": {}, \"root_fw\": {} }}",
+            w, walk_root_src[w], target, reached, cause.name(), death_depth, rcx, rcy, rfw,
+        );
+    }
+    std::fs::write(out_dir.join("walks.jsonl"), walks_jsonl)
+        .map_err(|e| format!("write walks.jsonl: {e}"))?;
 
     // --- a quick flat PNG contact grid (sibling to the HTML) ---
     let mut grid_thumbs: Vec<RgbImage> =
@@ -760,9 +825,25 @@ fn best_of_n_step(
 /// accept the first whose node-resolution black fraction is permissive (≤ `black_max`).
 /// The score-seam scan already enforced the criterion at 8k resolution, so this
 /// node-level recheck only catches the rare resolution-mismatch case.
+///
+/// Two scales decouple here (2x2 experiment). The window is selected at `select_fw`
+/// (the field's native `--root-zoom-8k`, the spatial-selection scale, unchanged);
+/// the depth-1 node starts descent at `start_fw` (the experiment factor). When
+/// `recenter` is set (decoupled mode, `--root-start-fw > 0`) the node is placed on
+/// the window's **energy-weighted content focus** (rendered at `select_fw`, found
+/// via [`density_focus`] — the same primitive the descent's density branch uses)
+/// rather than the geometric window center: the field selects good *windows* but
+/// their geometric center frequently lands in bland exterior, so a sharply-narrowed
+/// start there dies at depth 1. Centering on the window's structure makes the field
+/// proposal scale-stable so wide and narrow share one center (clean A-vs-B). When
+/// `recenter` is false (native, `--root-start-fw 0`) the geometric window center is
+/// used — byte-identical to prior runs.
+#[allow(clippy::too_many_arguments)]
 fn root_step_8k(
     windows: &[PassWindow],
-    root_zoom_8k: f64,
+    select_fw: f64,
+    start_fw: f64,
+    recenter: bool,
     node_w: u32,
     node_h: u32,
     maxiter: u32,
@@ -770,17 +851,26 @@ fn root_step_8k(
     render_node: &impl Fn(&Frame) -> render::SampleBuffer,
     rng: &mut SplitMix64,
 ) -> StepResult {
-    if windows.is_empty() || root_zoom_8k < FW_FLOOR {
+    if windows.is_empty() || start_fw < FW_FLOOR {
         return StepResult::Died(EndCause::DegenerateExhausted);
     }
     for _ in 0..ROOT_MAX_TRIES {
         let wn = windows[rng.below(windows.len())];
-        let frame = Frame {
-            center: wn.center,
-            frame_width: root_zoom_8k,
-            out_width: node_w,
-            out_height: node_h,
+        // The proposer's emitted center: geometric window center (native), or the
+        // window's content focus rendered at the selection scale (decoupled mode).
+        let center = if recenter {
+            let sel = Frame {
+                center: wn.center,
+                frame_width: select_fw,
+                out_width: node_w,
+                out_height: node_h,
+            };
+            let sel_buf = render_node(&sel);
+            density_focus(&sel, &sel_buf.samples, node_w as usize, node_h as usize)
+        } else {
+            wn.center
         };
+        let frame = Frame { center, frame_width: start_fw, out_width: node_w, out_height: node_h };
         let buf = render_node(&frame);
         if render::black_fraction(&buf.samples) as f64 <= black_max {
             let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
@@ -799,6 +889,7 @@ fn root_step_flat(
     flat_box: (f64, f64, f64, f64),
     fw_lo: f64,
     fw_hi: f64,
+    start_fw: Option<f64>,
     screen_w: u32,
     band: &crate::generate::AcceptBand,
     node_w: u32,
@@ -825,8 +916,14 @@ fn root_step_flat(
         if !band.test(int_frac, esc.spread, esc.median).accepted {
             continue;
         }
-        // Passed the screen → render the depth-1 node at node resolution.
-        let frame = Frame { center, frame_width: fw, out_width: node_w, out_height: node_h };
+        // Passed the screen at its native sampled `fw` (the flat proposer's center
+        // selection). The depth-1 node starts at the decoupled `start_fw` if the
+        // experiment overrides it, else the native sampled `fw`.
+        let node_fw = start_fw.unwrap_or(fw);
+        if node_fw < FW_FLOOR {
+            continue;
+        }
+        let frame = Frame { center, frame_width: node_fw, out_width: node_w, out_height: node_h };
         let buf = render_node(&frame);
         let (node_int, _esc) = generate::screen_stats(&buf.samples, maxiter);
         return StepResult::Accepted(frame, buf, "rootflat", "center", f64::NAN, node_int);
@@ -1825,6 +1922,18 @@ pub struct GuidedDescendArgs {
     #[arg(long, default_value_t = false)]
     pub descent_occ_at_d1d2: bool,
 
+    /// Decoupled-start override (2x2 scale experiment seam). When > 0, the depth-1
+    /// node starts descent at exactly this frame width for BOTH proposers, while
+    /// each proposer's native center-SELECTION scale is held fixed (the 8k field
+    /// still scans windows at `--root-zoom-8k`; the flat sampler still screens at
+    /// its own log-uniform sampled fw). This separates "which center" from "at what
+    /// start scale" so the field-vs-flat spatial selection and the wide-vs-narrow
+    /// start scale are independent factors. 0 (default) = coupled/native behaviour,
+    /// byte-identical to prior runs. Affects ONLY the depth-1 root node; every
+    /// depth>=2 descent/sampler/gate step is unchanged.
+    #[arg(long, default_value_t = 0.0)]
+    pub root_start_fw: f64,
+
     /// Flat-grid PNG columns.
     #[arg(long, default_value_t = 10)]
     pub cols: usize,
@@ -1847,6 +1956,18 @@ impl GuidedDescendArgs {
             spread_min: self.spread_min.unwrap_or(d.spread_min),
             interior_max: self.interior_max.unwrap_or(d.interior_max),
             esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
+        }
+    }
+
+    /// Decoupled depth-1 start fw (2x2 seam). `> 0` ⇒ `Some(fw)` (force both
+    /// proposers to start descent at `fw`); `0` ⇒ `None` (native coupled scale).
+    pub fn resolved_root_start_fw(&self) -> Result<Option<f64>, String> {
+        if self.root_start_fw == 0.0 {
+            Ok(None)
+        } else if self.root_start_fw > 0.0 && self.root_start_fw.is_finite() {
+            Ok(Some(self.root_start_fw))
+        } else {
+            Err(format!("--root-start-fw must be 0 (native) or > 0 (got {})", self.root_start_fw))
         }
     }
 

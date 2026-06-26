@@ -135,8 +135,15 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     drop(buf);
 
     ensure_parent_dir(&args.out)?;
-    img.save(&args.out)
-        .map_err(|e| format!("failed to write {}: {e}", args.out))?;
+    // Dispatch on extension: `.jpg`/`.jpeg` → quality-controlled JPEG (matches the
+    // present/enrich crop writer), anything else → the image-crate default (PNG).
+    let lower = args.out.to_ascii_lowercase();
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        render::save_jpeg(&img, std::path::Path::new(&args.out), args.jpg_quality)?;
+    } else {
+        img.save(&args.out)
+            .map_err(|e| format!("failed to write {}: {e}", args.out))?;
+    }
 
     let total = iter_secs + filter_secs;
     eprintln!(
@@ -277,4 +284,10 @@ pub struct RenderOneArgs {
     /// SplitMix64 seed (consumed only by `--pattern jitter`).
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
+
+    /// JPEG quality (1..=100) used only when `--out` ends in `.jpg`/`.jpeg`.
+    /// Ignored for PNG output. q95 keeps cache renders clean enough that the
+    /// train-time JPEG-q jitter (85..95) does not compound artifacts.
+    #[arg(long, default_value_t = 95)]
+    pub jpg_quality: u8,
 }

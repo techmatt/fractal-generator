@@ -233,6 +233,12 @@ pub enum Command {
     /// rows at the locked label-crop quality (ss4 + Lanczos-3, q90 JPG). Shallow
     /// f64 (asserted). See `enrich::run_enrich`.
     Enrich(crate::enrich::EnrichArgs),
+
+    /// Bulk render the v4 augmentation cache from a plan JSONL (one render per
+    /// row). Loads the colormap library once, builds each palette once, renders
+    /// every row in-process (parallel, resumable, JPEG q85). The plan owns the
+    /// augmentation scheme; this just executes it. See `v4_cache::run_v4_render_batch`.
+    V4RenderBatch(crate::v4_cache::V4RenderBatchArgs),
 }
 
 /// Parse a `re,im` pair into a complex number.
