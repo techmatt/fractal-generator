@@ -67,5 +67,8 @@ __pycache__/
 # rebuildable via present/render-one.
 !/data/label_corpus/
 /data/label_corpus/batches/*/crops/
+# disposable per-batch working data (previews, guided-descend pools, intermediate
+# scores) — rebuildable from the committed metadata + generator, never committed.
+/data/label_corpus/batches/*/_work/
 # regenerable view (rev4_sanity_sheet.py) — not part of the commit policy.
 /data/label_corpus/batches/*/sanity_contact_sheet.html

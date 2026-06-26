@@ -80,8 +80,9 @@ code{color:#9bb}
 <div id="lightbox"><img id="lbimg" alt=""><div class="lbcap" id="lbcap"></div></div>
 
 <script>
-// --- which batch to label: switch BATCH_ID here (a dir under data/label_corpus/batches/) ---
-const BATCH_ID='2026-06-25_mining_v3guided_v1';
+// --- which batch to label: ?batch=<dir> query param overrides, else this default
+//     (a dir under data/label_corpus/batches/) ---
+const BATCH_ID=new URLSearchParams(location.search).get('batch')||'2026-06-25_mining_v3guided_v1';
 const ROOT='../../';                 // tools/viz/ -> repo root
 const BATCH_DIR='data/label_corpus/batches/'+BATCH_ID;
 const IMAGES_URL=ROOT+BATCH_DIR+'/images.jsonl';

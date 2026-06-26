@@ -1,0 +1,41 @@
+{
+  "created": "2026-06-25",
+  "labeler": null,
+  "generator_version": "julia_ladder_j0",
+  "source_run": "data/v4/manifest.jsonl (label-2/3 Mandelbrot centers as Julia c)",
+  "fractal_type": "julia",
+  "schema_extension": "render block adds fractal_type/c_re/c_im for Julia rows",
+  "sampling_metaparameters": {
+    "root_fw": 3.0,
+    "center_factors": [
+      4,
+      8
+    ],
+    "jitter_sigma_frac": 0.1,
+    "jitter_per_seed": 1,
+    "descent_walks": 1,
+    "descent_depth_min": 3,
+    "descent_depth_max": 5,
+    "palette": "twilight_shifted",
+    "sample_n": 1000,
+    "per_seed_cap": 4,
+    "seed": 20260625,
+    "dedup": {
+      "shift_frac": 0.5,
+      "scale_band": [
+        0.6666666666666666,
+        1.5
+      ],
+      "c_tol_frac": 0.05
+    }
+  },
+  "present_gates": null,
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "palette": "twilight_shifted"
+  }
+}
