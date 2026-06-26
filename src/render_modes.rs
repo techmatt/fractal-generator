@@ -199,6 +199,57 @@ impl Biomorph {
     }
 }
 
+/// Field-modulates-field combine op (v2 composite, doc §3). Both operands are
+/// already independently normalized to `[0,1]`; every op maps `[0,1]²→[0,1]`.
+/// `Multiply` is the named "lace" target / default.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Combine {
+    /// `b·t` — the lace path: texture's flat (→0) regions darken the base.
+    Multiply,
+    /// `1−(1−b)(1−t)` — inverse-multiply; texture's bright regions lift the base.
+    Screen,
+    /// Multiply in the shadows, screen in the highlights (pivot at `b=0.5`).
+    Overlay,
+    /// `min(b,t)` — texture clamps the base from above.
+    Min,
+}
+
+impl Combine {
+    fn as_str(self) -> &'static str {
+        match self {
+            Combine::Multiply => "multiply",
+            Combine::Screen => "screen",
+            Combine::Overlay => "overlay",
+            Combine::Min => "min",
+        }
+    }
+    fn parse(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "multiply" => Combine::Multiply,
+            "screen" => Combine::Screen,
+            "overlay" => Combine::Overlay,
+            "min" => Combine::Min,
+            _ => return Err(format!("unknown combine '{s}'")),
+        })
+    }
+    /// Combine two `[0,1]` operands → `[0,1]`.
+    #[inline]
+    fn apply(self, b: f64, t: f64) -> f64 {
+        match self {
+            Combine::Multiply => b * t,
+            Combine::Screen => 1.0 - (1.0 - b) * (1.0 - t),
+            Combine::Overlay => {
+                if b < 0.5 {
+                    2.0 * b * t
+                } else {
+                    1.0 - 2.0 * (1.0 - b) * (1.0 - t)
+                }
+            }
+            Combine::Min => b.min(t),
+        }
+    }
+}
+
 // ===========================================================================
 // ColoringParams
 // ===========================================================================
@@ -243,6 +294,26 @@ pub struct ColoringParams {
     pub palette_cycles: f64,
     /// Gradient phase offset in `[0,1)` (palette stage).
     pub palette_offset: f64,
+    // --- v2 composite (field-modulates-field) ---
+    /// Optional **texture** field that modulates the base ([`Self::field`]).
+    /// `None` → the v1 single-field path (byte-identical, separate branch). When
+    /// `Some`, base and texture each normalize **independently** to `[0,1]`, then
+    /// [`Self::combine`] merges them and [`Self::texture_weight`] lerps base↔op.
+    ///
+    /// Field-shape params (`stripe_density`/`trap_radius`) are **shared** with the
+    /// base — one orbit pass accumulates a single stripe/trap channel, so a
+    /// stripe-texture-over-stripe-base with differing densities is not expressible
+    /// (none of the v2 targets need it; the texture schema carries no shape knob).
+    pub texture_field: Option<Field>,
+    /// Texture's own transform (independent normalization).
+    pub texture_transform: Transform,
+    /// Texture's own post-transform gamma.
+    pub texture_gamma: f64,
+    /// Field-modulates-field combine op (composite only).
+    pub combine: Combine,
+    /// Texture-strength dial: `lerp(base_n, combine(base_n,tex_n), w)`. `0` → base
+    /// only; `1` → full combine op (composite only).
+    pub texture_weight: f64,
 }
 
 impl Default for ColoringParams {
@@ -264,6 +335,11 @@ impl Default for ColoringParams {
             light_height: 1.0,
             palette_cycles: 1.0,
             palette_offset: 0.0,
+            texture_field: None,
+            texture_transform: Transform::Linear,
+            texture_gamma: 1.0,
+            combine: Combine::Multiply,
+            texture_weight: 1.0,
         }
     }
 }
@@ -292,12 +368,15 @@ impl ColoringParams {
     }
 
     /// Serialize to a compact JSON object (all fields, stable key order).
+    /// `texture_field` is emitted as `"none"` when absent (single-field).
     pub fn to_json(&self) -> String {
         format!(
             "{{\"bailout_b\":{},\"skip\":{},\"biomorph\":\"{}\",\"field\":\"{}\",\
              \"stripe_density\":{},\"trap_radius\":{},\"transform\":\"{}\",\"gamma\":{},\
              \"shade\":\"{}\",\"light_azimuth\":{},\"light_height\":{},\
-             \"palette_cycles\":{},\"palette_offset\":{}}}",
+             \"palette_cycles\":{},\"palette_offset\":{},\
+             \"texture_field\":\"{}\",\"texture_transform\":\"{}\",\"texture_gamma\":{},\
+             \"combine\":\"{}\",\"texture_weight\":{}}}",
             self.bailout_b,
             self.skip,
             self.biomorph.as_str(),
@@ -311,6 +390,11 @@ impl ColoringParams {
             self.light_height,
             self.palette_cycles,
             self.palette_offset,
+            self.texture_field.map_or("none", Field::as_str),
+            self.texture_transform.as_str(),
+            self.texture_gamma,
+            self.combine.as_str(),
+            self.texture_weight,
         )
     }
 
@@ -357,6 +441,26 @@ impl ColoringParams {
         }
         if let Some(v) = jsonl::field_f64(s, "palette_offset") {
             p.palette_offset = v;
+        }
+        // v2 composite. `texture_field` absent or "none" → single-field (None).
+        if let Some(v) = jsonl::field_str(s, "texture_field") {
+            p.texture_field = if v == "none" {
+                None
+            } else {
+                Some(Field::parse(&v)?)
+            };
+        }
+        if let Some(v) = jsonl::field_str(s, "texture_transform") {
+            p.texture_transform = Transform::parse(&v)?;
+        }
+        if let Some(v) = jsonl::field_f64(s, "texture_gamma") {
+            p.texture_gamma = v;
+        }
+        if let Some(v) = jsonl::field_str(s, "combine") {
+            p.combine = Combine::parse(&v)?;
+        }
+        if let Some(v) = jsonl::field_f64(s, "texture_weight") {
+            p.texture_weight = v;
         }
         Ok(p)
     }
@@ -631,6 +735,48 @@ fn percentile(scratch: &mut [f64], p: f64) -> f64 {
     *nth
 }
 
+/// One field's **global normalization** to `[0,1]` — the v1 two-pass stat
+/// machinery factored out so it can run *independently per field* (the v2 fix: a
+/// texture stretches on its own distribution, not a shared one). Built from the
+/// field's valid finite raw values; `map01` reproduces the v1 single-field math
+/// exactly (histeq rank fraction or percentile stretch).
+enum FieldNorm {
+    /// Percentile stretch: `clamp((v−lo)/span, 0, 1)`.
+    Stretch { lo: f64, span: f64 },
+    /// Histogram-equalization: rank fraction over the sorted valid values.
+    Histeq { sorted: Vec<f64> },
+}
+
+impl FieldNorm {
+    /// Build from the field's valid finite raw values (consumed/reordered).
+    fn build(mut valids: Vec<f64>, transform: Transform) -> Self {
+        if transform == Transform::Histeq {
+            valids.sort_unstable_by(f64::total_cmp);
+            FieldNorm::Histeq { sorted: valids }
+        } else {
+            let lo = percentile(&mut valids, PCT_LO);
+            let hi = percentile(&mut valids, PCT_HI);
+            let span = if hi > lo { hi - lo } else { 1.0 };
+            FieldNorm::Stretch { lo, span }
+        }
+    }
+    /// Raw field value → `x ∈ [0,1]` (pre-transform).
+    #[inline]
+    fn map01(&self, value: f64) -> f64 {
+        match self {
+            FieldNorm::Histeq { sorted } => {
+                if sorted.len() <= 1 {
+                    0.0
+                } else {
+                    let rank = sorted.partition_point(|&v| v < value);
+                    rank as f64 / (sorted.len() - 1) as f64
+                }
+            }
+            FieldNorm::Stretch { lo, span } => ((value - lo) / span).clamp(0.0, 1.0),
+        }
+    }
+}
+
 /// A per-subpixel reduction of an orbit: the raw field scalar (if valid) and the
 /// emboss vector. Kept small so the supersample buffer stays modest.
 #[derive(Clone, Copy)]
@@ -640,14 +786,49 @@ struct ShadePix {
     ushade: Complex<f64>,
 }
 
+/// Per-subpixel reduction for the **composite** path: base + texture raw scalars
+/// (each with its own validity) and the shared emboss vector.
+#[derive(Clone, Copy)]
+struct CompositePix {
+    base: f64,
+    base_valid: bool,
+    tex: f64,
+    tex_valid: bool,
+    ushade: Complex<f64>,
+}
+
 /// Render one location through the beautiful pipeline → sRGB image.
 ///
 /// `julia_param = Some(c)` renders a Julia (viewport is the z-plane, `z0 = pixel`);
 /// `None` renders the Mandelbrot. Grid-centered supersampling (the rgss/jitter
 /// placements are a smooth-path AA study; beautiful v1 uses grid). The trap fields
 /// fill the interior; exterior-only fields render interior pixels black.
+///
+/// Dispatches on `params.texture_field`: `None` → the **v1 single-field** path
+/// (byte-identical, [`render_beautiful_single`]); `Some` → the v2
+/// **field-modulates-field composite** ([`render_beautiful_composite`]). The split
+/// is a hard branch — texture-absent never touches the composite lerp/ops, so its
+/// float bytes are preserved by construction.
 #[allow(clippy::too_many_arguments)]
 pub fn render_beautiful(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    julia_param: Option<Complex<f64>>,
+    params: &ColoringParams,
+    palette: &Palette,
+    filter: DownsampleFilter,
+) -> image::RgbImage {
+    if params.texture_field.is_some() {
+        return render_beautiful_composite(frame, ss, maxiter, julia_param, params, palette, filter);
+    }
+    render_beautiful_single(frame, ss, maxiter, julia_param, params, palette, filter)
+}
+
+/// The **v1 single-field** path — verbatim. Do not modify: its output bytes are a
+/// reference the montage/SHA guard pins.
+#[allow(clippy::too_many_arguments)]
+fn render_beautiful_single(
     frame: &Frame,
     ss: u32,
     maxiter: u32,
@@ -770,6 +951,148 @@ pub fn render_beautiful(
     )
 }
 
+/// The **v2 composite** path: `base` field modulated by a `texture` field. One
+/// orbit pass feeds both fields (the [`OrbitAccum`] union already carries every
+/// channel — no per-field gating to extend); each field then normalizes
+/// **independently** (its own [`FieldNorm`] + transform + gamma) to `[0,1]`,
+/// `params.combine` merges them, and `params.texture_weight` lerps base↔op. Shade
+/// (`normal_map`) and palette apply POST-combine to the final scalar, exactly as v1.
+///
+/// Validity is **graceful per-field**: a subpixel renders if *either* field is
+/// valid, and where one field is absent its operand drops out — `smooth × trap`
+/// on a Julia therefore keeps the interior lace (texture-only, since smooth is
+/// exterior-only there) instead of blacking it out, and the composite reads only
+/// where the base actually exists (the exterior). Black only where *neither* is
+/// valid.
+#[allow(clippy::too_many_arguments)]
+fn render_beautiful_composite(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    julia_param: Option<Complex<f64>>,
+    params: &ColoringParams,
+    palette: &Palette,
+    filter: DownsampleFilter,
+) -> image::RgbImage {
+    let s = ss.max(1);
+    let sub_w = (frame.out_width * s) as usize;
+    let sub_h = (frame.out_height * s) as usize;
+    let fw = frame.frame_width;
+    let fh = frame.frame_height();
+    let sub_w_f = sub_w as f64;
+    let sub_h_f = sub_h as f64;
+    let center = frame.center;
+    let julia = julia_param.is_some();
+    let want_shade = params.shade == Shade::NormalMap;
+    let texture_field = params
+        .texture_field
+        .expect("composite branch requires texture_field");
+
+    // --- iterate + reduce to (base, tex, ushade) per subpixel ---
+    let rows: Vec<Vec<CompositePix>> = (0..sub_h)
+        .into_par_iter()
+        .map(|srow| {
+            let py = srow as f64 + 0.5;
+            let dc_im = (0.5 - py / sub_h_f) * fh;
+            let mut row = Vec::with_capacity(sub_w);
+            for scol in 0..sub_w {
+                let px = scol as f64 + 0.5;
+                let dc_re = (px / sub_w_f - 0.5) * fw;
+                let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
+                let (z0, c) = match julia_param {
+                    Some(p) => (pixel, p),
+                    None => (Complex::new(0.0, 0.0), pixel),
+                };
+                let acc = iterate_orbit(z0, c, maxiter, params, julia);
+                // One pass, two fields off the shared channel union.
+                let bv = acc.field(params.field);
+                let tv = acc.field(texture_field);
+                row.push(CompositePix {
+                    base: bv.unwrap_or(0.0),
+                    base_valid: bv.is_some(),
+                    tex: tv.unwrap_or(0.0),
+                    tex_valid: tv.is_some(),
+                    ushade: if want_shade {
+                        acc.ushade()
+                    } else {
+                        Complex::new(0.0, 0.0)
+                    },
+                });
+            }
+            row
+        })
+        .collect();
+    let pix: Vec<CompositePix> = rows.into_iter().flatten().collect();
+
+    // --- per-field global normalization (independent stat passes) ---
+    let base_norm = FieldNorm::build(
+        pix.iter()
+            .filter(|p| p.base_valid && p.base.is_finite())
+            .map(|p| p.base)
+            .collect(),
+        params.transform,
+    );
+    let tex_norm = FieldNorm::build(
+        pix.iter()
+            .filter(|p| p.tex_valid && p.tex.is_finite())
+            .map(|p| p.tex)
+            .collect(),
+        params.texture_transform,
+    );
+
+    let (saz, caz) = params.light_azimuth.sin_cos();
+    let h = params.light_height;
+    let cycles = params.palette_cycles;
+    let offset = params.palette_offset;
+    let base_t = params.transform;
+    let base_g = params.gamma;
+    let tex_t = params.texture_transform;
+    let tex_g = params.texture_gamma;
+    let combine = params.combine;
+    let weight = params.texture_weight;
+
+    // --- shade each subpixel to linear RGB ---
+    let linear: Vec<[f64; 3]> = pix
+        .par_iter()
+        .map(|p| {
+            // Graceful per-field validity: combine where both exist; fall back to
+            // the surviving field alone where one is absent; black only if neither.
+            let bok = p.base_valid && p.base.is_finite();
+            let tok = p.tex_valid && p.tex.is_finite();
+            let mut gray = match (bok, tok) {
+                (false, false) => return [0.0, 0.0, 0.0],
+                (true, false) => apply_transform(base_norm.map01(p.base), base_t, base_g),
+                (false, true) => apply_transform(tex_norm.map01(p.tex), tex_t, tex_g),
+                (true, true) => {
+                    let base_n = apply_transform(base_norm.map01(p.base), base_t, base_g);
+                    let tex_n = apply_transform(tex_norm.map01(p.tex), tex_t, tex_g);
+                    let op = combine.apply(base_n, tex_n);
+                    base_n + (op - base_n) * weight // lerp(base_n, op, weight)
+                }
+            };
+
+            // normal_map emboss over the composite scalar (post-combine, v1 semantics).
+            if want_shade {
+                let u = p.ushade;
+                let dot = u.re * caz + u.im * saz;
+                let t = ((dot + h) / (1.0 + h)).clamp(0.0, 1.0);
+                gray *= t;
+            }
+
+            let tt = (gray * cycles + offset).rem_euclid(1.0);
+            palette.lookup_linear(tt)
+        })
+        .collect();
+
+    crate::render::downsample_linear_filtered(
+        &linear,
+        frame.out_width,
+        frame.out_height,
+        s,
+        filter,
+    )
+}
+
 /// Convenience: the trap shape the location-profile path uses (point trap at the
 /// origin). Beautiful fields don't read [`Trap`] (they accumulate their own trap
 /// minima), but callers that share setup may want a default.
@@ -843,6 +1166,102 @@ mod tests {
         );
         assert!(j.escaped && j.smooth.is_finite());
         assert!(j.ushade().norm() <= 1.0 + 1e-9);
+    }
+
+    /// Composite JSON round-trips, including `texture_field: None → "none"`.
+    #[test]
+    fn composite_json_roundtrip() {
+        let mut p = ColoringParams::beautiful(Field::Smooth);
+        p.texture_field = Some(Field::TrapCross);
+        p.texture_transform = Transform::Linear;
+        p.combine = Combine::Screen;
+        p.texture_weight = 0.5;
+        let p2 = ColoringParams::from_json(&p.to_json()).unwrap();
+        assert_eq!(p, p2);
+        // Absent texture survives the round-trip as None (single-field).
+        let single = ColoringParams::beautiful(Field::TrapCross);
+        assert!(single.texture_field.is_none());
+        assert_eq!(single, ColoringParams::from_json(&single.to_json()).unwrap());
+        // `{}` is still the location-profile sentinel after the v2 additions.
+        assert!(ColoringParams::from_json("{}").unwrap().is_location_profile());
+    }
+
+    /// Combine ops map `[0,1]² → [0,1]` and hit their defining values.
+    #[test]
+    fn combine_ops_in_unit_range() {
+        let ops = [
+            Combine::Multiply,
+            Combine::Screen,
+            Combine::Overlay,
+            Combine::Min,
+        ];
+        for op in ops {
+            for bi in 0..=10 {
+                for ti in 0..=10 {
+                    let b = bi as f64 / 10.0;
+                    let t = ti as f64 / 10.0;
+                    let o = op.apply(b, t);
+                    assert!((0.0..=1.0).contains(&o), "{op:?}({b},{t}) = {o}");
+                }
+            }
+        }
+        assert_eq!(Combine::Multiply.apply(0.5, 0.5), 0.25);
+        assert_eq!(Combine::Screen.apply(0.5, 0.5), 0.75);
+        assert_eq!(Combine::Min.apply(0.3, 0.8), 0.3);
+    }
+
+    /// A multiply composite on a small exterior patch produces finite, in-gamut
+    /// pixels and is not all-black (the smoke patch escapes).
+    #[test]
+    fn composite_smoke_patch_in_range() {
+        let mut p = ColoringParams::beautiful(Field::Smooth);
+        p.texture_field = Some(Field::TrapCross);
+        p.combine = Combine::Multiply;
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.02,
+            out_width: 16,
+            out_height: 12,
+        };
+        let palette = crate::palette::builtin("default", false).unwrap();
+        let img = render_beautiful(
+            &frame,
+            1,
+            300,
+            None,
+            &p,
+            &palette,
+            DownsampleFilter::Box,
+        );
+        assert_eq!(img.dimensions(), (16, 12));
+        let any_lit = img.pixels().any(|px| px.0 != [0, 0, 0]);
+        assert!(any_lit, "composite smoke patch rendered all black");
+    }
+
+    /// Texture-absent ≡ v1 single field: a composite-capable param with
+    /// `texture_field: None` renders byte-identically to the same param stripped of
+    /// all composite knobs (the separate-branch guard, scalar parity on a patch).
+    #[test]
+    fn texture_absent_equals_single_field() {
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.02,
+            out_width: 24,
+            out_height: 16,
+        };
+        let palette = crate::palette::builtin("default", false).unwrap();
+        // A trap_cross/log/normal_map single-field spec.
+        let single = ColoringParams::beautiful(Field::TrapCross);
+        assert!(single.texture_field.is_none());
+        // Same base, but with composite knobs populated AND texture_field None —
+        // must still take the single branch and match bit-for-bit.
+        let mut dressed = single;
+        dressed.combine = Combine::Screen;
+        dressed.texture_weight = 0.7;
+        dressed.texture_transform = Transform::Histeq;
+        let a = render_beautiful(&frame, 2, 400, None, &single, &palette, DownsampleFilter::Lanczos3);
+        let b = render_beautiful(&frame, 2, 400, None, &dressed, &palette, DownsampleFilter::Lanczos3);
+        assert_eq!(a.into_raw(), b.into_raw());
     }
 
     /// Trap fields are valid for interior pixels (fill), exterior fields are not.
