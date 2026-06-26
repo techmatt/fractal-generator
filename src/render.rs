@@ -580,6 +580,116 @@ pub fn shade_and_downsample_filtered(
     RgbImage::from_raw(out_w, out_h, pixels).expect("buffer dimensions match")
 }
 
+/// Downsample an **already-shaded** linear-light RGB supersample buffer with a
+/// separable reconstruction filter — the beautiful-rendering-modes counterpart of
+/// [`shade_and_downsample_filtered`], which shades [`PixelSample`]s on the fly.
+///
+/// The beautiful pipeline (`render_modes`) shades **globally** (per-frame
+/// percentile-stretch / histogram-equalization is not a per-pixel-pure map, so it
+/// can't go through [`coloring::shade`]); it produces a `sub_w × sub_h` linear-RGB
+/// buffer up front and hands it here. Identical filter math to
+/// [`shade_and_downsample_filtered`] — same `ss×`-scaled kernel ([`build_taps`]),
+/// same linear-light filtering, same `[0,1]` clamp before sRGB8 — only the input
+/// differs (a ready buffer vs. shade-on-the-fly), so the AA characteristics match
+/// the smooth path's. `Box` is the flat `ss×ss` average.
+pub fn downsample_linear_filtered(
+    linear: &[[f64; 3]],
+    out_w: u32,
+    out_h: u32,
+    ss: u32,
+    filter: DownsampleFilter,
+) -> RgbImage {
+    let s = ss.max(1);
+    let sub_w = (out_w * s) as usize;
+    let sub_h = (out_h * s) as usize;
+    let ow = out_w as usize;
+    let oh = out_h as usize;
+
+    if filter == DownsampleFilter::Box {
+        let inv = 1.0 / (s * s) as f64;
+        let rows: Vec<Vec<u8>> = (0..out_h)
+            .into_par_iter()
+            .map(|row| {
+                let mut out = Vec::with_capacity(ow * 3);
+                for col in 0..out_w {
+                    let mut acc = [0.0f64; 3];
+                    for sj in 0..s {
+                        let base = ((row * s + sj) as usize) * sub_w + (col * s) as usize;
+                        for si in 0..s as usize {
+                            let p = linear[base + si];
+                            acc[0] += p[0];
+                            acc[1] += p[1];
+                            acc[2] += p[2];
+                        }
+                    }
+                    for k in 0..3 {
+                        let v = linear_to_srgb(acc[k] * inv);
+                        out.push((v * 255.0 + 0.5) as u8);
+                    }
+                }
+                out
+            })
+            .collect();
+        let mut pixels = Vec::with_capacity(ow * oh * 3);
+        for r in rows {
+            pixels.extend_from_slice(&r);
+        }
+        return RgbImage::from_raw(out_w, out_h, pixels).expect("buffer dimensions match");
+    }
+
+    let htaps = build_taps(ow, sub_w, s, filter);
+    let vtaps = build_taps(oh, sub_h, s, filter);
+
+    // Horizontal pass: sub_w → out_w into an f32 (out_w × sub_h) intermediate.
+    let inter: Vec<Vec<[f32; 3]>> = (0..sub_h)
+        .into_par_iter()
+        .map(|r| {
+            let base = r * sub_w;
+            let mut row = vec![[0f32; 3]; ow];
+            for (x, tap) in htaps.iter().enumerate() {
+                let mut acc = [0.0f64; 3];
+                for (k, &w) in tap.w.iter().enumerate() {
+                    let p = linear[base + tap.start + k];
+                    acc[0] += w * p[0];
+                    acc[1] += w * p[1];
+                    acc[2] += w * p[2];
+                }
+                row[x] = [acc[0] as f32, acc[1] as f32, acc[2] as f32];
+            }
+            row
+        })
+        .collect();
+
+    // Vertical pass: sub_h → out_h, clamp, sRGB-encode.
+    let out_rows: Vec<Vec<u8>> = (0..oh)
+        .into_par_iter()
+        .map(|y| {
+            let tap = &vtaps[y];
+            let mut out = Vec::with_capacity(ow * 3);
+            for x in 0..ow {
+                let mut acc = [0.0f64; 3];
+                for (k, &w) in tap.w.iter().enumerate() {
+                    let p = inter[tap.start + k][x];
+                    acc[0] += w * p[0] as f64;
+                    acc[1] += w * p[1] as f64;
+                    acc[2] += w * p[2] as f64;
+                }
+                for c in 0..3 {
+                    let v = linear_to_srgb(acc[c].clamp(0.0, 1.0));
+                    out.push((v * 255.0 + 0.5) as u8);
+                }
+            }
+            out
+        })
+        .collect();
+
+    let mut pixels = Vec::with_capacity(ow * oh * 3);
+    for r in out_rows {
+        pixels.extend_from_slice(&r);
+    }
+    RgbImage::from_raw(out_w, out_h, pixels).expect("buffer dimensions match")
+}
+
 /// Fraction of samples that did not escape (interior pixels). A fast black-pixel
 /// proxy from raw iteration data, without shading.
 ///

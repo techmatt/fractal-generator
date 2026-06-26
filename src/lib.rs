@@ -46,6 +46,7 @@ pub mod palette_probe;
 pub mod present;
 pub mod probe;
 pub mod render;
+pub mod render_modes;
 pub mod render_one;
 pub mod root_field;
 pub mod sheet;

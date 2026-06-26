@@ -30,7 +30,27 @@ use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
 use crate::render::{self, Frame};
+use crate::render_modes::{self, ColoringParams};
 use crate::{coloring, ensure_parent_dir, hp};
+
+/// Resolve `--coloring` to a beautiful [`ColoringParams`], or `None` for the
+/// **location profile** (the settled byte-identical path). `None` is returned for
+/// an absent flag *and* for an explicit default (`--coloring '{}'` or any spec
+/// that resolves to [`ColoringParams::default`]) — both must reproduce the current
+/// output exactly. A `@path` prefix reads the JSON from a file.
+fn resolve_coloring(arg: &Option<String>) -> Result<Option<ColoringParams>, String> {
+    let raw = match arg {
+        None => return Ok(None),
+        Some(s) => s,
+    };
+    let text = if let Some(path) = raw.strip_prefix('@') {
+        std::fs::read_to_string(path).map_err(|e| format!("read --coloring file {path}: {e}"))?
+    } else {
+        raw.clone()
+    };
+    let cp = ColoringParams::from_json(&text)?;
+    Ok((!cp.is_location_profile()).then_some(cp))
+}
 
 /// Escape radius (matches the generate/present/aa-study/aa-filter regime).
 const BAILOUT: f64 = 1e6;
@@ -125,12 +145,22 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
+    // Beautiful coloring (non-default `--coloring`) routes to the decoupled
+    // field→shade→palette pipeline; absent/default routes to the byte-identical
+    // location-profile path below.
+    let coloring_params = resolve_coloring(&args.coloring)?;
+
     let mode = match julia_param {
         Some(p) => format!("julia c=({:.9}, {:.9})", p.re, p.im),
         None => "mandelbrot".to_string(),
     };
+    let coloring_label = match &coloring_params {
+        Some(cp) => format!("field={:?} transform={:?} shade={:?} biomorph={:?} B={:.0}",
+            cp.field, cp.transform, cp.shade, cp.biomorph, cp.bailout_b),
+        None => "location-profile (smooth)".to_string(),
+    };
     eprintln!(
-        "render-one [{mode}]: center ({cx:.9}, {cy:.9}) fw {:.3e}  {}x{}  {} ss{ss}  {}  maxiter {}  palette '{}'",
+        "render-one [{mode}]: center ({cx:.9}, {cy:.9}) fw {:.3e}  {}x{}  {} ss{ss}  {}  maxiter {}  palette '{}'  coloring: {coloring_label}",
         args.frame_width,
         args.width,
         args.height,
@@ -139,6 +169,35 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         args.maxiter,
         palette.name()
     );
+
+    // --- beautiful pipeline branch (global-normalized field render) ---
+    if let Some(cp) = &coloring_params {
+        let t0 = Instant::now();
+        let img = render_modes::render_beautiful(
+            &frame,
+            ss,
+            args.maxiter,
+            julia_param,
+            cp,
+            &palette,
+            args.filter.into(),
+        );
+        let secs = t0.elapsed().as_secs_f64();
+        ensure_parent_dir(&args.out)?;
+        let lower = args.out.to_ascii_lowercase();
+        if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+            render::save_jpeg(&img, std::path::Path::new(&args.out), args.jpg_quality)?;
+        } else {
+            img.save(&args.out)
+                .map_err(|e| format!("failed to write {}: {e}", args.out))?;
+        }
+        eprintln!("wrote {} in {secs:.2}s (beautiful pipeline)", args.out);
+        println!("=== render-one (beautiful) ===");
+        println!("out:      {}", args.out);
+        println!("coloring: {}", cp.to_json());
+        println!("total:    {secs:.3}s");
+        return Ok(());
+    }
 
     // --- iterate (the only expensive stage) ---
     // Mandelbrot uses the channel-intent f64 path; Julia uses the JuliaBackend
@@ -362,4 +421,16 @@ pub struct RenderOneArgs {
     /// train-time JPEG-q jitter (85..95) does not compound artifacts.
     #[arg(long, default_value_t = 95)]
     pub jpg_quality: u8,
+
+    /// Beautiful coloring params as a JSON object (inline, or `@path` to read from
+    /// a file). Omitted — or any spec that resolves to the default (e.g. `{}`) —
+    /// renders the **location profile** (current output, byte-identical). A
+    /// non-default spec routes to the decoupled field→shade→palette pipeline
+    /// (`render_modes`). Keys: `field` (smooth|stripe|tia|curvature|trap_circle|
+    /// trap_cross), `bailout_b`, `skip`, `biomorph` (off|epsilon_cross),
+    /// `stripe_density`, `trap_radius`, `transform` (linear|sqrt|log|histeq|scurve),
+    /// `gamma`, `shade` (none|normal_map), `light_azimuth`, `light_height`,
+    /// `palette_cycles`, `palette_offset`. Omitted keys fall back to defaults.
+    #[arg(long)]
+    pub coloring: Option<String>,
 }
