@@ -27,7 +27,7 @@ use clap::Args;
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{F64Backend, Trap, TrapShape};
+use crate::backend::{F64Backend, JuliaBackend, Trap, TrapShape};
 use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
@@ -46,6 +46,10 @@ struct Spec {
     ss: u32,
     filter: DownsampleFilter,
     out: String,
+    /// Julia parameter `c` (decimal strings) when `fractal_type == "julia"`;
+    /// `None` ⇒ Mandelbrot (today's behavior, byte-identical). Mirrors the
+    /// `render-one --julia --c` coupling: the viewport addresses the z-plane.
+    julia_c: Option<(String, String)>,
 }
 
 fn parse_filter(s: &str) -> Result<DownsampleFilter, String> {
@@ -65,7 +69,20 @@ fn parse_spec(line: &str) -> Result<Spec, String> {
     let ss = jsonl::field_usize(line, "ss").ok_or("missing ss")? as u32;
     let filter = parse_filter(&jsonl::field_str(line, "filter").ok_or("missing filter")?)?;
     let out = jsonl::field_str(line, "out").ok_or("missing out")?;
-    Ok(Spec { cx, cy, fw, palette, ss, filter, out })
+    // Optional Julia coupling: `fractal_type:"julia"` requires `c_re`/`c_im`
+    // (decimal strings). Absent or `"mandelbrot"` ⇒ Mandelbrot. A `julia` row
+    // missing `c` is a loud error, not a silent Mandelbrot fallback (would
+    // poison the cache with mis-rendered tiles).
+    let julia_c = match jsonl::field_str(line, "fractal_type").as_deref() {
+        Some("julia") => {
+            let c_re = jsonl::field_str(line, "c_re").ok_or("julia row missing c_re")?;
+            let c_im = jsonl::field_str(line, "c_im").ok_or("julia row missing c_im")?;
+            Some((c_re, c_im))
+        }
+        None | Some("mandelbrot") => None,
+        Some(other) => return Err(format!("unknown fractal_type '{other}' (mandelbrot|julia)")),
+    };
+    Ok(Spec { cx, cy, fw, palette, ss, filter, out, julia_c })
 }
 
 pub fn run_v4_render_batch(args: &V4RenderBatchArgs) -> Result<(), String> {
@@ -204,9 +221,29 @@ fn render_one_spec(
     }
 
     let ss = spec.ss.max(1);
-    let backend = F64Backend::new(maxiter, BAILOUT, trap);
-    let buf =
-        render::iterate_samples_f64_pattern(&backend, &frame, ss, channels, SubsamplePattern::Grid, 0);
+    // Mandelbrot: channel-intent f64 path (byte-identical to render-one). Julia:
+    // JuliaBackend over the same grid/seed — `channels` is irrelevant to Julia
+    // (it always computes the gated trap, never a `dz`), exactly as render-one.
+    let buf = match &spec.julia_c {
+        None => {
+            let backend = F64Backend::new(maxiter, BAILOUT, trap);
+            render::iterate_samples_f64_pattern(
+                &backend,
+                &frame,
+                ss,
+                channels,
+                SubsamplePattern::Grid,
+                0,
+            )
+        }
+        Some((c_re, c_im)) => {
+            let pr = hp::to_f64(&hp::parse_decimal(c_re, prec_bits)?);
+            let pi = hp::to_f64(&hp::parse_decimal(c_im, prec_bits)?);
+            let backend =
+                JuliaBackend::new(Complex::new(pr, pi), maxiter, BAILOUT, trap);
+            render::iterate_samples_julia_pattern(&backend, &frame, ss, SubsamplePattern::Grid, 0)
+        }
+    };
     let img = render::shade_and_downsample_filtered(
         &buf.samples,
         frame.out_width,
