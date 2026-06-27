@@ -69,8 +69,8 @@ pub const BEAUTIFUL_BAILOUT: f64 = 65536.0; // 2^16
 pub enum Field {
     /// `nu = n + 1 - log2(log|z|)` — classic smooth escape time. Exterior only.
     Smooth,
-    /// Mean over `n ≥ skip` of `0.5 + 0.5·sin(s·arg z)`; last term lerped by the
-    /// fractional iteration (deband). Exterior only. Reads clean at density 3–5.
+    /// Naive mean over `n ≥ skip` of `0.5 + 0.5·sin(s·arg z)`. Exterior only.
+    /// Reads clean at density 3–5.
     Stripe,
     /// Triangle-inequality average (TIA); averaged like stripe. Exterior only.
     Tia,
@@ -352,19 +352,27 @@ impl ColoringParams {
     }
 
     /// A beautiful preset: `2^16` bailout + the chosen field, with a transform
-    /// sensible for that field (`Log` for the trap stalk fields, `Sqrt`
-    /// otherwise). All other knobs stay at defaults; tune via JSON overrides.
+    /// sensible for that field (`Log` for the trap stalk fields, `Linear` for
+    /// stripe — Matt's validated sweep verdict — `Sqrt` otherwise). All other
+    /// knobs stay at defaults; tune via JSON overrides.
     pub fn beautiful(field: Field) -> Self {
         let transform = match field {
             Field::TrapCircle | Field::TrapCross => Transform::Log,
+            // Validated stripe default (sweep verdict): linear, not sqrt.
+            Field::Stripe => Transform::Linear,
             _ => Transform::Sqrt,
         };
-        ColoringParams {
+        let mut p = ColoringParams {
             bailout_b: BEAUTIFUL_BAILOUT,
             field,
             transform,
             ..ColoringParams::default()
+        };
+        // Validated stripe default: density 6 (sweep usable band 4–8).
+        if matches!(field, Field::Stripe) {
+            p.stripe_density = 6.0;
         }
+        p
     }
 
     /// Serialize to a compact JSON object (all fields, stable key order).
@@ -398,70 +406,114 @@ impl ColoringParams {
         )
     }
 
-    /// Parse a JSON object; **omitted keys fall back to [`Default`]** (so a partial
-    /// `{"field":"stripe"}` is a beautiful-stripe-on-defaults spec). Uses the
-    /// tolerant `jsonl` readers (flat object, first-match per key).
+    /// Parse a JSON object (tolerant `jsonl` readers, flat object, first-match per
+    /// key). **§0 seeding contract:** a spec that names *any* recognized key seeds
+    /// from [`beautiful`](Self::beautiful)`(field)` (the field-appropriate preset),
+    /// then overlays the explicitly-present keys — so `{"field":"stripe"}` ≡
+    /// `beautiful(Stripe)` and unspecified `bailout_b`/`transform` follow the field
+    /// instead of the sentinel's `1e6`/`linear`. An **empty** spec (`{}`, no
+    /// recognized key) returns [`Default`] unchanged, so the
+    /// `resolve_coloring → is_location_profile` location dispatch stays
+    /// byte-for-byte identical. A fully-pinned spec is unaffected (every key wins
+    /// over the seed).
     pub fn from_json(s: &str) -> Result<Self, String> {
-        let mut p = ColoringParams::default();
-        if let Some(v) = jsonl::field_f64(s, "bailout_b") {
-            p.bailout_b = v;
+        // Overlay every present JSON key onto `p`; returns whether the spec named
+        // *any* recognized key. Presence (not value-equality with the sentinel) is
+        // what distinguishes an empty `{}` from a `{"field":"smooth"}` that happens
+        // to equal `default()`.
+        fn overlay(p: &mut ColoringParams, s: &str) -> Result<bool, String> {
+            let mut named = false;
+            if let Some(v) = jsonl::field_f64(s, "bailout_b") {
+                p.bailout_b = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_usize(s, "skip") {
+                p.skip = v as u32;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "biomorph") {
+                p.biomorph = Biomorph::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "field") {
+                p.field = Field::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "stripe_density") {
+                p.stripe_density = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "trap_radius") {
+                p.trap_radius = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "transform") {
+                p.transform = Transform::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "gamma") {
+                p.gamma = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "shade") {
+                p.shade = Shade::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "light_azimuth") {
+                p.light_azimuth = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "light_height") {
+                p.light_height = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "palette_cycles") {
+                p.palette_cycles = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "palette_offset") {
+                p.palette_offset = v;
+                named = true;
+            }
+            // v2 composite. `texture_field` absent or "none" → single-field (None).
+            if let Some(v) = jsonl::field_str(s, "texture_field") {
+                p.texture_field = if v == "none" {
+                    None
+                } else {
+                    Some(Field::parse(&v)?)
+                };
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "texture_transform") {
+                p.texture_transform = Transform::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "texture_gamma") {
+                p.texture_gamma = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "combine") {
+                p.combine = Combine::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "texture_weight") {
+                p.texture_weight = v;
+                named = true;
+            }
+            Ok(named)
         }
-        if let Some(v) = jsonl::field_usize(s, "skip") {
-            p.skip = v as u32;
+
+        // Probe pass onto the sentinel: discover the named field (if any) and
+        // whether the spec is empty.
+        let mut probe = ColoringParams::default();
+        if !overlay(&mut probe, s)? {
+            // Empty / absent-equivalent spec → location sentinel, untouched.
+            return Ok(probe); // == ColoringParams::default()
         }
-        if let Some(v) = jsonl::field_str(s, "biomorph") {
-            p.biomorph = Biomorph::parse(&v)?;
-        }
-        if let Some(v) = jsonl::field_str(s, "field") {
-            p.field = Field::parse(&v)?;
-        }
-        if let Some(v) = jsonl::field_f64(s, "stripe_density") {
-            p.stripe_density = v;
-        }
-        if let Some(v) = jsonl::field_f64(s, "trap_radius") {
-            p.trap_radius = v;
-        }
-        if let Some(v) = jsonl::field_str(s, "transform") {
-            p.transform = Transform::parse(&v)?;
-        }
-        if let Some(v) = jsonl::field_f64(s, "gamma") {
-            p.gamma = v;
-        }
-        if let Some(v) = jsonl::field_str(s, "shade") {
-            p.shade = Shade::parse(&v)?;
-        }
-        if let Some(v) = jsonl::field_f64(s, "light_azimuth") {
-            p.light_azimuth = v;
-        }
-        if let Some(v) = jsonl::field_f64(s, "light_height") {
-            p.light_height = v;
-        }
-        if let Some(v) = jsonl::field_f64(s, "palette_cycles") {
-            p.palette_cycles = v;
-        }
-        if let Some(v) = jsonl::field_f64(s, "palette_offset") {
-            p.palette_offset = v;
-        }
-        // v2 composite. `texture_field` absent or "none" → single-field (None).
-        if let Some(v) = jsonl::field_str(s, "texture_field") {
-            p.texture_field = if v == "none" {
-                None
-            } else {
-                Some(Field::parse(&v)?)
-            };
-        }
-        if let Some(v) = jsonl::field_str(s, "texture_transform") {
-            p.texture_transform = Transform::parse(&v)?;
-        }
-        if let Some(v) = jsonl::field_f64(s, "texture_gamma") {
-            p.texture_gamma = v;
-        }
-        if let Some(v) = jsonl::field_str(s, "combine") {
-            p.combine = Combine::parse(&v)?;
-        }
-        if let Some(v) = jsonl::field_f64(s, "texture_weight") {
-            p.texture_weight = v;
-        }
+        // Named spec → re-seed from the field's beautiful preset, then re-overlay
+        // the explicit keys (they always win over the seed).
+        let mut p = ColoringParams::beautiful(probe.field);
+        overlay(&mut p, s)?;
         Ok(p)
     }
 }
@@ -474,8 +526,8 @@ impl ColoringParams {
 /// one field with [`OrbitAccum::field`] (a pure function over the accumulators),
 /// so a single pass can serve many fields in a sweep.
 ///
-/// Averaging fields (stripe/tia/curvature) store `(sum, count, last)` so the
-/// post-loop deband can lerp the last term by the fractional iteration.
+/// Averaging fields (stripe/tia/curvature) store `(sum, count)`. Production
+/// reduces them to the naive mean `sum/count` ([`orbit_mean`]).
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitAccum {
     pub escaped: bool,
@@ -484,28 +536,27 @@ pub struct OrbitAccum {
     /// Final value `z` and derivative `z'` (for normal_map `u = z/z'`).
     pub z: Complex<f64>,
     pub dz: Complex<f64>,
-    // Averaging accumulators (n ≥ skip): running sum, count, last term.
-    stripe: (f64, u32, f64),
-    tia: (f64, u32, f64),
-    curv: (f64, u32, f64),
+    // Averaging accumulators (n ≥ skip): running sum, count.
+    stripe: (f64, u32),
+    tia: (f64, u32),
+    curv: (f64, u32),
     /// `min‖z|−r|` over the orbit.
     trap_circle_min: f64,
     /// `min(|Re z|,|Im z|)` over the orbit.
     trap_cross_min: f64,
 }
 
-/// Deband an averaging accumulator: `result = d·A + (1−d)·A_prev`, where `A` is
-/// the mean of all terms and `A_prev` excludes the last (doc §3). `d` is the
-/// fractional iteration. `None` if no terms accumulated.
-fn deband((sum, count, last): (f64, u32, f64), d: f64) -> Option<f64> {
+/// Reduce an averaging accumulator (stripe/tia/curvature) to the **naive mean**
+/// `sum/count`. `None` if no terms accumulated.
+///
+/// History: this was a last-term deband lerp `d·A + (1−d)·A_prev`. The k-sweep
+/// diagnosis showed that correction was net-harmful under the beautiful `B=2¹⁶`
+/// bailout — it contributed *only* the terrace artifact (the "bricks") and was
+/// neutral at high `n` — so it was dropped from production for the naive mean.
+fn orbit_mean((sum, count): (f64, u32)) -> Option<f64> {
     match count {
         0 => None,
-        1 => Some(sum),
-        _ => {
-            let a = sum / count as f64;
-            let a_prev = (sum - last) / (count - 1) as f64;
-            Some(d * a + (1.0 - d) * a_prev)
-        }
+        _ => Some(sum / count as f64),
     }
 }
 
@@ -513,17 +564,11 @@ impl OrbitAccum {
     /// Reduce to one field's raw scalar (pre-normalization). `None` for an
     /// exterior-only field on an interior pixel (→ rendered black).
     pub fn field(&self, field: Field) -> Option<f64> {
-        // Fractional iteration for the deband lerp (exterior fields only).
-        let d = if self.escaped {
-            self.smooth.fract()
-        } else {
-            0.0
-        };
         match field {
             Field::Smooth => self.escaped.then_some(self.smooth),
-            Field::Stripe => self.escaped.then(|| deband(self.stripe, d)).flatten(),
-            Field::Tia => self.escaped.then(|| deband(self.tia, d)).flatten(),
-            Field::Curvature => self.escaped.then(|| deband(self.curv, d)).flatten(),
+            Field::Stripe => self.escaped.then(|| orbit_mean(self.stripe)).flatten(),
+            Field::Tia => self.escaped.then(|| orbit_mean(self.tia)).flatten(),
+            Field::Curvature => self.escaped.then(|| orbit_mean(self.curv)).flatten(),
             Field::TrapCircle => Some(self.trap_circle_min),
             Field::TrapCross => Some(self.trap_cross_min),
         }
@@ -579,9 +624,9 @@ pub fn iterate_orbit(
     let mut zprev1 = z0;
     let mut zprev2 = Complex::new(0.0, 0.0);
 
-    let mut stripe = (0.0f64, 0u32, 0.0f64);
-    let mut tia = (0.0f64, 0u32, 0.0f64);
-    let mut curv = (0.0f64, 0u32, 0.0f64);
+    let mut stripe = (0.0f64, 0u32);
+    let mut tia = (0.0f64, 0u32);
+    let mut curv = (0.0f64, 0u32);
     let mut trap_circle_min = f64::INFINITY;
     let mut trap_cross_min = f64::INFINITY;
 
@@ -625,7 +670,6 @@ pub fn iterate_orbit(
             let st = 0.5 + 0.5 * (s_density * z.im.atan2(z.re)).sin();
             stripe.0 += st;
             stripe.1 += 1;
-            stripe.2 = st;
 
             // tia: (|z| − lo)/(hi − lo), lo = ‖z_prev²|−|c‖, hi = |z_prev²|+|c|
             let lo = (zn_sq_abs - cabs).abs();
@@ -638,7 +682,6 @@ pub fn iterate_orbit(
             };
             tia.0 += ti;
             tia.1 += 1;
-            tia.2 = ti;
 
             // curvature: |arg((zₙ−zₙ₋₁)/(zₙ₋₁−zₙ₋₂))|, needs three points (n ≥ 2).
             if n >= 2 {
@@ -648,7 +691,6 @@ pub fn iterate_orbit(
                     let ang = (num / den).arg().abs();
                     curv.0 += ang;
                     curv.1 += 1;
-                    curv.2 = ang;
                 }
             }
         }
@@ -1114,6 +1156,36 @@ mod tests {
         assert!(!ColoringParams::beautiful(Field::TrapCross).is_location_profile());
     }
 
+    /// Production change: `field()` for the averaging family (stripe/tia/curvature)
+    /// is now the naive mean `sum/count` — the last-term deband lerp is gone, so the
+    /// fractional iteration `d` (= `smooth.fract()`) must NOT affect the result.
+    #[test]
+    fn averaging_fields_are_naive_mean() {
+        // smooth = 12.7 → d = 0.7; under the old lerp this would shift the result.
+        let acc = OrbitAccum {
+            escaped: true,
+            smooth: 12.7,
+            z: Complex::new(3.0, 4.0),
+            dz: Complex::new(1.0, 0.0),
+            stripe: (8.0, 5),
+            tia: (3.0, 6),
+            curv: (2.5, 4),
+            trap_circle_min: 0.3,
+            trap_cross_min: 0.1,
+        };
+        assert_eq!(acc.field(Field::Stripe), Some(8.0 / 5.0));
+        assert_eq!(acc.field(Field::Tia), Some(3.0 / 6.0));
+        assert_eq!(acc.field(Field::Curvature), Some(2.5 / 4.0));
+        // Exterior-only: a non-escaped orbit yields None for the averaging family.
+        let interior = OrbitAccum { escaped: false, ..acc };
+        assert_eq!(interior.field(Field::Stripe), None);
+        assert_eq!(interior.field(Field::Tia), None);
+        assert_eq!(interior.field(Field::Curvature), None);
+        // count == 0 → None even when escaped (no terms accumulated).
+        let empty = OrbitAccum { stripe: (0.0, 0), ..acc };
+        assert_eq!(empty.field(Field::Stripe), None);
+    }
+
     #[test]
     fn json_roundtrip() {
         let p = ColoringParams::beautiful(Field::Stripe);
@@ -1122,16 +1194,42 @@ mod tests {
     }
 
     #[test]
-    fn json_partial_falls_back_to_default() {
-        // Omitted keys default; only `field` overridden.
+    fn json_partial_seeds_from_beautiful() {
+        // §0 fix: a partial spec that names a field seeds from beautiful(field), so
+        // unspecified bailout/transform follow the field preset — NOT the sentinel's
+        // 1e6/linear.
         let p = ColoringParams::from_json("{\"field\":\"tia\"}").unwrap();
-        assert_eq!(p.field, Field::Tia);
-        assert_eq!(p.bailout_b, ColoringParams::default().bailout_b);
-        assert_eq!(p.transform, ColoringParams::default().transform);
+        assert_eq!(p, ColoringParams::beautiful(Field::Tia));
+        assert_eq!(p.bailout_b, BEAUTIFUL_BAILOUT);
+        assert_eq!(p.transform, Transform::Sqrt);
+
+        // `{"field":"stripe"}` ≡ the validated beautiful(Stripe) default.
+        let s = ColoringParams::from_json("{\"field\":\"stripe\"}").unwrap();
+        assert_eq!(s, ColoringParams::beautiful(Field::Stripe));
+
+        // Spot-check a non-stripe field seeds its beautiful preset (log transform).
+        let tc = ColoringParams::from_json("{\"field\":\"trap_cross\"}").unwrap();
+        assert_eq!(tc, ColoringParams::beautiful(Field::TrapCross));
+        assert_eq!(tc.transform, Transform::Log);
+
+        // An explicit key still wins over the seed; unspecified keys keep the seed.
+        let pin =
+            ColoringParams::from_json("{\"field\":\"stripe\",\"transform\":\"log\"}").unwrap();
+        assert_eq!(pin.transform, Transform::Log);
+        assert_eq!(pin.stripe_density, 6.0); // unspecified → beautiful(Stripe) seed
+    }
+
+    #[test]
+    fn beautiful_stripe_default_is_density6_linear() {
+        let p = ColoringParams::beautiful(Field::Stripe);
+        assert_eq!(p.stripe_density, 6.0);
+        assert_eq!(p.transform, Transform::Linear);
+        assert_eq!(p.bailout_b, BEAUTIFUL_BAILOUT);
     }
 
     #[test]
     fn empty_json_is_default() {
+        // `{}` names no key → location sentinel preserved (the §3 dispatch contract).
         let p = ColoringParams::from_json("{}").unwrap();
         assert!(p.is_location_profile());
     }

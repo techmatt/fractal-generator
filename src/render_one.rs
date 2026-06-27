@@ -430,7 +430,10 @@ pub struct RenderOneArgs {
     /// trap_cross), `bailout_b`, `skip`, `biomorph` (off|epsilon_cross),
     /// `stripe_density`, `trap_radius`, `transform` (linear|sqrt|log|histeq|scurve),
     /// `gamma`, `shade` (none|normal_map), `light_azimuth`, `light_height`,
-    /// `palette_cycles`, `palette_offset`. Omitted keys fall back to defaults.
+    /// `palette_cycles`, `palette_offset`. A spec naming any key seeds from
+    /// `beautiful(field)` (so omitted keys follow the field preset, e.g.
+    /// `{"field":"stripe"}` ≡ density-6 / linear / 2^16); an empty `{}` (or absent
+    /// flag) renders the location profile.
     #[arg(long)]
     pub coloring: Option<String>,
 }
