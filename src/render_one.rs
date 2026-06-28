@@ -427,8 +427,9 @@ pub struct RenderOneArgs {
     /// renders the **location profile** (current output, byte-identical). A
     /// non-default spec routes to the decoupled field→shade→palette pipeline
     /// (`render_modes`). Keys: `field` (smooth|stripe|tia|curvature|trap_circle|
-    /// trap_cross), `bailout_b`, `skip`, `biomorph` (off|epsilon_cross),
-    /// `stripe_density`, `trap_radius`, `transform` (linear|sqrt|log|histeq|scurve),
+    /// trap_cross|de), `bailout_b`, `skip`, `biomorph` (off|epsilon_cross),
+    /// `stripe_density`, `trap_radius`, `de_scale`, `transform`
+    /// (linear|sqrt|log|histeq|scurve),
     /// `gamma`, `shade` (none|normal_map), `light_azimuth`, `light_height`,
     /// `palette_cycles`, `palette_offset`. A spec naming any key seeds from
     /// `beautiful(field)` (so omitted keys follow the field preset, e.g.

@@ -82,6 +82,13 @@ pub enum Field {
     /// Pickover stalks: `min(|Re z|,|Im z|)` over the orbit; pairs with `Log` +
     /// biomorph + normal_map for the lace look. Valid for every pixel.
     TrapCross,
+    /// Exterior distance estimate `de = |z|·ln|z|/|dz|`, normalized to pixel scale
+    /// (`de_px = de/(fw/width)`) and soft-mapped `tanh(de_px·de_scale)` → 0 at the
+    /// boundary, 1 in the open exterior. Exterior only (interior → black, like
+    /// curvature). Reuses the `normal_map` derivative recurrence; `de_scale` is the
+    /// only DE-specific knob (filament thickness). Needs pixel scale, so it is
+    /// reduced via [`OrbitAccum::de_value`], not [`OrbitAccum::field`].
+    De,
 }
 
 impl Field {
@@ -93,6 +100,7 @@ impl Field {
             Field::Curvature => "curvature",
             Field::TrapCircle => "trap_circle",
             Field::TrapCross => "trap_cross",
+            Field::De => "de",
         }
     }
 
@@ -104,6 +112,7 @@ impl Field {
             "curvature" => Field::Curvature,
             "trap_circle" => Field::TrapCircle,
             "trap_cross" => Field::TrapCross,
+            "de" => Field::De,
             _ => return Err(format!("unknown field '{s}'")),
         })
     }
@@ -280,6 +289,10 @@ pub struct ColoringParams {
     pub stripe_density: f64,
     /// Trap radius `r` (trap_circle field).
     pub trap_radius: f64,
+    /// Boundary-filament thickness `de_scale` (de field): the only DE-specific knob.
+    /// The DE map is `tanh(de_px · de_scale)`, so larger values hug the boundary
+    /// (thinner gradient band), smaller values spread a wider glow. Default `1.0`.
+    pub de_scale: f64,
     // --- colorize stage ---
     /// Compression / transfer transform.
     pub transform: Transform,
@@ -329,6 +342,7 @@ impl Default for ColoringParams {
             field: Field::Smooth,
             stripe_density: 4.0,
             trap_radius: 1.0,
+            de_scale: 1.0,
             transform: Transform::Linear,
             gamma: 1.0,
             shade: Shade::None,
@@ -361,6 +375,11 @@ impl ColoringParams {
             Field::TrapCircle | Field::TrapCross => Transform::Log,
             // Validated stripe default (sweep verdict): linear, not sqrt.
             Field::Stripe => Transform::Linear,
+            // Validated tia default (sweep verdict): linear, not sqrt.
+            Field::Tia => Transform::Linear,
+            // DE seed (§1): log — the soft-mapped distance still has wide dynamic
+            // range, and log is the sane viewing default until palette spacing exists.
+            Field::De => Transform::Log,
             _ => Transform::Sqrt,
         };
         let mut p = ColoringParams {
@@ -373,6 +392,11 @@ impl ColoringParams {
         if matches!(field, Field::Stripe) {
             p.stripe_density = 6.0;
         }
+        // Validated DE default (flat-field sweep sweet spot): de_scale 0.25 — it
+        // needed spread (a wider glow band) over the sentinel's 1.0.
+        if matches!(field, Field::De) {
+            p.de_scale = 0.25;
+        }
         p
     }
 
@@ -381,7 +405,7 @@ impl ColoringParams {
     pub fn to_json(&self) -> String {
         format!(
             "{{\"bailout_b\":{},\"skip\":{},\"biomorph\":\"{}\",\"field\":\"{}\",\
-             \"stripe_density\":{},\"trap_radius\":{},\"transform\":\"{}\",\"gamma\":{},\
+             \"stripe_density\":{},\"trap_radius\":{},\"de_scale\":{},\"transform\":\"{}\",\"gamma\":{},\
              \"shade\":\"{}\",\"light_azimuth\":{},\"light_height\":{},\
              \"palette_cycles\":{},\"palette_offset\":{},\
              \"texture_field\":\"{}\",\"texture_transform\":\"{}\",\"texture_gamma\":{},\
@@ -392,6 +416,7 @@ impl ColoringParams {
             self.field.as_str(),
             self.stripe_density,
             self.trap_radius,
+            self.de_scale,
             self.transform.as_str(),
             self.gamma,
             self.shade.as_str(),
@@ -446,6 +471,10 @@ impl ColoringParams {
             }
             if let Some(v) = jsonl::field_f64(s, "trap_radius") {
                 p.trap_radius = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "de_scale") {
+                p.de_scale = v;
                 named = true;
             }
             if let Some(v) = jsonl::field_str(s, "transform") {
@@ -585,7 +614,37 @@ impl OrbitAccum {
             Field::Curvature => self.escaped.then(|| deband(self.curv, d)).flatten(),
             Field::TrapCircle => Some(self.trap_circle_min),
             Field::TrapCross => Some(self.trap_cross_min),
+            // DE needs the pixel scale (+ de_scale) to normalize, which `field` has
+            // no access to — it is reduced via [`Self::de_value`] in the render stage.
+            Field::De => None,
         }
+    }
+
+    /// Exterior distance estimate, rendered to a `[0,1]` field value (the `de`
+    /// field). `de = |z|·ln|z|/|dz|` is the boundary distance in complex-plane
+    /// units (reusing the `normal_map` derivative `dz`); dividing by `pixel_size`
+    /// (`fw/width`) makes the thickness **zoom-invariant** (distance in output
+    /// pixels), and `tanh(de_px · de_scale)` is the standard soft DE ramp — `0` at
+    /// the boundary, `→1` in the open exterior, with `de_scale` setting filament
+    /// thickness. `None` for interior / non-finite orbits (→ black, like the
+    /// exterior-only fields). The downstream percentile-stretch absorbs any *linear*
+    /// scale, so the nonlinear `tanh` (not a bare `de_px·de_scale`) is what makes
+    /// `de_scale` a real, render-visible knob.
+    pub fn de_value(&self, pixel_size: f64, de_scale: f64) -> Option<f64> {
+        if !self.escaped {
+            return None;
+        }
+        let zabs = self.z.norm();
+        let dzabs = self.dz.norm();
+        let lnz = zabs.ln();
+        if !(zabs.is_finite() && dzabs.is_finite() && lnz.is_finite() && dzabs > 0.0 && lnz > 0.0) {
+            return None;
+        }
+        let de_px = (zabs * lnz / dzabs) / pixel_size;
+        if !de_px.is_finite() {
+            return None;
+        }
+        Some((de_px * de_scale).tanh())
     }
 
     /// Normalized emboss vector `u = z/z'`, `|u| = 1` (doc §5). `(0,0)` when `z'`
@@ -916,6 +975,10 @@ fn render_beautiful_single(
     let center = frame.center;
     let julia = julia_param.is_some();
     let want_shade = params.shade == Shade::NormalMap;
+    // Output-pixel size in the complex plane — the zoom-invariant unit the `de`
+    // field normalizes against (`fw/width`). `field()` can't see this; `de_value`
+    // takes it explicitly.
+    let pixel_size = fw / frame.out_width as f64;
 
     // --- iterate + reduce to (value, valid, ushade) per subpixel ---
     let rows: Vec<Vec<ShadePix>> = (0..sub_h)
@@ -934,7 +997,11 @@ fn render_beautiful_single(
                     None => (Complex::new(0.0, 0.0), pixel),
                 };
                 let acc = iterate_orbit(z0, c, maxiter, params, julia);
-                let value = acc.field(params.field);
+                let value = if params.field == Field::De {
+                    acc.de_value(pixel_size, params.de_scale)
+                } else {
+                    acc.field(params.field)
+                };
                 row.push(ShadePix {
                     value: value.unwrap_or(0.0),
                     valid: value.is_some(),
@@ -1056,6 +1123,15 @@ fn render_beautiful_composite(
     let texture_field = params
         .texture_field
         .expect("composite branch requires texture_field");
+    let pixel_size = fw / frame.out_width as f64;
+    // Reduce one field, routing `de` through the pixel-aware estimator.
+    let eval = |acc: &OrbitAccum, f: Field| -> Option<f64> {
+        if f == Field::De {
+            acc.de_value(pixel_size, params.de_scale)
+        } else {
+            acc.field(f)
+        }
+    };
 
     // --- iterate + reduce to (base, tex, ushade) per subpixel ---
     let rows: Vec<Vec<CompositePix>> = (0..sub_h)
@@ -1074,8 +1150,8 @@ fn render_beautiful_composite(
                 };
                 let acc = iterate_orbit(z0, c, maxiter, params, julia);
                 // One pass, two fields off the shared channel union.
-                let bv = acc.field(params.field);
-                let tv = acc.field(texture_field);
+                let bv = eval(&acc, params.field);
+                let tv = eval(&acc, texture_field);
                 row.push(CompositePix {
                     base: bv.unwrap_or(0.0),
                     base_valid: bv.is_some(),
@@ -1236,7 +1312,7 @@ mod tests {
         let p = ColoringParams::from_json("{\"field\":\"tia\"}").unwrap();
         assert_eq!(p, ColoringParams::beautiful(Field::Tia));
         assert_eq!(p.bailout_b, BEAUTIFUL_BAILOUT);
-        assert_eq!(p.transform, Transform::Sqrt);
+        assert_eq!(p.transform, Transform::Linear);
 
         // `{"field":"stripe"}` ≡ the validated beautiful(Stripe) default.
         let s = ColoringParams::from_json("{\"field\":\"stripe\"}").unwrap();
@@ -1395,6 +1471,60 @@ mod tests {
         let a = render_beautiful(&frame, 2, 400, None, &single, &palette, DownsampleFilter::Lanczos3);
         let b = render_beautiful(&frame, 2, 400, None, &dressed, &palette, DownsampleFilter::Lanczos3);
         assert_eq!(a.into_raw(), b.into_raw());
+    }
+
+    /// DE seeds from `beautiful(De)`: 2^16 bailout, log transform, de_scale 0.25
+    /// (the validated flat-field sweet spot), and round-trips through JSON
+    /// (including the `de_scale` key).
+    #[test]
+    fn de_beautiful_and_roundtrip() {
+        let p = ColoringParams::beautiful(Field::De);
+        assert_eq!(p.field, Field::De);
+        assert_eq!(p.bailout_b, BEAUTIFUL_BAILOUT);
+        assert_eq!(p.transform, Transform::Log);
+        assert_eq!(p.de_scale, 0.25);
+        assert_eq!(p, ColoringParams::from_json(&p.to_json()).unwrap());
+        // A partial spec seeds the De preset, then overlays explicit keys.
+        let s = ColoringParams::from_json("{\"field\":\"de\",\"de_scale\":4.0}").unwrap();
+        assert_eq!(s.transform, Transform::Log);
+        assert_eq!(s.de_scale, 4.0);
+        // `{}` is still the location sentinel after the de_scale addition.
+        assert!(ColoringParams::from_json("{}").unwrap().is_location_profile());
+    }
+
+    /// `de_value` is exterior-only, lands in `[0,1)`, increases away from the
+    /// boundary, and `field(De)` returns `None` (DE is reduced via `de_value`).
+    #[test]
+    fn de_value_exterior_and_monotone() {
+        let p = ColoringParams::beautiful(Field::De);
+        let ps = 1e-4; // a representative output-pixel size
+        // Exterior point: escapes, finite de in [0,1).
+        let ext = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(1.0, 1.0),
+            500,
+            &p,
+            false,
+        );
+        assert!(ext.escaped);
+        assert!(ext.field(Field::De).is_none());
+        let v = ext.de_value(ps, 1.0).expect("exterior de");
+        assert!((0.0..=1.0).contains(&v), "de_value {v} out of [0,1]");
+        // Interior point: no escape → None (black).
+        let interior = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(-0.2, 0.0),
+            500,
+            &p,
+            false,
+        );
+        assert!(!interior.escaped);
+        assert!(interior.de_value(ps, 1.0).is_none());
+        // tanh is monotone in de_scale·de_px, so a larger de_scale never lowers the
+        // value for a fixed orbit (the knob genuinely moves output).
+        let lo = ext.de_value(ps, 0.5).unwrap();
+        let hi = ext.de_value(ps, 4.0).unwrap();
+        assert!(hi >= lo);
     }
 
     /// Trap fields are valid for interior pixels (fill), exterior fields are not.
