@@ -72,3 +72,7 @@ __pycache__/
 /data/label_corpus/batches/*/_work/
 # regenerable view (rev4_sanity_sheet.py) — not part of the commit policy.
 /data/label_corpus/batches/*/sanity_contact_sheet.html
+
+# Large regeneratable datasets (see data_large/README.md)
+/data_large/*
+!/data_large/README.md
