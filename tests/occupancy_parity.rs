@@ -14,8 +14,8 @@ use std::path::Path;
 
 use fractal_generator::energy::{occupancy, OCC_FLOOR, OCC_GX, OCC_GY};
 
-const CROP_DIR: &str = "data/label_crops/loose0/loose0";
-const SCORES: &str = "data/label_crops/loose0/loose0/complexity_scores.json";
+const CROP_DIR: &str = "data_large/label_crops/loose0/loose0";
+const SCORES: &str = "data_large/label_crops/loose0/loose0/complexity_scores.json";
 
 /// (filename, score-at-0.010) pairs pulled from the compact JSON. Each object is
 /// `..."score":X,...,"file":"NAME.png"...`; score precedes its file with no other

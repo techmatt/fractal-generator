@@ -42,7 +42,7 @@ main{padding:14px}
 </header>
 
 <div id="loader">
-  <p>Loading <code>../../data/label_crops/loose0/loose0/manifest.json</code> + <code>complexity_scores.json</code> …</p>
+  <p>Loading <code>../../data_large/label_crops/loose0/loose0/manifest.json</code> + <code>complexity_scores.json</code> …</p>
   <p class="note" id="loader-msg"></p>
   <p>If opened via <code>file://</code> with fetch blocked, pick both files:</p>
   <p>manifest: <input id="load-manifest" type="file" accept=".json"></p>
@@ -54,8 +54,8 @@ main{padding:14px}
 
 <script>
 const ROOT='../../';
-const MANIFEST_URL=ROOT+'data/label_crops/loose0/loose0/manifest.json';
-const SCORES_URL=ROOT+'data/label_crops/loose0/loose0/complexity_scores.json';
+const MANIFEST_URL=ROOT+'data_large/label_crops/loose0/loose0/manifest.json';
+const SCORES_URL=ROOT+'data_large/label_crops/loose0/loose0/complexity_scores.json';
 let ROWS=[];           // {row, score} sorted ascending by score
 let manifestData=null, scoresData=null;
 
