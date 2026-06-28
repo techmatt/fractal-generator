@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mandelbrot + Julia Explorer</title>
+<style>
+  :root { --bg:#111; --panel:#1b1b1b; --fg:#ddd; --accent:#6cf; --muted:#888; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.4 system-ui, sans-serif; }
+  header { padding:8px 16px; display:flex; align-items:center; gap:18px;
+           flex-wrap:wrap; border-bottom:1px solid #333; }
+  header h1 { font-size:15px; margin:0; font-weight:600; color:var(--accent); }
+  .ctrl { display:flex; align-items:center; gap:6px; }
+  .ctrl label { color:var(--muted); }
+  select, button, input[type=range] { background:#222; color:var(--fg);
+           border:1px solid #444; border-radius:4px; padding:4px 8px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  #cbar { padding:6px 16px; border-bottom:1px solid #333; font-family:monospace;
+          font-size:13px; }
+  #cbar .mem { padding:2px 8px; border-radius:4px; margin-left:10px;
+               font-family:system-ui; font-size:12px; }
+  .mem.inside   { background:#243; color:#7e7; }
+  .mem.boundary { background:#342; color:#fd6; }
+  .mem.dust     { background:#333; color:#aaa; }
+  .wrap { display:flex; gap:14px; padding:14px; flex-wrap:wrap;
+          justify-content:center; }
+  .panel { background:var(--panel); border:1px solid #333; border-radius:6px;
+           padding:10px; }
+  .panel h2 { margin:0 0 8px; font-size:13px; color:var(--muted);
+              font-weight:600; }
+  .canvas-box { position:relative; width:700px; height:394px; }
+  .canvas-box img { width:700px; height:394px; display:block; cursor:crosshair;
+                    background:#000; border-radius:3px; }
+  .coord { font-family:monospace; font-size:12px; color:var(--muted);
+           margin-top:6px; word-break:break-all; }
+  .crumbs { margin-top:6px; font-size:12px; }
+  .crumbs a { color:var(--accent); cursor:pointer; text-decoration:none; }
+  .crumbs a:hover { text-decoration:underline; }
+  .crumbs a.current { font-weight:700; color:var(--fg); }
+  .crumbs a.ahead { color:var(--muted); }   /* forward path, available-ahead */
+  .crumbs span.sep { color:var(--muted); margin:0 4px; }
+  .crumbs span.sep.ahead { opacity:.5; }
+  .panel-foot { margin-top:8px; display:flex; gap:8px; align-items:center; }
+  .spinner { position:absolute; inset:0; background:rgba(0,0,0,.55);
+             display:none; align-items:center; justify-content:center;
+             border-radius:3px; color:var(--accent); font-size:13px; }
+  .spinner.on { display:flex; }
+  .hint { color:var(--muted); font-size:11px; }
+  #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+           background:#223; border:1px solid var(--accent); padding:8px 14px;
+           border-radius:6px; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mandelbrot × Julia</h1>
+  <div class="ctrl">
+    <label>zoom</label>
+    <select id="zoom">
+      <option value="2">2×</option><option value="3">3×</option>
+      <option value="4">4×</option>
+    </select>
+  </div>
+  <div class="ctrl">
+    <label>palette</label>
+    <select id="palette">
+      {% for p in palettes %}
+      <option value="{{p}}" {% if p==default_palette %}selected{% endif %}>{{p}}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="ctrl">
+    <label>maxiter</label>
+    <input type="range" id="maxiter" min="200" max="8000" step="100">
+    <span id="maxiter-val" class="hint"></span>
+    <button id="maxiter-auto" title="depth-aware auto">auto</button>
+  </div>
+  <button id="reset">Reset to home</button>
+  <span class="hint">click=recenter+zoom · right-click / shift-click=recenter only</span>
+</header>
+
+<div id="cbar">
+  <strong>c</strong> = <span id="c-re"></span> + <span id="c-im"></span> i
+  <span id="c-mem" class="mem"></span>
+</div>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>Mandelbrot</h2>
+    <div class="canvas-box">
+      <img id="m-img" data-panel="M">
+      <div class="spinner" id="m-spin">rendering…</div>
+    </div>
+    <div class="coord" id="m-coord"></div>
+    <div class="crumbs" id="m-crumbs"></div>
+    <div class="panel-foot">
+      <button data-panel="M" class="fullres">Full quality (2560×1440)</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Julia (c = current Mandelbrot center)</h2>
+    <div class="canvas-box">
+      <img id="j-img" data-panel="J">
+      <div class="spinner" id="j-spin">rendering…</div>
+    </div>
+    <div class="coord" id="j-coord"></div>
+    <div class="crumbs" id="j-crumbs"></div>
+    <div class="panel-foot">
+      <button data-panel="J" class="fullres">Full quality (2560×1440)</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+function spin(panel, on) {
+  $(panel === "M" ? "#m-spin" : "#j-spin").classList.toggle("on", on);
+}
+function bothSpin(on) { spin("M", on); spin("J", on); }
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2500);
+}
+
+async function post(url, body, spinPanels) {
+  if (spinPanels) spinPanels.forEach(p => spin(p, true));
+  try {
+    const r = await fetch(url, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body || {})
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return await r.json();
+  } catch (e) {
+    toast("Render error: " + e.message);
+    throw e;
+  } finally {
+    if (spinPanels) spinPanels.forEach(p => spin(p, false));
+  }
+}
+
+function renderCrumbs(elId, panel, crumbs, index) {
+  const el = $(elId); el.innerHTML = "";
+  crumbs.forEach((c, i) => {
+    if (i) { const s = document.createElement("span");
+             s.className = "sep" + (i > index ? " ahead" : "");
+             s.textContent = "›"; el.appendChild(s); }
+    const a = document.createElement("a");
+    // current = bracketed + bold; forward levels = dimmer (available-ahead).
+    a.textContent = (c.level === index) ? `[${c.label}]` : c.label;
+    a.className = c.level === index ? "current"
+               : c.level > index ? "ahead" : "";
+    a.onclick = () => post("/breadcrumb", {panel, level: c.level},
+                           panel === "M" ? ["M","J"] : ["J"]).then(apply);
+    el.appendChild(a);
+  });
+}
+
+function apply(s) {
+  if (s.m_img) $("#m-img").src = s.m_img;
+  if (s.j_img) $("#j-img").src = s.j_img;
+  $("#m-coord").textContent =
+    `cx ${s.m_coord.x}  cy ${s.m_coord.y}  fw ${s.m_coord.fw}`;
+  $("#j-coord").textContent =
+    `jx ${s.j_coord.x}  jy ${s.j_coord.y}  fw ${s.j_coord.fw}`;
+  renderCrumbs("#m-crumbs", "M", s.m_breadcrumbs, s.m_index);
+  renderCrumbs("#j-crumbs", "J", s.j_breadcrumbs, s.j_index);
+  $("#c-re").textContent = s.c.re;
+  $("#c-im").textContent = s.c.im;
+  const mem = $("#c-mem");
+  mem.textContent = s.c.membership;
+  mem.className = "mem " +
+    (s.c.membership.includes("inside") ? "inside" :
+     s.c.membership.includes("boundary") ? "boundary" : "dust");
+  $("#zoom").value = s.zoom;
+  $("#palette").value = s.palette;
+  if (s.maxiter_override === null) {
+    $("#maxiter-val").textContent = "auto (" + s.maxiter + ")";
+  } else {
+    $("#maxiter-val").textContent = s.maxiter;
+  }
+  $("#maxiter").value = s.maxiter;
+}
+
+function panelClick(e, panel) {
+  e.preventDefault();
+  const img = e.currentTarget;
+  const rect = img.getBoundingClientRect();
+  const px = (e.clientX - rect.left) * img.naturalWidth / rect.width;
+  const py = (e.clientY - rect.top) * img.naturalHeight / rect.height;
+  // right-click or shift => recenter only (zoom 1)
+  const recenterOnly = (e.button === 2) || e.shiftKey;
+  const zoom = recenterOnly ? 1 : parseInt($("#zoom").value);
+  const spinP = panel === "M" ? ["M","J"] : ["J"];
+  post("/click", {panel, px, py, zoom}, spinP).then(apply);
+}
+
+["m-img","j-img"].forEach(id => {
+  const el = $("#"+id); const panel = el.dataset.panel;
+  el.addEventListener("click", e => panelClick(e, panel));
+  el.addEventListener("contextmenu", e => panelClick(e, panel));
+});
+
+$("#zoom").onchange = () => post("/zoom", {zoom: $("#zoom").value}).then(apply);
+$("#palette").onchange = () =>
+  post("/palette", {palette: $("#palette").value}, ["M","J"]).then(apply);
+$("#reset").onclick = () => post("/reset", {}, ["M","J"]).then(apply);
+
+$("#maxiter").onchange = () =>
+  post("/maxiter", {value: $("#maxiter").value}, ["M","J"]).then(apply);
+$("#maxiter-auto").onclick = () =>
+  post("/maxiter", {value: "auto"}, ["M","J"]).then(apply);
+
+document.querySelectorAll(".fullres").forEach(b => {
+  b.onclick = async () => {
+    const panel = b.dataset.panel;
+    spin(panel, true);
+    try {
+      const r = await post("/fullres", {panel});
+      const a = document.createElement("a");
+      a.href = r.img;
+      a.download = `fractal_${panel}_${Date.now()}.png`;
+      a.click();
+      toast("Full-quality render downloaded.");
+    } finally { spin(panel, false); }
+  };
+});
+
+// Initial load
+bothSpin(true);
+post("/initial", {}).then(apply).finally(() => bothSpin(false));
+</script>
+</body>
+</html>
