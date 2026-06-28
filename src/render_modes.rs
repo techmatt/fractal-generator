@@ -69,8 +69,9 @@ pub const BEAUTIFUL_BAILOUT: f64 = 65536.0; // 2^16
 pub enum Field {
     /// `nu = n + 1 - log2(log|z|)` — classic smooth escape time. Exterior only.
     Smooth,
-    /// Naive mean over `n ≥ skip` of `0.5 + 0.5·sin(s·arg z)`. Exterior only.
-    /// Reads clean at density 3–5.
+    /// Mean over `n ≥ skip` of `0.5 + 0.5·sin(s·arg z)`, last term lerped by the
+    /// bailout-normalized fractional iteration (deband). Exterior only. Reads clean
+    /// at density 3–5.
     Stripe,
     /// Triangle-inequality average (TIA); averaged like stripe. Exterior only.
     Tia,
@@ -526,37 +527,43 @@ impl ColoringParams {
 /// one field with [`OrbitAccum::field`] (a pure function over the accumulators),
 /// so a single pass can serve many fields in a sweep.
 ///
-/// Averaging fields (stripe/tia/curvature) store `(sum, count)`. Production
-/// reduces them to the naive mean `sum/count` ([`orbit_mean`]).
+/// Averaging fields (stripe/tia/curvature) store `(sum, count, last)` so the
+/// post-loop deband can lerp the last term by the fractional iteration ([`deband`]).
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitAccum {
     pub escaped: bool,
-    /// Smooth iteration count (valid when `escaped`).
+    /// Smooth iteration count (valid when `escaped`). Bailout-normalized
+    /// (`nu = (n+1) − log2(ln|z|/ln B)` → 0 at `|z| = B`), so its fraction is the
+    /// correct deband weight — see [`smooth_value`].
     pub smooth: f64,
     /// Final value `z` and derivative `z'` (for normal_map `u = z/z'`).
     pub z: Complex<f64>,
     pub dz: Complex<f64>,
-    // Averaging accumulators (n ≥ skip): running sum, count.
-    stripe: (f64, u32),
-    tia: (f64, u32),
-    curv: (f64, u32),
+    // Averaging accumulators (n ≥ skip): running sum, count, last term.
+    stripe: (f64, u32, f64),
+    tia: (f64, u32, f64),
+    curv: (f64, u32, f64),
     /// `min‖z|−r|` over the orbit.
     trap_circle_min: f64,
     /// `min(|Re z|,|Im z|)` over the orbit.
     trap_cross_min: f64,
 }
 
-/// Reduce an averaging accumulator (stripe/tia/curvature) to the **naive mean**
-/// `sum/count`. `None` if no terms accumulated.
-///
-/// History: this was a last-term deband lerp `d·A + (1−d)·A_prev`. The k-sweep
-/// diagnosis showed that correction was net-harmful under the beautiful `B=2¹⁶`
-/// bailout — it contributed *only* the terrace artifact (the "bricks") and was
-/// neutral at high `n` — so it was dropped from production for the naive mean.
-fn orbit_mean((sum, count): (f64, u32)) -> Option<f64> {
+/// Deband an averaging accumulator: `result = d·A + (1−d)·A_prev`, where `A` is
+/// the mean of all terms and `A_prev` excludes the last term (doc §3). `d` is the
+/// bailout-normalized fractional iteration (→ 0 at the escape boundary), which is
+/// what de-terraces the bands — the previous attempt fed an un-normalized `d`
+/// (omitting `−log2(ln B)`), phase-shifting the lerp by ~0.47 band and producing
+/// the "brick / fish-scale" terrace. `None` if no terms; plain `sum` for one term.
+fn deband((sum, count, last): (f64, u32, f64), d: f64) -> Option<f64> {
     match count {
         0 => None,
-        _ => Some(sum / count as f64),
+        1 => Some(sum),
+        _ => {
+            let a = sum / count as f64;
+            let a_prev = (sum - last) / (count - 1) as f64;
+            Some(d * a + (1.0 - d) * a_prev)
+        }
     }
 }
 
@@ -564,11 +571,18 @@ impl OrbitAccum {
     /// Reduce to one field's raw scalar (pre-normalization). `None` for an
     /// exterior-only field on an interior pixel (→ rendered black).
     pub fn field(&self, field: Field) -> Option<f64> {
+        // Fractional iteration for the deband lerp (exterior fields only). `smooth`
+        // is bailout-normalized, so its fraction → 0 at the escape boundary.
+        let d = if self.escaped {
+            self.smooth.fract().clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         match field {
             Field::Smooth => self.escaped.then_some(self.smooth),
-            Field::Stripe => self.escaped.then(|| orbit_mean(self.stripe)).flatten(),
-            Field::Tia => self.escaped.then(|| orbit_mean(self.tia)).flatten(),
-            Field::Curvature => self.escaped.then(|| orbit_mean(self.curv)).flatten(),
+            Field::Stripe => self.escaped.then(|| deband(self.stripe, d)).flatten(),
+            Field::Tia => self.escaped.then(|| deband(self.tia, d)).flatten(),
+            Field::Curvature => self.escaped.then(|| deband(self.curv, d)).flatten(),
             Field::TrapCircle => Some(self.trap_circle_min),
             Field::TrapCross => Some(self.trap_cross_min),
         }
@@ -624,9 +638,9 @@ pub fn iterate_orbit(
     let mut zprev1 = z0;
     let mut zprev2 = Complex::new(0.0, 0.0);
 
-    let mut stripe = (0.0f64, 0u32);
-    let mut tia = (0.0f64, 0u32);
-    let mut curv = (0.0f64, 0u32);
+    let mut stripe = (0.0f64, 0u32, 0.0f64);
+    let mut tia = (0.0f64, 0u32, 0.0f64);
+    let mut curv = (0.0f64, 0u32, 0.0f64);
     let mut trap_circle_min = f64::INFINITY;
     let mut trap_cross_min = f64::INFINITY;
 
@@ -670,6 +684,7 @@ pub fn iterate_orbit(
             let st = 0.5 + 0.5 * (s_density * z.im.atan2(z.re)).sin();
             stripe.0 += st;
             stripe.1 += 1;
+            stripe.2 = st;
 
             // tia: (|z| − lo)/(hi − lo), lo = ‖z_prev²|−|c‖, hi = |z_prev²|+|c|
             let lo = (zn_sq_abs - cabs).abs();
@@ -682,6 +697,7 @@ pub fn iterate_orbit(
             };
             tia.0 += ti;
             tia.1 += 1;
+            tia.2 = ti;
 
             // curvature: |arg((zₙ−zₙ₋₁)/(zₙ₋₁−zₙ₋₂))|, needs three points (n ≥ 2).
             if n >= 2 {
@@ -691,6 +707,7 @@ pub fn iterate_orbit(
                     let ang = (num / den).arg().abs();
                     curv.0 += ang;
                     curv.1 += 1;
+                    curv.2 = ang;
                 }
             }
         }
@@ -705,7 +722,7 @@ pub fn iterate_orbit(
         };
         if bail {
             escaped = true;
-            smooth = smooth_value(n, zabs2);
+            smooth = smooth_value(n, zabs2, b);
             break;
         }
     }
@@ -723,14 +740,24 @@ pub fn iterate_orbit(
     }
 }
 
-/// `nu = (n+1) − log2(ln|z|)` — the same smooth formula both production backends
-/// use ([`crate::backend`]); the doc's `−log2(log B)` offset is an additive
-/// constant the percentile-stretch removes.
+/// `nu = (n+1) − log2(ln|z| / ln B)` — the **bailout-normalized** smooth iteration,
+/// which → 0 at the escape boundary (`|z| = B`). Its fraction is therefore the
+/// correct deband weight ([`field`](OrbitAccum::field) / [`deband`]).
+///
+/// For the *smooth field itself* the `−log2(ln B)` term is an additive constant the
+/// percentile-stretch absorbs (so the smooth render is invariant to it — verified
+/// by pixel-diff against the un-normalized formula). But in the **deband weight**
+/// path the constant is load-bearing: omitting it (the previous shortcut) phase-
+/// shifts the lerp by `log2(ln B) mod 1` and terraces the bands. We normalize here
+/// once so both paths share the correct value. `B` is threaded from
+/// `params.bailout_b` — never hardcoded — so the normalization tracks the bailout.
 #[inline]
-fn smooth_value(n: u32, zabs2: f64) -> f64 {
-    let log_zn = 0.5 * zabs2.ln();
-    if log_zn > 0.0 && log_zn.is_finite() {
-        (n + 1) as f64 - log_zn.ln() / std::f64::consts::LN_2
+fn smooth_value(n: u32, zabs2: f64, bailout_b: f64) -> f64 {
+    let log_zn = 0.5 * zabs2.ln(); // ln|z|
+    let log_b = bailout_b.ln(); // ln B
+    let ratio = log_zn / log_b;
+    if log_zn > 0.0 && log_b > 0.0 && ratio.is_finite() && ratio > 0.0 {
+        (n + 1) as f64 - ratio.ln() / std::f64::consts::LN_2
     } else {
         (n + 1) as f64
     }
@@ -1156,34 +1183,42 @@ mod tests {
         assert!(!ColoringParams::beautiful(Field::TrapCross).is_location_profile());
     }
 
-    /// Production change: `field()` for the averaging family (stripe/tia/curvature)
-    /// is now the naive mean `sum/count` — the last-term deband lerp is gone, so the
-    /// fractional iteration `d` (= `smooth.fract()`) must NOT affect the result.
+    /// The averaging family (stripe/tia/curvature) is the **deband lerp**
+    /// `d·A + (1−d)·A_prev`, with `d = smooth.fract()` (smooth is bailout-normalized).
     #[test]
-    fn averaging_fields_are_naive_mean() {
-        // smooth = 12.7 → d = 0.7; under the old lerp this would shift the result.
+    fn averaging_fields_are_deband_lerp() {
+        // smooth = 12.7 → d = 0.7. Lerp = d·(sum/cnt) + (1−d)·((sum−last)/(cnt−1)).
         let acc = OrbitAccum {
             escaped: true,
             smooth: 12.7,
             z: Complex::new(3.0, 4.0),
             dz: Complex::new(1.0, 0.0),
-            stripe: (8.0, 5),
-            tia: (3.0, 6),
-            curv: (2.5, 4),
+            stripe: (8.0, 5, 1.5),
+            tia: (3.0, 6, 0.4),
+            curv: (2.5, 4, 0.9),
             trap_circle_min: 0.3,
             trap_cross_min: 0.1,
         };
-        assert_eq!(acc.field(Field::Stripe), Some(8.0 / 5.0));
-        assert_eq!(acc.field(Field::Tia), Some(3.0 / 6.0));
-        assert_eq!(acc.field(Field::Curvature), Some(2.5 / 4.0));
+        let d = 12.7f64.fract().clamp(0.0, 1.0); // == field()'s d (not exactly 0.7)
+        let lerp = |sum: f64, cnt: u32, last: f64| {
+            let a = sum / cnt as f64;
+            let a_prev = (sum - last) / (cnt - 1) as f64;
+            d * a + (1.0 - d) * a_prev
+        };
+        assert_eq!(acc.field(Field::Stripe), Some(lerp(8.0, 5, 1.5)));
+        assert_eq!(acc.field(Field::Tia), Some(lerp(3.0, 6, 0.4)));
+        assert_eq!(acc.field(Field::Curvature), Some(lerp(2.5, 4, 0.9)));
         // Exterior-only: a non-escaped orbit yields None for the averaging family.
         let interior = OrbitAccum { escaped: false, ..acc };
         assert_eq!(interior.field(Field::Stripe), None);
         assert_eq!(interior.field(Field::Tia), None);
         assert_eq!(interior.field(Field::Curvature), None);
         // count == 0 → None even when escaped (no terms accumulated).
-        let empty = OrbitAccum { stripe: (0.0, 0), ..acc };
+        let empty = OrbitAccum { stripe: (0.0, 0, 0.0), ..acc };
         assert_eq!(empty.field(Field::Stripe), None);
+        // count == 1 → plain sum (deband needs ≥2 terms).
+        let one = OrbitAccum { stripe: (0.42, 1, 0.42), ..acc };
+        assert_eq!(one.field(Field::Stripe), Some(0.42));
     }
 
     #[test]
