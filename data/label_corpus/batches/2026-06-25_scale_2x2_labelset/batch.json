@@ -1,0 +1,21 @@
+{
+  "batch_id": "2026-06-25_scale_2x2_labelset",
+  "schema_version": 1,
+  "created": "2026-06-25",
+  "labeler": null,
+  "derived_from": "2026-06-25_scale_controlled_2x2",
+  "note": "unbiased uniform-random sample per cell for hand-labeling the 2x2 good-rate. NO v3 filtering.",
+  "sampling": {
+    "per_cell": 150,
+    "seed": 0
+  },
+  "counts": {
+    "units": 600,
+    "by_cell": {
+      "A": 150,
+      "B": 150,
+      "C": 150,
+      "D": 150
+    }
+  }
+}
