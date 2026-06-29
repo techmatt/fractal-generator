@@ -82,6 +82,11 @@ pub enum Field {
     /// Pickover stalks: `min(|Re z|,|Im z|)` over the orbit; pairs with `Log` +
     /// biomorph + normal_map for the lace look. Valid for every pixel.
     TrapCross,
+    /// Mean discrete orbit velocity `mean(|z_{n+1} − z_n|)` over the **full**
+    /// orbit (interior iterates included). Returned unconditionally — interior-
+    /// valued like the trap fields, NOT gated to `escaped` like the averaging
+    /// family (stripe/tia/curvature). The standard Siegel-disk interior coloring.
+    Velocity,
     /// Exterior distance estimate `de = |z|·ln|z|/|dz|`, normalized to pixel scale
     /// (`de_px = de/(fw/width)`) and soft-mapped `tanh(de_px·de_scale)` → 0 at the
     /// boundary, 1 in the open exterior. Exterior only (interior → black, like
@@ -89,6 +94,26 @@ pub enum Field {
     /// only DE-specific knob (filament thickness). Needs pixel scale, so it is
     /// reduced via [`OrbitAccum::de_value`], not [`OrbitAccum::field`].
     De,
+    /// **Gaussian Integer** lattice trap: `min‖z − round(z/N)·N‖` over the orbit,
+    /// with `N = 1` (the unit integer lattice). A min-distance point-lattice trap —
+    /// same shape as the trap fields, valid for every pixel (fills the interior).
+    /// "Color By = minimum distance" — the canonical look.
+    GaussianInt,
+    /// **Exponential Smoothing**: `Σ exp(−|zₙ|)` over the divergent orbit (an
+    /// averaging-family member; escaped-gated like smooth/stripe). A drop-in
+    /// alternative shading to smooth. `divergescale = 1.0`, so `#index` is the raw
+    /// sum (the percentile-stretch absorbs the scale).
+    ExpSmoothing,
+    /// **Decomposition**: final-only, escaped pixels only — `atan2(z_final)` folded
+    /// to `[0,1)`. No accumulation; reads the escape-point angle. Pairs with a low
+    /// bail-out radius (escape radius 2 ⇒ `bailout_b = 4`) for the cleanest petals.
+    Decomposition,
+    /// **Direct Orbit Traps** — *not a scalar field*. A direct-colour algorithm that
+    /// composites a gradient sample every iteration the orbit lands inside the trap
+    /// and emits `#color` directly, bypassing scalar-index normalization. Routed to
+    /// the parallel colour-valued path [`render_direct_trap`]; [`OrbitAccum::field`]
+    /// returns `None` for it (the scalar pipeline never sees this field).
+    DirectTrap,
 }
 
 impl Field {
@@ -100,7 +125,12 @@ impl Field {
             Field::Curvature => "curvature",
             Field::TrapCircle => "trap_circle",
             Field::TrapCross => "trap_cross",
+            Field::Velocity => "velocity",
             Field::De => "de",
+            Field::GaussianInt => "gaussian_int",
+            Field::ExpSmoothing => "exp_smoothing",
+            Field::Decomposition => "decomposition",
+            Field::DirectTrap => "direct_trap",
         }
     }
 
@@ -112,7 +142,12 @@ impl Field {
             "curvature" => Field::Curvature,
             "trap_circle" => Field::TrapCircle,
             "trap_cross" => Field::TrapCross,
+            "velocity" => Field::Velocity,
             "de" => Field::De,
+            "gaussian_int" => Field::GaussianInt,
+            "exp_smoothing" => Field::ExpSmoothing,
+            "decomposition" => Field::Decomposition,
+            "direct_trap" => Field::DirectTrap,
             _ => return Err(format!("unknown field '{s}'")),
         })
     }
@@ -260,6 +295,123 @@ impl Combine {
     }
 }
 
+/// Direct-orbit-traps **merge mode** (doc §3 compositing). Each per-iteration trap
+/// hit blends its gradient sample RGB against the accumulator RGB through this mode,
+/// then alpha-overs with the sample's `α = opacity·(1−d/threshold)`. With `Normal`
+/// the blend is just the sample (last-hit-over), so feathered low-α samples average
+/// to mud; the multiplicative/inverse modes are what build layered lace.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MergeMode {
+    /// Blend = sample (`s`) — the new sample simply over the accumulator.
+    Normal,
+    /// Blend = `a·s` — darkens toward black as layers stack.
+    Multiply,
+    /// Blend = `1−(1−a)(1−s)` — inverse-multiply; layers lift brightness.
+    Screen,
+    /// Blend = `a<0.5 ? 2as : 1−2(1−a)(1−s)` — multiply in shadows, screen in
+    /// highlights; pushes midtone contrast.
+    Overlay,
+}
+
+impl MergeMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            MergeMode::Normal => "normal",
+            MergeMode::Multiply => "multiply",
+            MergeMode::Screen => "screen",
+            MergeMode::Overlay => "overlay",
+        }
+    }
+    fn parse(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "normal" => MergeMode::Normal,
+            "multiply" => MergeMode::Multiply,
+            "screen" => MergeMode::Screen,
+            "overlay" => MergeMode::Overlay,
+            _ => return Err(format!("unknown merge_mode '{s}'")),
+        })
+    }
+    /// Blend the back operand `a` (accumulator) against the front operand `s`
+    /// (sample), per channel, returning the blended channel value in `[0,1]`. The
+    /// caller alpha-overs the result; merge order picks which operand is `a` vs `s`.
+    #[inline]
+    fn blend(self, a: f64, s: f64) -> f64 {
+        match self {
+            MergeMode::Normal => s,
+            MergeMode::Multiply => a * s,
+            MergeMode::Screen => 1.0 - (1.0 - a) * (1.0 - s),
+            MergeMode::Overlay => {
+                if a < 0.5 {
+                    2.0 * a * s
+                } else {
+                    1.0 - 2.0 * (1.0 - a) * (1.0 - s)
+                }
+            }
+        }
+    }
+}
+
+/// Direct-orbit-traps **merge order** (doc §3). `BottomUp` blends the new sample
+/// onto the accumulator (`blend(acc, sample)`); `TopDown` blends the accumulator
+/// onto the new sample (`blend(sample, acc)`) so earlier hits dominate. Symmetric
+/// for multiply/screen; only `Overlay`/`Normal` actually see the swap. The alpha-
+/// over step is identical either way — only the blend operand order changes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MergeOrder {
+    /// New sample over accumulator — `blend(acc, sample)`.
+    BottomUp,
+    /// Accumulator over new sample — `blend(sample, acc)`.
+    TopDown,
+}
+
+impl MergeOrder {
+    fn as_str(self) -> &'static str {
+        match self {
+            MergeOrder::BottomUp => "bottom_up",
+            MergeOrder::TopDown => "top_down",
+        }
+    }
+    fn parse(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "bottom_up" => MergeOrder::BottomUp,
+            "top_down" => MergeOrder::TopDown,
+            _ => return Err(format!("unknown merge_order '{s}'")),
+        })
+    }
+}
+
+/// Parse a direct_trap `start_color` spec → linear-RGB `[f64; 3]`. Accepts the names
+/// `black`/`white` and a `#rrggbb` (or bare `rrggbb`) sRGB hex string, gamma-decoded
+/// per channel so the stored accumulator background is linear (matching the
+/// gradient samples it composites against).
+fn parse_start_color(s: &str) -> Result<[f64; 3], String> {
+    let s = s.trim();
+    match s {
+        "black" => return Ok([0.0, 0.0, 0.0]),
+        "white" => return Ok([1.0, 1.0, 1.0]),
+        _ => {}
+    }
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "invalid start_color '{s}' (want black|white|#rrggbb)"
+        ));
+    }
+    let comp = |i: usize| {
+        let v = u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+        crate::palette::srgb_to_linear(v as f64 / 255.0)
+    };
+    Ok([comp(0), comp(2), comp(4)])
+}
+
+/// Serialize a linear-RGB `start_color` back to a `#rrggbb` sRGB hex string (the
+/// `to_json` form). Round-trips black/white exactly; arbitrary colors quantize to
+/// 8-bit sRGB, which is lossless enough for a background swatch.
+fn start_color_to_hex(c: [f64; 3]) -> String {
+    let enc = |x: f64| (crate::palette::linear_to_srgb(x) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", enc(c[0]), enc(c[1]), enc(c[2]))
+}
+
 // ===========================================================================
 // ColoringParams
 // ===========================================================================
@@ -293,6 +445,27 @@ pub struct ColoringParams {
     /// The DE map is `tanh(de_px · de_scale)`, so larger values hug the boundary
     /// (thinner gradient band), smaller values spread a wider glow. Default `1.0`.
     pub de_scale: f64,
+    /// Trap entry radius `threshold` (direct_trap field): the orbit composites a
+    /// gradient sample on every iteration with `trap_distance(z) < threshold`.
+    /// Default `0.1` (the faithful UF starting point). Larger → fatter, more-filled
+    /// strokes; smaller → sparser hits.
+    pub direct_threshold: f64,
+    /// Layer opacity for the direct_trap composite (the `normal` merge mode's base
+    /// opacity, before the distance feather). Default `0.5` so layers show through.
+    pub direct_opacity: f64,
+    /// Direct_trap **merge mode**: how each per-iteration trap sample blends against
+    /// the accumulator before the alpha-over. Default `Normal` (last-hit-over).
+    pub merge_mode: MergeMode,
+    /// Direct_trap **merge order**: which operand is the blend's back vs front.
+    /// Default `BottomUp` (new sample over accumulator).
+    pub merge_order: MergeOrder,
+    /// Direct_trap **start color**: the linear-RGB background the per-iteration trap
+    /// samples composite onto (`init: accumulator = startcolor`, doc §3). Default
+    /// `[0,0,0]` (black) — the prior hardcoded behaviour, so a black start reproduces
+    /// it byte-for-byte. A white start `[1,1,1]` is what lets `multiply` (dead on a
+    /// black, absorbing start) build the inverse dark-lace-on-light look. JSON-encoded
+    /// as a `#rrggbb` sRGB hex string (or the names `black`/`white`).
+    pub start_color: [f64; 3],
     // --- colorize stage ---
     /// Compression / transfer transform.
     pub transform: Transform,
@@ -343,6 +516,11 @@ impl Default for ColoringParams {
             stripe_density: 4.0,
             trap_radius: 1.0,
             de_scale: 1.0,
+            direct_threshold: 0.1,
+            direct_opacity: 0.5,
+            merge_mode: MergeMode::Normal,
+            merge_order: MergeOrder::BottomUp,
+            start_color: [0.0, 0.0, 0.0],
             transform: Transform::Linear,
             gamma: 1.0,
             shade: Shade::None,
@@ -380,6 +558,16 @@ impl ColoringParams {
             // DE seed (§1): log — the soft-mapped distance still has wide dynamic
             // range, and log is the sane viewing default until palette spacing exists.
             Field::De => Transform::Log,
+            // Velocity seed: linear (identity spacing) — raw mean step length, no
+            // retuned spacing yet. We can revisit once we've seen the interior.
+            Field::Velocity => Transform::Linear,
+            // UF-mode seeds: linear (the prompt's explicit per-new-field seed). The
+            // percentile-stretch handles spacing; DirectTrap ignores the transform
+            // (it bypasses the scalar normalize stage entirely).
+            Field::GaussianInt
+            | Field::ExpSmoothing
+            | Field::Decomposition
+            | Field::DirectTrap => Transform::Linear,
             _ => Transform::Sqrt,
         };
         let mut p = ColoringParams {
@@ -405,7 +593,9 @@ impl ColoringParams {
     pub fn to_json(&self) -> String {
         format!(
             "{{\"bailout_b\":{},\"skip\":{},\"biomorph\":\"{}\",\"field\":\"{}\",\
-             \"stripe_density\":{},\"trap_radius\":{},\"de_scale\":{},\"transform\":\"{}\",\"gamma\":{},\
+             \"stripe_density\":{},\"trap_radius\":{},\"de_scale\":{},\
+             \"direct_threshold\":{},\"direct_opacity\":{},\"merge_mode\":\"{}\",\
+             \"merge_order\":\"{}\",\"start_color\":\"{}\",\"transform\":\"{}\",\"gamma\":{},\
              \"shade\":\"{}\",\"light_azimuth\":{},\"light_height\":{},\
              \"palette_cycles\":{},\"palette_offset\":{},\
              \"texture_field\":\"{}\",\"texture_transform\":\"{}\",\"texture_gamma\":{},\
@@ -417,6 +607,11 @@ impl ColoringParams {
             self.stripe_density,
             self.trap_radius,
             self.de_scale,
+            self.direct_threshold,
+            self.direct_opacity,
+            self.merge_mode.as_str(),
+            self.merge_order.as_str(),
+            start_color_to_hex(self.start_color),
             self.transform.as_str(),
             self.gamma,
             self.shade.as_str(),
@@ -475,6 +670,26 @@ impl ColoringParams {
             }
             if let Some(v) = jsonl::field_f64(s, "de_scale") {
                 p.de_scale = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "direct_threshold") {
+                p.direct_threshold = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "direct_opacity") {
+                p.direct_opacity = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "merge_mode") {
+                p.merge_mode = MergeMode::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "merge_order") {
+                p.merge_order = MergeOrder::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "start_color") {
+                p.start_color = parse_start_color(&v)?;
                 named = true;
             }
             if let Some(v) = jsonl::field_str(s, "transform") {
@@ -576,6 +791,14 @@ pub struct OrbitAccum {
     trap_circle_min: f64,
     /// `min(|Re z|,|Im z|)` over the orbit.
     trap_cross_min: f64,
+    /// `min‖z − round(z)‖` over the orbit (Gaussian-integer unit lattice trap).
+    gaussint_min: f64,
+    /// Exponential-smoothing accumulator: `(Σ exp(−|zₙ|), count)` over the orbit.
+    /// Escaped-gated at reduction (divergent branch only).
+    exp_sum: (f64, u32),
+    /// Discrete-velocity accumulator: `(Σ|z_{n+1}−z_n|, count)` over the full
+    /// orbit (interior included). Reduced to the mean step length by `field`.
+    velocity: (f64, u32),
 }
 
 /// Deband an averaging accumulator: `result = d·A + (1−d)·A_prev`, where `A` is
@@ -614,9 +837,29 @@ impl OrbitAccum {
             Field::Curvature => self.escaped.then(|| deband(self.curv, d)).flatten(),
             Field::TrapCircle => Some(self.trap_circle_min),
             Field::TrapCross => Some(self.trap_cross_min),
+            // Mean discrete velocity over the full orbit. Returned unconditionally
+            // (interior-valued); `max(1)` guards the empty-orbit divide.
+            Field::Velocity => Some(self.velocity.0 / self.velocity.1.max(1) as f64),
             // DE needs the pixel scale (+ de_scale) to normalize, which `field` has
             // no access to — it is reduced via [`Self::de_value`] in the render stage.
             Field::De => None,
+            // Gaussian-integer lattice trap: min distance to the nearest lattice
+            // point over the orbit. Unconditional (interior-valued, like the traps).
+            Field::GaussianInt => Some(self.gaussint_min),
+            // Exponential smoothing: the raw sum (divergescale = 1.0), escaped-gated
+            // like the averaging family. `None` on a non-escaping / empty orbit.
+            Field::ExpSmoothing => {
+                let (sum, count) = self.exp_sum;
+                (self.escaped && count > 0).then_some(sum)
+            }
+            // Decomposition: escape-point angle atan2(z_final) folded to [0,1).
+            // Escaped only (no escape point on a bounded orbit).
+            Field::Decomposition => self.escaped.then(|| {
+                (self.z.im.atan2(self.z.re) / std::f64::consts::TAU).rem_euclid(1.0)
+            }),
+            // Direct orbit traps are colour-valued — handled by `render_direct_trap`,
+            // never reduced to a scalar here.
+            Field::DirectTrap => None,
         }
     }
 
@@ -702,6 +945,11 @@ pub fn iterate_orbit(
     let mut curv = (0.0f64, 0u32, 0.0f64);
     let mut trap_circle_min = f64::INFINITY;
     let mut trap_cross_min = f64::INFINITY;
+    let mut gaussint_min = f64::INFINITY;
+    // Exponential-smoothing accumulator (Σ exp(−|z|), count) over the orbit.
+    let mut exp_sum = (0.0f64, 0u32);
+    // Discrete-velocity accumulator (Σ step length, count) over the full orbit.
+    let mut velocity = (0.0f64, 0u32);
 
     let mut n = 0u32;
     let mut escaped = false;
@@ -736,6 +984,23 @@ pub fn iterate_orbit(
         if tx < trap_cross_min {
             trap_cross_min = tx;
         }
+        // Gaussian-integer trap: distance to the nearest unit-lattice point
+        // (N = 1), q = round(z). `min` over the whole orbit (like the traps above).
+        let q = Complex::new(z.re.round(), z.im.round());
+        let gi = (z - q).norm();
+        if gi < gaussint_min {
+            gaussint_min = gi;
+        }
+        // Exponential smoothing: Σ exp(−|z|) over the orbit (escaped-gated at
+        // reduction). Accumulated every iteration, independent of skip.
+        exp_sum.0 += (-zabs).exp();
+        exp_sum.1 += 1;
+
+        // Discrete velocity: |z_{n+1} − z_n|. After the advance above `zprev1`
+        // holds z_n and `z` holds z_{n+1}, so this is the step just taken. Runs
+        // every iteration (full bounded orbit for interior points), unconditional.
+        velocity.0 += (z - zprev1).norm();
+        velocity.1 += 1;
 
         // Averaging fields, n ≥ skip.
         if n >= skip {
@@ -796,6 +1061,9 @@ pub fn iterate_orbit(
         curv,
         trap_circle_min,
         trap_cross_min,
+        gaussint_min,
+        exp_sum,
+        velocity,
     }
 }
 
@@ -947,10 +1215,128 @@ pub fn render_beautiful(
     palette: &Palette,
     filter: DownsampleFilter,
 ) -> image::RgbImage {
+    // Direct orbit traps are colour-valued (composite-during-iteration), not a
+    // scalar field — they take their own output path, ignoring texture/normalize.
+    if params.field == Field::DirectTrap {
+        return render_direct_trap(frame, ss, maxiter, julia_param, params, palette, filter);
+    }
     if params.texture_field.is_some() {
         return render_beautiful_composite(frame, ss, maxiter, julia_param, params, palette, filter);
     }
     render_beautiful_single(frame, ss, maxiter, julia_param, params, palette, filter)
+}
+
+/// **Direct Orbit Traps** — the one colour-valued path (doc §"Direct Orbit Traps").
+/// Unlike the scalar fields, this composites a gradient sample into a per-pixel
+/// RGBA accumulator on every iteration the orbit enters the trap, and emits the
+/// accumulator as `#color` directly — **no** percentile-stretch / histeq / palette-
+/// index step. The accumulator is therefore already linear RGB and is downsampled
+/// straight away (no [`ShadePix`] reduction, no global stat pass).
+///
+/// Per iteration (faithful UF config — `trapcenter = 0`, `rot = identity`, shape =
+/// cross): `d = min(|Re z|,|Im z|)`; if `d < threshold`, sample the gradient at the
+/// colour key `d/threshold` (Trap Color = distance), feather the alpha by the same
+/// distance (`1 − d/threshold`, the "distance" merge modifier), and composite with
+/// `normal` merge at `direct_opacity`. Order-dependent in iteration order, hence
+/// deterministic. Black (`start color`) where the orbit never enters the trap.
+#[allow(clippy::too_many_arguments)]
+fn render_direct_trap(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    julia_param: Option<Complex<f64>>,
+    params: &ColoringParams,
+    palette: &Palette,
+    filter: DownsampleFilter,
+) -> image::RgbImage {
+    let s = ss.max(1);
+    let sub_w = (frame.out_width * s) as usize;
+    let sub_h = (frame.out_height * s) as usize;
+    let fw = frame.frame_width;
+    let fh = frame.frame_height();
+    let sub_w_f = sub_w as f64;
+    let sub_h_f = sub_h as f64;
+    let center = frame.center;
+    let b = params.bailout_b;
+    let b2 = b * b;
+    let threshold = params.direct_threshold.max(1e-12);
+    let opacity = params.direct_opacity.clamp(0.0, 1.0);
+    let mode = params.merge_mode;
+    let order = params.merge_order;
+    let start_color = params.start_color;
+
+    // Iterate one orbit and composite the direct-trap accumulator → linear RGB.
+    let composite = |z0: Complex<f64>, c: Complex<f64>| -> [f64; 3] {
+        let mut z = z0;
+        // Linear-RGB accumulator initialized to the `start color` background (doc §3).
+        // Black (default) is the absorbing background the multiplicative modes darken
+        // from; a white start lets `multiply` build dark lace down from light.
+        let mut acc = start_color;
+        let mut n = 0u32;
+        loop {
+            z = z * z + c;
+            n += 1;
+            // Trap shape = cross, trapcenter 0, rot identity → z2 = z.
+            let d = z.re.abs().min(z.im.abs());
+            if d < threshold {
+                let key = (d / threshold).clamp(0.0, 1.0);
+                let src = palette.lookup_linear(key); // Trap Color = distance
+                let feather = 1.0 - key; // distance merge modifier (feathering on)
+                let a = opacity * feather;
+                // Blend sample vs accumulator through the merge mode; merge order
+                // picks which operand is the blend's back (`a`) vs front (`s`), then
+                // alpha-over with the sample's α (held bottom-up for this sweep).
+                for ch in 0..3 {
+                    let blended = match order {
+                        MergeOrder::BottomUp => mode.blend(acc[ch], src[ch]),
+                        MergeOrder::TopDown => mode.blend(src[ch], acc[ch]),
+                    };
+                    acc[ch] = blended * a + acc[ch] * (1.0 - a);
+                }
+            }
+            if n >= maxiter {
+                break;
+            }
+            let zabs2 = z.norm_sqr();
+            let bail = match params.biomorph {
+                Biomorph::Off => zabs2 > b2,
+                Biomorph::EpsilonCross => z.re.abs() > b || z.im.abs() > b,
+            };
+            if bail {
+                break;
+            }
+        }
+        acc
+    };
+
+    let rows: Vec<Vec<[f64; 3]>> = (0..sub_h)
+        .into_par_iter()
+        .map(|srow| {
+            let py = srow as f64 + 0.5;
+            let dc_im = (0.5 - py / sub_h_f) * fh;
+            let mut row = Vec::with_capacity(sub_w);
+            for scol in 0..sub_w {
+                let px = scol as f64 + 0.5;
+                let dc_re = (px / sub_w_f - 0.5) * fw;
+                let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
+                let (z0, c) = match julia_param {
+                    Some(p) => (pixel, p),
+                    None => (Complex::new(0.0, 0.0), pixel),
+                };
+                row.push(composite(z0, c));
+            }
+            row
+        })
+        .collect();
+    let linear: Vec<[f64; 3]> = rows.into_iter().flatten().collect();
+
+    crate::render::downsample_linear_filtered(
+        &linear,
+        frame.out_width,
+        frame.out_height,
+        s,
+        filter,
+    )
 }
 
 /// The **v1 single-field** path — verbatim. Do not modify: its output bytes are a
@@ -1274,6 +1660,9 @@ mod tests {
             curv: (2.5, 4, 0.9),
             trap_circle_min: 0.3,
             trap_cross_min: 0.1,
+            gaussint_min: 0.2,
+            exp_sum: (1.5, 5),
+            velocity: (5.0, 4),
         };
         let d = 12.7f64.fract().clamp(0.0, 1.0); // == field()'s d (not exactly 0.7)
         let lerp = |sum: f64, cnt: u32, last: f64| {
@@ -1289,6 +1678,10 @@ mod tests {
         assert_eq!(interior.field(Field::Stripe), None);
         assert_eq!(interior.field(Field::Tia), None);
         assert_eq!(interior.field(Field::Curvature), None);
+        // Velocity is interior-valued (unconditional, like the trap fields): the
+        // mean step length, returned even on a non-escaping orbit.
+        assert_eq!(interior.field(Field::Velocity), Some(5.0 / 4.0));
+        assert_eq!(acc.field(Field::Velocity), Some(5.0 / 4.0));
         // count == 0 → None even when escaped (no terms accumulated).
         let empty = OrbitAccum { stripe: (0.0, 0, 0.0), ..acc };
         assert_eq!(empty.field(Field::Stripe), None);
@@ -1525,6 +1918,247 @@ mod tests {
         let lo = ext.de_value(ps, 0.5).unwrap();
         let hi = ext.de_value(ps, 4.0).unwrap();
         assert!(hi >= lo);
+    }
+
+    /// Gaussian-integer trap on a known short orbit: `c = 1` gives the integer
+    /// orbit 1, 2, 5, 26, … — every iterate is exactly a unit-lattice point, so the
+    /// min lattice distance over the orbit is exactly 0.
+    #[test]
+    fn gaussian_int_known_orbit() {
+        let p = ColoringParams::beautiful(Field::GaussianInt);
+        assert_eq!(p.transform, Transform::Linear); // seeded linear per the prompt
+        let acc = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(1.0, 0.0),
+            50,
+            &p,
+            false,
+        );
+        let v = acc.field(Field::GaussianInt).expect("interior-valued");
+        assert!(v.abs() < 1e-12, "integer orbit lattice distance {v} ≠ 0");
+        // A generic point: min distance is in [0, √2/2] and finite, and is valid
+        // even on a bounded (interior) orbit (the trap fills the interior).
+        let interior = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(-0.2, 0.0),
+            500,
+            &p,
+            false,
+        );
+        let iv = interior.field(Field::GaussianInt).expect("fills interior");
+        assert!(iv.is_finite() && (0.0..=0.7072).contains(&iv));
+    }
+
+    /// Decomposition is escaped-only and folds the escape-point angle into `[0,1)`.
+    #[test]
+    fn decomposition_angle_in_unit() {
+        let p = ColoringParams::from_json("{\"field\":\"decomposition\",\"bailout_b\":4}").unwrap();
+        // Exterior point escapes → angle in [0,1).
+        let ext = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(1.0, 1.0),
+            500,
+            &p,
+            false,
+        );
+        assert!(ext.escaped);
+        let a = ext.field(Field::Decomposition).expect("escaped angle");
+        assert!((0.0..1.0).contains(&a), "decomposition angle {a} ∉ [0,1)");
+        // Interior point: no escape angle → None.
+        let interior = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(-0.2, 0.0),
+            500,
+            &p,
+            false,
+        );
+        assert!(!interior.escaped);
+        assert!(interior.field(Field::Decomposition).is_none());
+    }
+
+    /// Exponential smoothing accumulates a finite, positive sum on a divergent
+    /// orbit and is escaped-gated (interior → None).
+    #[test]
+    fn exp_smoothing_sum_finite_and_gated() {
+        let p = ColoringParams::beautiful(Field::ExpSmoothing);
+        assert_eq!(p.transform, Transform::Linear);
+        let ext = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(1.0, 1.0),
+            500,
+            &p,
+            false,
+        );
+        assert!(ext.escaped);
+        let s = ext.field(Field::ExpSmoothing).expect("escaped sum");
+        assert!(s.is_finite() && s > 0.0, "exp-smoothing sum {s} not finite-positive");
+        // Each term is exp(−|z|) ∈ (0,1], so the sum is bounded by the count.
+        assert!(s <= ext.exp_sum.1 as f64 + 1e-9);
+        // Interior orbit: escaped-gated → None.
+        let interior = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(-0.2, 0.0),
+            500,
+            &p,
+            false,
+        );
+        assert!(!interior.escaped);
+        assert!(interior.field(Field::ExpSmoothing).is_none());
+    }
+
+    /// Direct orbit traps: the colour-valued path emits non-background colour where
+    /// the orbit enters the trap, and stays at the background (`start color` = black)
+    /// where it doesn't. We drive "doesn't enter" by shrinking `direct_threshold` to
+    /// effectively zero (no iterate satisfies `d < threshold` → all black); a real
+    /// threshold lights pixels up.
+    #[test]
+    fn direct_trap_lights_only_on_entry() {
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.03,
+            out_width: 24,
+            out_height: 16,
+        };
+        let palette = crate::palette::builtin("default", false).unwrap();
+        // Reachable trap (threshold 0.5): some pixels composite a gradient sample.
+        let mut lit = ColoringParams::beautiful(Field::DirectTrap);
+        lit.direct_threshold = 0.5;
+        let img_lit = render_beautiful(&frame, 1, 300, None, &lit, &palette, DownsampleFilter::Box);
+        assert!(
+            img_lit.pixels().any(|px| px.0 != [0, 0, 0]),
+            "direct trap rendered all background despite a reachable trap"
+        );
+        // Unreachable trap (threshold ≈ 0): no iterate enters → pure background.
+        let mut dark = ColoringParams::beautiful(Field::DirectTrap);
+        dark.direct_threshold = 1e-300;
+        let img_dark =
+            render_beautiful(&frame, 1, 300, None, &dark, &palette, DownsampleFilter::Box);
+        assert!(
+            img_dark.pixels().all(|px| px.0 == [0, 0, 0]),
+            "direct trap lit pixels with an unreachable trap"
+        );
+    }
+
+    /// Merge-mode blend formulas on a known accumulator/sample pair: screen
+    /// brightens, multiply darkens, overlay matches the piecewise formula, normal
+    /// returns the sample. Checked per the doc §3 backstop formulas.
+    #[test]
+    fn merge_mode_blend_formulas() {
+        let a = 0.4; // accumulator (back)
+        let s = 0.6; // sample (front)
+        assert_eq!(MergeMode::Normal.blend(a, s), s);
+        // multiply darkens below either operand.
+        let m = MergeMode::Multiply.blend(a, s);
+        assert!((m - 0.24).abs() < 1e-12);
+        assert!(m < a && m < s, "multiply should darken");
+        // screen brightens above either operand.
+        let sc = MergeMode::Screen.blend(a, s);
+        assert!((sc - (1.0 - 0.6 * 0.4)).abs() < 1e-12); // 1-(1-.4)(1-.6)=0.76
+        assert!(sc > a && sc > s, "screen should brighten");
+        // overlay: a<0.5 branch → 2*a*s.
+        assert!((MergeMode::Overlay.blend(0.4, 0.6) - 2.0 * 0.4 * 0.6).abs() < 1e-12);
+        // overlay: a>=0.5 branch → 1-2(1-a)(1-s).
+        assert!(
+            (MergeMode::Overlay.blend(0.6, 0.6) - (1.0 - 2.0 * 0.4 * 0.4)).abs() < 1e-12
+        );
+    }
+
+    /// `merge_mode`/`merge_order` round-trip through JSON and seed cleanly from a
+    /// direct_trap spec; the composite stays deterministic in iteration order
+    /// (identical params → byte-identical render).
+    #[test]
+    fn merge_params_roundtrip_and_deterministic() {
+        let mut p = ColoringParams::beautiful(Field::DirectTrap);
+        p.merge_mode = MergeMode::Screen;
+        p.merge_order = MergeOrder::TopDown;
+        let json = p.to_json();
+        assert!(json.contains("\"merge_mode\":\"screen\""));
+        assert!(json.contains("\"merge_order\":\"top_down\""));
+        let rt = ColoringParams::from_json(&json).unwrap();
+        assert_eq!(rt, p);
+        // Spec naming only the merge keys seeds from beautiful(DirectTrap).
+        let seeded = ColoringParams::from_json(
+            "{\"field\":\"direct_trap\",\"merge_mode\":\"multiply\"}",
+        )
+        .unwrap();
+        assert_eq!(seeded.merge_mode, MergeMode::Multiply);
+        assert_eq!(seeded.merge_order, MergeOrder::BottomUp);
+
+        // Determinism: same params render byte-identically (composite order = iter
+        // order, no cross-pixel hazards).
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.03,
+            out_width: 24,
+            out_height: 16,
+        };
+        let palette = crate::palette::builtin("default", false).unwrap();
+        let mut q = ColoringParams::beautiful(Field::DirectTrap);
+        q.merge_mode = MergeMode::Multiply;
+        q.direct_threshold = 0.5;
+        let a = render_beautiful(&frame, 2, 300, None, &q, &palette, DownsampleFilter::Box);
+        let b = render_beautiful(&frame, 2, 300, None, &q, &palette, DownsampleFilter::Box);
+        assert_eq!(a.into_raw(), b.into_raw());
+    }
+
+    /// `start_color`: parses (names + hex), JSON-round-trips, a black start
+    /// reproduces the prior hardcoded-black render byte-for-byte, and a white start
+    /// changes the `multiply` result (and isn't all-black).
+    #[test]
+    fn start_color_param() {
+        // Parse: names and hex → linear RGB; round-trips through the hex form.
+        assert_eq!(parse_start_color("black").unwrap(), [0.0, 0.0, 0.0]);
+        assert_eq!(parse_start_color("white").unwrap(), [1.0, 1.0, 1.0]);
+        assert_eq!(parse_start_color("#ffffff").unwrap(), [1.0, 1.0, 1.0]);
+        assert_eq!(parse_start_color("ff0000").unwrap()[0], 1.0);
+        assert!(parse_start_color("nope").is_err());
+        assert_eq!(start_color_to_hex([0.0, 0.0, 0.0]), "#000000");
+        assert_eq!(start_color_to_hex([1.0, 1.0, 1.0]), "#ffffff");
+
+        let mut p = ColoringParams::beautiful(Field::DirectTrap);
+        p.merge_mode = MergeMode::Screen;
+        p.start_color = [1.0, 1.0, 1.0];
+        let json = p.to_json();
+        assert!(json.contains("\"start_color\":\"#ffffff\""));
+        assert_eq!(ColoringParams::from_json(&json).unwrap(), p);
+
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.03,
+            out_width: 24,
+            out_height: 16,
+        };
+        let palette = crate::palette::builtin("default", false).unwrap();
+
+        // Black start (explicit) reproduces the default (hardcoded-black) screen
+        // render byte-for-byte.
+        let mut screen_default = ColoringParams::beautiful(Field::DirectTrap);
+        screen_default.merge_mode = MergeMode::Screen;
+        screen_default.direct_threshold = 0.5;
+        let mut screen_black = screen_default;
+        screen_black.start_color = [0.0, 0.0, 0.0];
+        let img_default =
+            render_beautiful(&frame, 2, 300, None, &screen_default, &palette, DownsampleFilter::Box);
+        let img_black =
+            render_beautiful(&frame, 2, 300, None, &screen_black, &palette, DownsampleFilter::Box);
+        assert_eq!(img_default.clone().into_raw(), img_black.into_raw());
+
+        // Multiply on a white start differs from multiply on black, and isn't
+        // all-black (black start is the absorbing/degenerate case for multiply).
+        let mut mul_black = ColoringParams::beautiful(Field::DirectTrap);
+        mul_black.merge_mode = MergeMode::Multiply;
+        mul_black.direct_threshold = 0.5;
+        let mut mul_white = mul_black;
+        mul_white.start_color = [1.0, 1.0, 1.0];
+        let img_mb =
+            render_beautiful(&frame, 2, 300, None, &mul_black, &palette, DownsampleFilter::Box);
+        let img_mw =
+            render_beautiful(&frame, 2, 300, None, &mul_white, &palette, DownsampleFilter::Box);
+        assert_ne!(img_mb.into_raw(), img_mw.clone().into_raw());
+        assert!(
+            img_mw.pixels().any(|px| px.0 != [0, 0, 0]),
+            "multiply on white start collapsed to all-black"
+        );
     }
 
     /// Trap fields are valid for interior pixels (fill), exterior fields are not.
