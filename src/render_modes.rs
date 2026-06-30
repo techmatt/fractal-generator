@@ -153,6 +153,82 @@ impl Field {
     }
 }
 
+/// **Gaussian Integer "Color By"** — which reduction of the per-iteration lattice
+/// orbit-trap (`round`, `N=1`) becomes the `#index`. All nine modes read the *same*
+/// orbit accumulator ([`GaussTrap`]: `rmin/zmin/itermin`, `rmax/zmax/itermax`,
+/// `total`/`count`), so this is a free reduction axis on one iterate pass (doc §1
+/// "Color By" table). [`MinimumDistance`](Self::MinimumDistance) is the canonical
+/// default and reproduces the prior single-mode behaviour.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GaussianColorBy {
+    /// `rmin` — distance to the nearest lattice point over the orbit (default look).
+    MinimumDistance,
+    /// `rave = total/count` — mean lattice distance.
+    AverageDistance,
+    /// `rmax` — farthest lattice approach over the orbit.
+    MaximumDistance,
+    /// `0.01·itermin` — iteration index of the closest approach (folded mod 1).
+    IterMin,
+    /// `0.01·itermax` — iteration index of the farthest approach (folded mod 1).
+    IterMax,
+    /// `normalize_angle(zmin)` — angle of `z` at the closest approach.
+    AngleMin,
+    /// `normalize_angle(zmax)` — angle of `z` at the farthest approach.
+    AngleMax,
+    /// `normalize_angle((rave−rmin) + i(rmax−rave))` — min/mean/max spread angle.
+    MeanAngle,
+    /// `rmax / (rmin + 1e-12)` — max/min ratio (high-contrast field).
+    Ratio,
+}
+
+impl GaussianColorBy {
+    fn as_str(self) -> &'static str {
+        match self {
+            GaussianColorBy::MinimumDistance => "minimum_distance",
+            GaussianColorBy::AverageDistance => "average_distance",
+            GaussianColorBy::MaximumDistance => "maximum_distance",
+            GaussianColorBy::IterMin => "iter_min",
+            GaussianColorBy::IterMax => "iter_max",
+            GaussianColorBy::AngleMin => "angle_min",
+            GaussianColorBy::AngleMax => "angle_max",
+            GaussianColorBy::MeanAngle => "mean_angle",
+            GaussianColorBy::Ratio => "ratio",
+        }
+    }
+    fn parse(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "minimum_distance" => GaussianColorBy::MinimumDistance,
+            "average_distance" => GaussianColorBy::AverageDistance,
+            "maximum_distance" => GaussianColorBy::MaximumDistance,
+            "iter_min" => GaussianColorBy::IterMin,
+            "iter_max" => GaussianColorBy::IterMax,
+            "angle_min" => GaussianColorBy::AngleMin,
+            "angle_max" => GaussianColorBy::AngleMax,
+            "mean_angle" => GaussianColorBy::MeanAngle,
+            "ratio" => GaussianColorBy::Ratio,
+            _ => return Err(format!("unknown color_by '{s}'")),
+        })
+    }
+    /// Iteration modes are designed for a **direct mod-1 gradient read** (the `0.01·`
+    /// scaling bands every 100 iters). They are folded mod 1 at reduction and bypass
+    /// the percentile-stretch, which would otherwise flatten the banding into a ramp
+    /// (prompt §Normalization).
+    fn is_iteration(self) -> bool {
+        matches!(self, GaussianColorBy::IterMin | GaussianColorBy::IterMax)
+    }
+}
+
+/// `normalize_angle(w) = atan2(w)/π`, folded into `[0,1)` (shift `+2` if negative,
+/// then `·0.5`) — the doc §1 angle reduction shared by the angle Color-By modes.
+#[inline]
+fn normalize_angle(w: Complex<f64>) -> f64 {
+    let mut a = w.im.atan2(w.re) / std::f64::consts::PI; // [-1, 1]
+    if a < 0.0 {
+        a += 2.0; // [0, 2)
+    }
+    (a * 0.5).rem_euclid(1.0) // [0, 1)
+}
+
 /// Compression / transfer transform applied to the percentile-normalized field
 /// (doc §4). `gamma` is the final power applied after the curve.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -380,6 +456,118 @@ impl MergeOrder {
     }
 }
 
+/// Direct-orbit-traps **shape** (doc §"Direct Orbit Traps"). Each variant is a
+/// different per-orbit-point trap-*distance* function evaluated at the hardcoded
+/// `trapcenter = 0` (so `z2 = z`), `rot = identity`, `aspect = 1` — i.e. a different
+/// "norm" of the iterate `z` whose sub-threshold contour the composite paints. The
+/// colour-key / feather / merge / start-color stages are shape-agnostic.
+///
+/// Distances live on **different natural scales** (L1 ≥ min-axis, L∞ ≥ min-axis,
+/// astroid ≥ L1, …), so a fixed `direct_threshold` does not read the same across
+/// shapes — see [`DirectShape::default_threshold`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DirectShape {
+    /// `d = |z|` (L2 to origin) — radial pearled beads.
+    Point,
+    /// `d = | |z| − r |` — concentric overlapping scales. `r = trap_radius`.
+    Ring,
+    /// `d = min(|Re z|, |Im z|)` — axis "+" thorns. **The baked default**
+    /// (reproduces the pre-shape behaviour byte-for-byte at `direct_threshold:0.1`).
+    Cross,
+    /// `d = min(axis-cross, diagonal-cross)` — an 8-ray "✳" asterisk: the union of
+    /// the axis cross and its 45°-rotated twin (diagonal distance `=
+    /// min(|Re−Im|,|Re+Im|)/√2`).
+    Hypercross,
+    /// `d = |Re z| + |Im z|` (L1) — rotated-square / diamond contours.
+    Diamond,
+    /// `d = max(|Re z|, |Im z|)` (L∞) — axis-aligned square contours.
+    Box,
+    /// `d = (|Re z|^{2/3} + |Im z|^{2/3})^{3/2}` (astroid norm) — concave 4-point star.
+    Astroid,
+    /// `d = |Im z|` — distance to the real axis only: anisotropic horizontal bands
+    /// (the single-line, directional degenerate of the cross).
+    Lines,
+}
+
+impl DirectShape {
+    fn as_str(self) -> &'static str {
+        match self {
+            DirectShape::Point => "point",
+            DirectShape::Ring => "ring",
+            DirectShape::Cross => "cross",
+            DirectShape::Hypercross => "hypercross",
+            DirectShape::Diamond => "diamond",
+            DirectShape::Box => "box",
+            DirectShape::Astroid => "astroid",
+            DirectShape::Lines => "lines",
+        }
+    }
+    fn parse(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "point" => DirectShape::Point,
+            "ring" => DirectShape::Ring,
+            "cross" => DirectShape::Cross,
+            "hypercross" => DirectShape::Hypercross,
+            "diamond" => DirectShape::Diamond,
+            "box" => DirectShape::Box,
+            "astroid" => DirectShape::Astroid,
+            "lines" => DirectShape::Lines,
+            _ => return Err(format!("unknown shape '{s}'")),
+        })
+    }
+
+    /// Per-orbit-point trap distance of the iterate `z = (zr, zi)` to the shape at
+    /// `trapcenter = 0`. `radius` (= `trap_radius`) is consumed only by `Ring`.
+    #[inline]
+    fn dist(self, zr: f64, zi: f64, radius: f64) -> f64 {
+        let ar = zr.abs();
+        let ai = zi.abs();
+        match self {
+            DirectShape::Point => (zr * zr + zi * zi).sqrt(),
+            DirectShape::Ring => ((zr * zr + zi * zi).sqrt() - radius).abs(),
+            // Byte-identical to the pre-shape baked `z.re.abs().min(z.im.abs())`.
+            DirectShape::Cross => ar.min(ai),
+            DirectShape::Hypercross => {
+                let axis = ar.min(ai);
+                let diag =
+                    (zr - zi).abs().min((zr + zi).abs()) * std::f64::consts::FRAC_1_SQRT_2;
+                axis.min(diag)
+            }
+            DirectShape::Diamond => ar + ai,
+            DirectShape::Box => ar.max(ai),
+            DirectShape::Astroid => {
+                (ar.powf(2.0 / 3.0) + ai.powf(2.0 / 3.0)).powf(1.5)
+            }
+            DirectShape::Lines => ai,
+        }
+    }
+
+    /// Per-shape default `direct_threshold`, **coverage-anchored** to the cross's
+    /// settled `0.1`. At the working anchor (Julia c=(-0.0781,-0.6515),
+    /// cx/cy/fw≈0.410/0.210/0.562, maxiter 1500) the `FRACTAL_DT_STATS`
+    /// instrumentation in [`render_direct_trap`] shows cross@0.1 paints **95.4 %** of
+    /// pixels (its closest-approach distribution is the most concentrated near 0 — it
+    /// is the easiest norm to minimize). Equalizing *painted fraction* — not the raw
+    /// distance scale, which differs wildly (L1 ≥ min-axis, astroid ≫ L1) — is what
+    /// makes each shape read with a comparable stroke weight, so each default is the
+    /// shape's measured **p95** closest-approach (cross's own p95 is 0.094 ≈ 0.1,
+    /// confirming the anchor). These are *defaults*; `direct_threshold` in a spec
+    /// always overrides. `Ring` is measured at `trap_radius = 1.0`.
+    #[allow(dead_code)]
+    pub fn default_threshold(self) -> f64 {
+        match self {
+            DirectShape::Point => 0.60,
+            DirectShape::Ring => 0.078,
+            DirectShape::Cross => 0.10,
+            DirectShape::Hypercross => 0.074,
+            DirectShape::Diamond => 0.80,
+            DirectShape::Box => 0.55,
+            DirectShape::Astroid => 1.06,
+            DirectShape::Lines => 0.127,
+        }
+    }
+}
+
 /// Parse a direct_trap `start_color` spec → linear-RGB `[f64; 3]`. Accepts the names
 /// `black`/`white` and a `#rrggbb` (or bare `rrggbb`) sRGB hex string, gamma-decoded
 /// per channel so the stored accumulator background is linear (matching the
@@ -441,6 +629,10 @@ pub struct ColoringParams {
     pub stripe_density: f64,
     /// Trap radius `r` (trap_circle field).
     pub trap_radius: f64,
+    /// Gaussian-integer **Color By** reduction (gaussian_int field): which orbit
+    /// statistic of the lattice trap becomes the index. Default `MinimumDistance`
+    /// (the canonical look). Ignored by every other field.
+    pub gaussint_color_by: GaussianColorBy,
     /// Boundary-filament thickness `de_scale` (de field): the only DE-specific knob.
     /// The DE map is `tanh(de_px · de_scale)`, so larger values hug the boundary
     /// (thinner gradient band), smaller values spread a wider glow. Default `1.0`.
@@ -459,6 +651,10 @@ pub struct ColoringParams {
     /// Direct_trap **merge order**: which operand is the blend's back vs front.
     /// Default `BottomUp` (new sample over accumulator).
     pub merge_order: MergeOrder,
+    /// Direct_trap **shape**: the per-orbit-point trap-distance function painted by
+    /// the composite. Default `Cross` (= the pre-shape baked behaviour; byte-identical
+    /// at `direct_threshold:0.1`). See [`DirectShape`]. `Ring` reads `trap_radius`.
+    pub direct_shape: DirectShape,
     /// Direct_trap **start color**: the linear-RGB background the per-iteration trap
     /// samples composite onto (`init: accumulator = startcolor`, doc §3). Default
     /// `[0,0,0]` (black) — the prior hardcoded behaviour, so a black start reproduces
@@ -515,11 +711,13 @@ impl Default for ColoringParams {
             field: Field::Smooth,
             stripe_density: 4.0,
             trap_radius: 1.0,
+            gaussint_color_by: GaussianColorBy::MinimumDistance,
             de_scale: 1.0,
             direct_threshold: 0.1,
             direct_opacity: 0.5,
             merge_mode: MergeMode::Normal,
             merge_order: MergeOrder::BottomUp,
+            direct_shape: DirectShape::Cross,
             start_color: [0.0, 0.0, 0.0],
             transform: Transform::Linear,
             gamma: 1.0,
@@ -593,9 +791,9 @@ impl ColoringParams {
     pub fn to_json(&self) -> String {
         format!(
             "{{\"bailout_b\":{},\"skip\":{},\"biomorph\":\"{}\",\"field\":\"{}\",\
-             \"stripe_density\":{},\"trap_radius\":{},\"de_scale\":{},\
+             \"stripe_density\":{},\"trap_radius\":{},\"color_by\":\"{}\",\"de_scale\":{},\
              \"direct_threshold\":{},\"direct_opacity\":{},\"merge_mode\":\"{}\",\
-             \"merge_order\":\"{}\",\"start_color\":\"{}\",\"transform\":\"{}\",\"gamma\":{},\
+             \"merge_order\":\"{}\",\"shape\":\"{}\",\"start_color\":\"{}\",\"transform\":\"{}\",\"gamma\":{},\
              \"shade\":\"{}\",\"light_azimuth\":{},\"light_height\":{},\
              \"palette_cycles\":{},\"palette_offset\":{},\
              \"texture_field\":\"{}\",\"texture_transform\":\"{}\",\"texture_gamma\":{},\
@@ -606,11 +804,13 @@ impl ColoringParams {
             self.field.as_str(),
             self.stripe_density,
             self.trap_radius,
+            self.gaussint_color_by.as_str(),
             self.de_scale,
             self.direct_threshold,
             self.direct_opacity,
             self.merge_mode.as_str(),
             self.merge_order.as_str(),
+            self.direct_shape.as_str(),
             start_color_to_hex(self.start_color),
             self.transform.as_str(),
             self.gamma,
@@ -668,6 +868,10 @@ impl ColoringParams {
                 p.trap_radius = v;
                 named = true;
             }
+            if let Some(v) = jsonl::field_str(s, "color_by") {
+                p.gaussint_color_by = GaussianColorBy::parse(&v)?;
+                named = true;
+            }
             if let Some(v) = jsonl::field_f64(s, "de_scale") {
                 p.de_scale = v;
                 named = true;
@@ -686,6 +890,10 @@ impl ColoringParams {
             }
             if let Some(v) = jsonl::field_str(s, "merge_order") {
                 p.merge_order = MergeOrder::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "shape") {
+                p.direct_shape = DirectShape::parse(&v)?;
                 named = true;
             }
             if let Some(v) = jsonl::field_str(s, "start_color") {
@@ -767,6 +975,54 @@ impl ColoringParams {
 // Iterate stage — OrbitAccum
 // ===========================================================================
 
+/// Gaussian-integer lattice-trap accumulator (`round`, `N=1`) over the full orbit:
+/// the running statistics every "Color By" mode reduces from (doc §1). `zmin`/`zmax`
+/// are the iterates at the closest/farthest lattice approach (for the angle modes);
+/// `total`/`count` give the running mean `rave`.
+#[derive(Clone, Copy, Debug)]
+pub struct GaussTrap {
+    /// `rmin` — closest lattice distance over the orbit.
+    pub rmin: f64,
+    /// `zmin` — iterate at the closest approach.
+    pub zmin: Complex<f64>,
+    /// `itermin` — iteration index of the closest approach.
+    pub itermin: u32,
+    /// `rmax` — farthest lattice distance over the orbit.
+    pub rmax: f64,
+    /// `zmax` — iterate at the farthest approach.
+    pub zmax: Complex<f64>,
+    /// `itermax` — iteration index of the farthest approach.
+    pub itermax: u32,
+    /// `total = Σ r` — sum of lattice distances (→ `rave = total/count`).
+    pub total: f64,
+    /// `count` — number of orbit points accumulated.
+    pub count: u32,
+}
+
+impl GaussTrap {
+    /// Reduce to one "Color By" index. Iteration modes are folded mod 1 here (they
+    /// bypass the percentile-stretch downstream); distance/ratio/angle modes return
+    /// their raw value. `None` only on an empty orbit (`count == 0`).
+    fn index(&self, color_by: GaussianColorBy) -> Option<f64> {
+        if self.count == 0 {
+            return None;
+        }
+        let rave = self.total / self.count as f64;
+        use GaussianColorBy::*;
+        Some(match color_by {
+            MinimumDistance => self.rmin,
+            AverageDistance => rave,
+            MaximumDistance => self.rmax,
+            IterMin => (0.01 * self.itermin as f64).rem_euclid(1.0),
+            IterMax => (0.01 * self.itermax as f64).rem_euclid(1.0),
+            AngleMin => normalize_angle(self.zmin),
+            AngleMax => normalize_angle(self.zmax),
+            MeanAngle => normalize_angle(Complex::new(rave - self.rmin, self.rmax - rave)),
+            Ratio => self.rmax / (self.rmin + 1e-12),
+        })
+    }
+}
+
 /// The union of per-orbit channels captured in one iteration pass. Reduce to any
 /// one field with [`OrbitAccum::field`] (a pure function over the accumulators),
 /// so a single pass can serve many fields in a sweep.
@@ -791,8 +1047,9 @@ pub struct OrbitAccum {
     trap_circle_min: f64,
     /// `min(|Re z|,|Im z|)` over the orbit.
     trap_cross_min: f64,
-    /// `min‖z − round(z)‖` over the orbit (Gaussian-integer unit lattice trap).
-    gaussint_min: f64,
+    /// Gaussian-integer unit-lattice trap statistics over the orbit (every Color By
+    /// mode reduces from this; see [`GaussTrap`]).
+    gauss: GaussTrap,
     /// Exponential-smoothing accumulator: `(Σ exp(−|zₙ|), count)` over the orbit.
     /// Escaped-gated at reduction (divergent branch only).
     exp_sum: (f64, u32),
@@ -843,9 +1100,11 @@ impl OrbitAccum {
             // DE needs the pixel scale (+ de_scale) to normalize, which `field` has
             // no access to — it is reduced via [`Self::de_value`] in the render stage.
             Field::De => None,
-            // Gaussian-integer lattice trap: min distance to the nearest lattice
-            // point over the orbit. Unconditional (interior-valued, like the traps).
-            Field::GaussianInt => Some(self.gaussint_min),
+            // Gaussian-integer lattice trap: the canonical min-distance reduction
+            // (interior-valued, like the traps). The Color-By-aware single-field path
+            // routes through [`Self::gaussint_value`] instead; this default keeps the
+            // composite/texture path (which has no Color By knob) on `minimum_distance`.
+            Field::GaussianInt => self.gauss.index(GaussianColorBy::MinimumDistance),
             // Exponential smoothing: the raw sum (divergescale = 1.0), escaped-gated
             // like the averaging family. `None` on a non-escaping / empty orbit.
             Field::ExpSmoothing => {
@@ -861,6 +1120,16 @@ impl OrbitAccum {
             // never reduced to a scalar here.
             Field::DirectTrap => None,
         }
+    }
+
+    /// Gaussian-integer trap reduced under a chosen "Color By" mode (doc §1). Routes
+    /// to [`GaussTrap::index`]; the single-field render path calls this (instead of
+    /// the default [`Self::field`] reduction) so all nine modes are reachable.
+    /// Interior-valued (the lattice trap fills the interior); `None` only on an empty
+    /// orbit. Iteration modes arrive folded mod 1 and are rendered direct (the caller
+    /// bypasses the percentile-stretch for them — see [`GaussianColorBy::is_iteration`]).
+    pub fn gaussint_value(&self, color_by: GaussianColorBy) -> Option<f64> {
+        self.gauss.index(color_by)
     }
 
     /// Exterior distance estimate, rendered to a `[0,1]` field value (the `de`
@@ -945,7 +1214,15 @@ pub fn iterate_orbit(
     let mut curv = (0.0f64, 0u32, 0.0f64);
     let mut trap_circle_min = f64::INFINITY;
     let mut trap_cross_min = f64::INFINITY;
-    let mut gaussint_min = f64::INFINITY;
+    // Gaussian-integer lattice-trap statistics over the orbit (all Color By modes).
+    let mut g_rmin = f64::INFINITY;
+    let mut g_zmin = Complex::new(0.0, 0.0);
+    let mut g_itermin = 0u32;
+    let mut g_rmax = 0.0f64;
+    let mut g_zmax = Complex::new(0.0, 0.0);
+    let mut g_itermax = 0u32;
+    let mut g_total = 0.0f64;
+    let mut g_count = 0u32;
     // Exponential-smoothing accumulator (Σ exp(−|z|), count) over the orbit.
     let mut exp_sum = (0.0f64, 0u32);
     // Discrete-velocity accumulator (Σ step length, count) over the full orbit.
@@ -985,11 +1262,21 @@ pub fn iterate_orbit(
             trap_cross_min = tx;
         }
         // Gaussian-integer trap: distance to the nearest unit-lattice point
-        // (N = 1), q = round(z). `min` over the whole orbit (like the traps above).
+        // (N = 1), q = round(z). Track rmin/zmin/itermin, rmax/zmax/itermax, and the
+        // running total/count over the whole orbit (the Color By accumulators).
         let q = Complex::new(z.re.round(), z.im.round());
         let gi = (z - q).norm();
-        if gi < gaussint_min {
-            gaussint_min = gi;
+        g_total += gi;
+        g_count += 1;
+        if gi < g_rmin {
+            g_rmin = gi;
+            g_zmin = z;
+            g_itermin = n;
+        }
+        if gi > g_rmax {
+            g_rmax = gi;
+            g_zmax = z;
+            g_itermax = n;
         }
         // Exponential smoothing: Σ exp(−|z|) over the orbit (escaped-gated at
         // reduction). Accumulated every iteration, independent of skip.
@@ -1061,7 +1348,16 @@ pub fn iterate_orbit(
         curv,
         trap_circle_min,
         trap_cross_min,
-        gaussint_min,
+        gauss: GaussTrap {
+            rmin: g_rmin,
+            zmin: g_zmin,
+            itermin: g_itermin,
+            rmax: g_rmax,
+            zmax: g_zmax,
+            itermax: g_itermax,
+            total: g_total,
+            count: g_count,
+        },
         exp_sum,
         velocity,
     }
@@ -1264,20 +1560,35 @@ fn render_direct_trap(
     let mode = params.merge_mode;
     let order = params.merge_order;
     let start_color = params.start_color;
+    let shape = params.direct_shape;
+    let radius = params.trap_radius;
+    // Catalog instrumentation (off in normal renders): when `FRACTAL_DT_STATS` is
+    // set, also collect each pixel's *closest approach* (min trap distance over the
+    // orbit) so the per-shape distance scale can be measured — see
+    // [`DirectShape::default_threshold`]. Adds one `min` per iteration; no effect on
+    // the rendered accumulator, so output stays byte-identical when off.
+    let stats = std::env::var_os("FRACTAL_DT_STATS").is_some();
 
-    // Iterate one orbit and composite the direct-trap accumulator → linear RGB.
-    let composite = |z0: Complex<f64>, c: Complex<f64>| -> [f64; 3] {
+    // Iterate one orbit and composite the direct-trap accumulator → linear RGB. The
+    // second return is the orbit's closest-approach distance (for `stats`).
+    let composite = |z0: Complex<f64>, c: Complex<f64>| -> ([f64; 3], f64) {
         let mut z = z0;
         // Linear-RGB accumulator initialized to the `start color` background (doc §3).
         // Black (default) is the absorbing background the multiplicative modes darken
         // from; a white start lets `multiply` build dark lace down from light.
         let mut acc = start_color;
+        let mut min_d = f64::INFINITY;
         let mut n = 0u32;
         loop {
             z = z * z + c;
             n += 1;
-            // Trap shape = cross, trapcenter 0, rot identity → z2 = z.
-            let d = z.re.abs().min(z.im.abs());
+            // Trap distance of the iterate to the chosen shape (trapcenter 0, rot
+            // identity, aspect 1 → z2 = z). `Cross` reproduces the prior baked
+            // `z.re.abs().min(z.im.abs())` exactly.
+            let d = shape.dist(z.re, z.im, radius);
+            if d < min_d {
+                min_d = d;
+            }
             if d < threshold {
                 let key = (d / threshold).clamp(0.0, 1.0);
                 let src = palette.lookup_linear(key); // Trap Color = distance
@@ -1306,10 +1617,10 @@ fn render_direct_trap(
                 break;
             }
         }
-        acc
+        (acc, min_d)
     };
 
-    let rows: Vec<Vec<[f64; 3]>> = (0..sub_h)
+    let rows: Vec<Vec<([f64; 3], f64)>> = (0..sub_h)
         .into_par_iter()
         .map(|srow| {
             let py = srow as f64 + 0.5;
@@ -1328,7 +1639,38 @@ fn render_direct_trap(
             row
         })
         .collect();
-    let linear: Vec<[f64; 3]> = rows.into_iter().flatten().collect();
+    let linear: Vec<[f64; 3]> = rows.iter().flatten().map(|(acc, _)| *acc).collect();
+
+    if stats {
+        let mut mins: Vec<f64> = rows
+            .iter()
+            .flatten()
+            .map(|(_, d)| *d)
+            .filter(|d| d.is_finite())
+            .collect();
+        mins.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let pct = |q: f64| -> f64 {
+            if mins.is_empty() {
+                return f64::NAN;
+            }
+            let i = ((mins.len() - 1) as f64 * q).round() as usize;
+            mins[i]
+        };
+        let painted = mins.iter().filter(|d| **d < threshold).count();
+        let frac = painted as f64 / mins.len().max(1) as f64;
+        eprintln!(
+            "[DT_STATS] shape={} thr={:.4} painted_frac={:.4} closest-approach: min={:.4e} p50={:.4e} p90={:.4e} p95={:.4e} p99={:.4e} max={:.4e}",
+            shape.as_str(),
+            threshold,
+            frac,
+            pct(0.0),
+            pct(0.50),
+            pct(0.90),
+            pct(0.95),
+            pct(0.99),
+            pct(1.0),
+        );
+    }
 
     crate::render::downsample_linear_filtered(
         &linear,
@@ -1383,10 +1725,11 @@ fn render_beautiful_single(
                     None => (Complex::new(0.0, 0.0), pixel),
                 };
                 let acc = iterate_orbit(z0, c, maxiter, params, julia);
-                let value = if params.field == Field::De {
-                    acc.de_value(pixel_size, params.de_scale)
-                } else {
-                    acc.field(params.field)
+                let value = match params.field {
+                    Field::De => acc.de_value(pixel_size, params.de_scale),
+                    // Color-By-aware reduction (the default `field()` is min-distance only).
+                    Field::GaussianInt => acc.gaussint_value(params.gaussint_color_by),
+                    _ => acc.field(params.field),
                 };
                 row.push(ShadePix {
                     value: value.unwrap_or(0.0),
@@ -1410,10 +1753,18 @@ fn render_beautiful_single(
         .map(|p| p.value)
         .collect();
 
+    // Iteration Color-By modes are pre-folded mod 1 and read directly off the
+    // gradient — the `0.01·iter` banding must NOT be re-stretched (it would flatten
+    // into a ramp). Identity normalization (lo=0, span=1, no histeq) passes the
+    // folded value straight through (prompt §Normalization).
+    let direct_map = params.field == Field::GaussianInt && params.gaussint_color_by.is_iteration();
+
     // Histeq builds a sorted table for rank lookup; the stretch transforms use
     // percentile bounds. Both are global reductions over the frame's valid values.
-    let histeq = params.transform == Transform::Histeq;
-    let (lo, span, sorted) = if histeq {
+    let histeq = params.transform == Transform::Histeq && !direct_map;
+    let (lo, span, sorted) = if direct_map {
+        (0.0, 1.0, None)
+    } else if histeq {
         valids.sort_unstable_by(f64::total_cmp);
         (0.0, 1.0, Some(valids))
     } else {
@@ -1510,12 +1861,13 @@ fn render_beautiful_composite(
         .texture_field
         .expect("composite branch requires texture_field");
     let pixel_size = fw / frame.out_width as f64;
-    // Reduce one field, routing `de` through the pixel-aware estimator.
+    // Reduce one field, routing `de` through the pixel-aware estimator and
+    // `gaussian_int` through the Color-By-aware reduction.
     let eval = |acc: &OrbitAccum, f: Field| -> Option<f64> {
-        if f == Field::De {
-            acc.de_value(pixel_size, params.de_scale)
-        } else {
-            acc.field(f)
+        match f {
+            Field::De => acc.de_value(pixel_size, params.de_scale),
+            Field::GaussianInt => acc.gaussint_value(params.gaussint_color_by),
+            _ => acc.field(f),
         }
     };
 
@@ -1660,7 +2012,16 @@ mod tests {
             curv: (2.5, 4, 0.9),
             trap_circle_min: 0.3,
             trap_cross_min: 0.1,
-            gaussint_min: 0.2,
+            gauss: GaussTrap {
+                rmin: 0.2,
+                zmin: Complex::new(0.0, 0.0),
+                itermin: 1,
+                rmax: 0.5,
+                zmax: Complex::new(0.0, 0.0),
+                itermax: 2,
+                total: 1.0,
+                count: 5,
+            },
             exp_sum: (1.5, 5),
             velocity: (5.0, 4),
         };
@@ -1947,6 +2308,66 @@ mod tests {
         );
         let iv = interior.field(Field::GaussianInt).expect("fills interior");
         assert!(iv.is_finite() && (0.0..=0.7072).contains(&iv));
+    }
+
+    /// Gaussian-integer Color-By modes: distance modes ordered `rmin ≤ rave ≤ rmax`,
+    /// iteration modes folded into `[0,1)`, angle modes in `[0,1)`, ratio ≥ 1.
+    #[test]
+    fn gaussian_color_by_modes() {
+        // A generic bounded orbit (interior-valued; the trap fills the interior).
+        let p = ColoringParams::beautiful(Field::GaussianInt);
+        let acc = iterate_orbit(
+            Complex::new(0.0, 0.0),
+            Complex::new(-0.2, 0.3),
+            500,
+            &p,
+            false,
+        );
+        let g = |m| acc.gaussint_value(m).expect("interior-valued");
+        let rmin = g(GaussianColorBy::MinimumDistance);
+        let rave = g(GaussianColorBy::AverageDistance);
+        let rmax = g(GaussianColorBy::MaximumDistance);
+        assert!(rmin <= rave && rave <= rmax, "rmin {rmin} ≤ rave {rave} ≤ rmax {rmax}");
+        assert!((0.0..=0.7072).contains(&rmin));
+        // Iteration modes: folded into [0,1).
+        for m in [GaussianColorBy::IterMin, GaussianColorBy::IterMax] {
+            let v = g(m);
+            assert!((0.0..1.0).contains(&v), "iter mode {} = {v} ∉ [0,1)", m.as_str());
+            assert!(m.is_iteration());
+        }
+        // Angle modes: in [0,1).
+        for m in [
+            GaussianColorBy::AngleMin,
+            GaussianColorBy::AngleMax,
+            GaussianColorBy::MeanAngle,
+        ] {
+            let v = g(m);
+            assert!((0.0..1.0).contains(&v), "angle mode {} = {v} ∉ [0,1)", m.as_str());
+            assert!(!m.is_iteration());
+        }
+        // Ratio: rmax/(rmin+eps) ≥ 1.
+        let ratio = g(GaussianColorBy::Ratio);
+        assert!(ratio >= 1.0 - 1e-9, "ratio {ratio} < 1");
+        // Default field() == minimum_distance.
+        assert_eq!(acc.field(Field::GaussianInt), Some(rmin));
+    }
+
+    /// `color_by` survives JSON round-trip and seeds independently of the field default.
+    #[test]
+    fn gaussian_color_by_json_roundtrip() {
+        let p = ColoringParams::from_json(
+            "{\"field\":\"gaussian_int\",\"color_by\":\"mean_angle\"}",
+        )
+        .unwrap();
+        assert_eq!(p.field, Field::GaussianInt);
+        assert_eq!(p.gaussint_color_by, GaussianColorBy::MeanAngle);
+        let p2 = ColoringParams::from_json(&p.to_json()).unwrap();
+        assert_eq!(p, p2);
+        // Default is minimum_distance.
+        assert_eq!(
+            ColoringParams::beautiful(Field::GaussianInt).gaussint_color_by,
+            GaussianColorBy::MinimumDistance
+        );
     }
 
     /// Decomposition is escaped-only and folds the escape-point angle into `[0,1)`.

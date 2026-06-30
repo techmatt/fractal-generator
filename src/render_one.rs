@@ -429,7 +429,10 @@ pub struct RenderOneArgs {
     /// (`render_modes`). Keys: `field` (smooth|stripe|tia|curvature|trap_circle|
     /// trap_cross|velocity|de|gaussian_int|exp_smoothing|decomposition|direct_trap),
     /// `bailout_b`, `skip`, `biomorph` (off|epsilon_cross),
-    /// `stripe_density`, `trap_radius`, `de_scale`, `direct_threshold`,
+    /// `stripe_density`, `trap_radius`, `color_by`
+    /// (minimum_distance|average_distance|maximum_distance|iter_min|iter_max|
+    /// angle_min|angle_max|mean_angle|ratio — gaussian_int only),
+    /// `de_scale`, `direct_threshold`,
     /// `direct_opacity` / `merge_mode` (normal|multiply|screen|overlay) /
     /// `merge_order` (bottom_up|top_down) / `start_color` (black|white|#rrggbb)
     /// (direct_trap), `transform`
