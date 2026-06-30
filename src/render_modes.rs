@@ -744,8 +744,9 @@ impl ColoringParams {
 
     /// A beautiful preset: `2^16` bailout + the chosen field, with a transform
     /// sensible for that field (`Log` for the trap stalk fields, `Linear` for
-    /// stripe — Matt's validated sweep verdict — `Sqrt` otherwise). All other
-    /// knobs stay at defaults; tune via JSON overrides.
+    /// stripe — Matt's validated sweep verdict — as well as Smooth/Curvature and
+    /// the UF-mode/Tia/Velocity seeds; `Sqrt` otherwise). All other knobs stay at
+    /// defaults; tune via JSON overrides.
     pub fn beautiful(field: Field) -> Self {
         let transform = match field {
             Field::TrapCircle | Field::TrapCross => Transform::Log,
@@ -766,7 +767,11 @@ impl ColoringParams {
             | Field::ExpSmoothing
             | Field::Decomposition
             | Field::DirectTrap => Transform::Linear,
-            _ => Transform::Sqrt,
+            // Smooth + Curvature default to linear (specs pinned this by hand
+            // until now; make it the source default). With these two added the
+            // match is exhaustive — no field falls through to Sqrt anymore (Sqrt
+            // survives only as an explicit per-spec transform).
+            Field::Smooth | Field::Curvature => Transform::Linear,
         };
         let mut p = ColoringParams {
             bailout_b: BEAUTIFUL_BAILOUT,
