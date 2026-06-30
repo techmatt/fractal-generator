@@ -1,0 +1,39 @@
+{
+  "description": "Four hand-picked quality-3 reference palettes spanning a wide range of palette types, drawn from the palette_grid_q3 sampling pass (test_02 view, RNG seed 20260630). Names resolve in data/palettes/score3_colormaps.json (carries stops + mirror_needed); quality from labels/palette_scores.json.",
+  "colormaps": "data/palettes/score3_colormaps.json",
+  "quality_source": "labels/palette_scores.json",
+  "palettes": [
+    {
+      "id": "pal_01",
+      "grid_index": 1,
+      "name": "cmr.jungle",
+      "source": "cmasher",
+      "quality": 3,
+      "type": "sequential, dark-zero (deep green → white)"
+    },
+    {
+      "id": "pal_02",
+      "grid_index": 10,
+      "name": "cmr.fusion",
+      "source": "cmasher",
+      "quality": 3,
+      "type": "sequential, dark-zero warm (purple → amber)"
+    },
+    {
+      "id": "pal_03",
+      "grid_index": 13,
+      "name": "cet_linear_bmw_5_95_c86",
+      "source": "colorcet",
+      "quality": 3,
+      "type": "linear high-chroma (blue → magenta → white)"
+    },
+    {
+      "id": "pal_04",
+      "grid_index": 19,
+      "name": "GnBu",
+      "source": "matplotlib",
+      "quality": 3,
+      "type": "sequential, light-zero cool (white → green → blue)"
+    }
+  ]
+}

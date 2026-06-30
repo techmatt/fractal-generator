@@ -61,6 +61,10 @@ __pycache__/
 !/data/palettes/clean_colormaps.json
 !/data/palettes/quarantined_colormaps.json
 !/data/palettes/quarantine_log.json
+# Hand-picked reference test fixtures (load-bearing metadata, not regenerable):
+# the test render locations and the test palette selection.
+!/data/test_renders.json
+!/data/test_palettes.json
 # Permanent label corpus (see data/label_corpus/CORPUS_SCHEMA.md): commit the
 # tiny, irreplaceable metadata (schema, batch.json, images.jsonl, scores.json);
 # gitignore crops/ — each crop is a pure function of its row's `render` block,

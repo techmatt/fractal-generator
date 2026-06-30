@@ -1,0 +1,58 @@
+{
+  "description": "Four hand-picked quality-3 test locations of varying density for render-mode evaluation, drawn from the v5 labeled corpus (grid_sample_q3, RNG seed 20260630).",
+  "neutral_preview_mode": { "field": "smooth", "palette": "twilight", "transform": "linear" },
+  "locations": [
+    {
+      "id": "test_01",
+      "grid_index": 2,
+      "system": "mandelbrot",
+      "quality": 3,
+      "image_id": "land_266_cmr.jungle",
+      "source_batch": "2026-06-25_mining_v3guided_v1",
+      "cx": "-0.05666746724148218",
+      "cy": "0.6673617947920905",
+      "fw": "0.00011802071145462495",
+      "maxiter": 8000
+    },
+    {
+      "id": "test_02",
+      "grid_index": 5,
+      "system": "mandelbrot",
+      "quality": 3,
+      "image_id": "land_22_RdPu",
+      "source_batch": "2026-06-25_mining_v3guided_v1",
+      "cx": "-0.07787122629198232",
+      "cy": "-0.6514107541174922",
+      "fw": "9.057564929133888e-06",
+      "maxiter": 8000
+    },
+    {
+      "id": "test_03",
+      "grid_index": 8,
+      "system": "julia",
+      "quality": 3,
+      "image_id": "cz_g0032_r000229",
+      "source_batch": "julia_ladder_j0",
+      "cx": "0.0",
+      "cy": "0.0",
+      "fw": "0.75",
+      "c_re": "0.2742096494638263",
+      "c_im": "0.48461072056420507",
+      "maxiter": 800
+    },
+    {
+      "id": "test_04",
+      "grid_index": 10,
+      "system": "julia",
+      "quality": 3,
+      "image_id": "cz_g0040_r000283",
+      "source_batch": "julia_ladder_j0",
+      "cx": "0.0",
+      "cy": "0.0",
+      "fw": "0.75",
+      "c_re": "-0.7496331230825287",
+      "c_im": "0.04166181753158057",
+      "maxiter": 800
+    }
+  ]
+}
