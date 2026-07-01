@@ -41,9 +41,11 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "palettes"))
+sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 
 import colormap as cm  # noqa: E402  (CandidateConfig, LocationRef, PaletteLibrary, render_candidate, load_field)
 import palette_features as pf  # noqa: E402  (distance_matrix over trajectory features)
+import label_store as ls  # noqa: E402  (SIDECAR_LABELS + resolve_score — the shared resolver)
 
 # ---------------------------------------------------------------------------
 # Settled inputs (paths).
@@ -52,55 +54,33 @@ import palette_features as pf  # noqa: E402  (distance_matrix over trajectory fe
 POOL_COLORMAPS = ROOT / "data" / "palettes" / "pool_colormaps.json"
 PALETTE_FEATURES = ROOT / "data" / "palettes" / "palette_features.json"
 BATCHES_DIR = ROOT / "data" / "label_corpus" / "batches"
-LABELS_DIR = ROOT / "labels"
 
 # ---------------------------------------------------------------------------
 # Authoritative label sources.
 #
-# A batch's hand labels live in ONE of two places:
-#   (a) already merged into its images.jsonl `label.score` (via
-#       tools/corpus/merge_scores.py) — the rev4 / rev4occfix / loose0 batches; or
-#   (b) ONLY in a `labels/*.json` sidecar keyed by image_id, because the merge into
-#       images.jsonl was never run — the Julia (`julia_ladder_j0`), `mining`, and
-#       `scale` batches.
-# A loader that reads `label.score` alone therefore silently drops the (b) batches;
-# for Julia that wiped out the entire FAMILY (0 Julia locations), and it also dropped
-# the mining/scale Mandelbrot labels. The labels/ store is the single source of truth
-# for "what is labeled"; SIDECAR_LABELS maps each (b) batch to its file so the loader
-# resolves both cases. NEW unmerged batches MUST be registered here (or their labels
-# merged into images.jsonl) — the loader raises if a registered batch joins 0 rows,
-# and the per-batch census makes any un-registered drop loud.
+# Label resolution — the SIDECAR_LABELS registry, the merged-score-else-sidecar-join
+# rule, and the load-time join guard — lives in ONE place, tools/corpus/label_store.py,
+# and is shared with the version-blind trainer reader (corpus_reader.iter_labeled) so
+# the two consumers can never drift. SIDECAR_LABELS is re-exported here for callers /
+# tests that reference `query_sampler.SIDECAR_LABELS`. NEW unmerged batches MUST be
+# registered in label_store (or have their labels merged into images.jsonl).
 #
 # REFERENCE for the complete label set: the v5 unified Mandelbrot+Julia classifier's
 # training-data assembly, tools/v5/build_manifest.py. It recovers the J0 Julia labels
 # from labels/location_labels_julia_ladder_j0.json JOINED to the batch's images.jsonl
-# by image_id — exactly the join mirrored below. See also data/label_corpus/CORPUS_SCHEMA.md.
+# by image_id — exactly the join label_store mirrors. See also CORPUS_SCHEMA.md.
 #
 # Row schema differs by FAMILY (both families share the one images.jsonl render block):
 #   Mandelbrot: cx, cy, fw                 (c_re/c_im absent or null)
 #   Julia:      cx, cy, fw + c_re, c_im    (cx/cy/fw is the z-plane VIEWPORT; c_re/c_im
 #                                           is the Julia parameter c — the fractal's
 #                                           identity, and part of the location dedup key)
-SIDECAR_LABELS = {
-    "julia_ladder_j0": "location_labels_julia_ladder_j0.json",
-    "2026-06-25_mining_v3guided_v1": "mining_v3guided_v1.json",
-    "2026-06-25_scale_2x2_labelset": "scale_2x2_labelset.json",
-    "2026-06-25_scale_controlled_2x2": "scale_2x2_labelset.json",
-}
+SIDECAR_LABELS = ls.SIDECAR_LABELS   # single source of truth = label_store
 
 # The v5 pipeline's authoritative Julia label source — the cross-check reference
 # (see v5_julia_q23_count() and tools/queries/test_location_pool.py).
 V5_JULIA_BATCH = "julia_ladder_j0"
 V5_MANIFEST = ROOT / "data" / "v5" / "manifest.jsonl"
-
-
-def _load_sidecar(filename):
-    """Load a labels/*.json sidecar as {image_id: int score}, dropping nulls.
-
-    Tolerates both a bare {image_id: score} map and a {"labels": {...}} wrapper."""
-    d = json.loads((LABELS_DIR / filename).read_text(encoding="utf-8"))
-    body = d["labels"] if isinstance(d.get("labels"), dict) else d
-    return {k: int(v) for k, v in body.items() if v is not None}
 
 
 def v5_julia_q23_count(scores=(2, 3)):
@@ -110,7 +90,7 @@ def v5_julia_q23_count(scores=(2, 3)):
     authoritative reference the sampler's Julia location count must match; empirically
     no q2/q3 row is dropped by build_manifest's v4-seed split filter, so this equals
     the Julia q2/q3 count in data/v5/manifest.jsonl."""
-    labels = _load_sidecar(SIDECAR_LABELS[V5_JULIA_BATCH])
+    labels = ls.load_sidecar(SIDECAR_LABELS[V5_JULIA_BATCH])
     jl = BATCHES_DIR / V5_JULIA_BATCH / "images.jsonl"
     batch_ids = {json.loads(l)["image_id"]
                  for l in jl.read_text(encoding="utf-8").splitlines() if l.strip()}
@@ -225,7 +205,7 @@ class LocationPool:
         census = {}
         for jl in sorted(Path(batches_dir).glob("*/images.jsonl")):
             batch_id = jl.parent.name
-            sidecar = _load_sidecar(SIDECAR_LABELS[batch_id]) if batch_id in SIDECAR_LABELS else None
+            sidecar = ls.sidecar_for(batch_id)          # None unless registered
             fams = census.setdefault(batch_id, {})
             for line in jl.open(encoding="utf-8"):
                 line = line.strip()
@@ -234,9 +214,7 @@ class LocationPool:
                 row = json.loads(line)
                 r = row["render"]
                 kind = "julia" if r.get("fractal_type") == "julia" else "mandelbrot"
-                sc = (row.get("label") or {}).get("score")
-                if sc is None and sidecar is not None:      # authoritative fallback
-                    sc = sidecar.get(row["image_id"])
+                sc = ls.resolve_score(row, sidecar)         # merged score ELSE sidecar join
                 if sc not in keep:
                     continue
                 fams[kind] = fams.get(kind, 0) + 1
@@ -257,14 +235,10 @@ class LocationPool:
         pool = cls(by_key.values(), census=census)
         if verbose:
             pool.print_census()
-        # Join-integrity guard: every registered sidecar batch is known to hold q2/q3
-        # labels, so a 0 there means the image_id join broke (renamed keys / wrong file).
-        for bid in SIDECAR_LABELS:
-            if bid in census and sum(census[bid].values()) == 0:
-                raise RuntimeError(
-                    f"batch {bid!r} has a registered label sidecar "
-                    f"({SIDECAR_LABELS[bid]}) but joined 0 q2+q3 rows — image_id keys "
-                    f"likely diverged. Fix SIDECAR_LABELS in query_sampler.py.")
+        # Join-integrity guard (shared with corpus_reader): every registered sidecar
+        # batch is known to hold q2/q3 labels, so a 0 there means the image_id join
+        # broke (renamed keys / wrong file).
+        ls.assert_sidecars_joined({bid: sum(f.values()) for bid, f in census.items()})
         return pool
 
     def by_family(self):
