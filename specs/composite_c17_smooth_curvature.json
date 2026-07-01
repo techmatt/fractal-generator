@@ -1,1 +1,1 @@
-{"field":"smooth","transform":"linear","texture_field":"curvature","combine":"screen","texture_weight":0.85,"shade":"none"}
+{"field": "smooth", "transform": "linear", "texture_field": "curvature", "combine": "screen", "texture_weight": 0.85, "shade": "none", "tier": "promoted"}

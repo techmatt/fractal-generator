@@ -1,1 +1,1 @@
-{"field":"direct_trap","transform":"linear","merge_mode":"screen","merge_order":"bottom_up","start_color":"black","direct_threshold":0.05,"direct_opacity":0.15}
+{"field": "direct_trap", "transform": "linear", "merge_mode": "screen", "merge_order": "bottom_up", "start_color": "black", "direct_threshold": 0.05, "direct_opacity": 0.15, "tier": "niche"}
