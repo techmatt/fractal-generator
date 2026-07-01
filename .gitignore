@@ -61,6 +61,10 @@ __pycache__/
 !/data/palettes/clean_colormaps.json
 !/data/palettes/quarantined_colormaps.json
 !/data/palettes/quarantine_log.json
+# durable palette trajectory-feature file (tools/palettes/build_features.py):
+# reproducible but load-bearing -- downstream samplers/dispatch load it directly.
+!/data/palettes/score3_colormaps.json
+!/data/palettes/palette_features.json
 # Hand-picked reference test fixtures (load-bearing metadata, not regenerable):
 # the test render locations and the test palette selection.
 !/data/test_renders.json
