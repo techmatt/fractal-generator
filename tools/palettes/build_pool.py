@@ -16,8 +16,9 @@ Read-only against all existing sources (survey, harvest, curated libraries). Wri
 Sources / decisions (see report for the surfaced calls):
   * curated: every name scored 2 or 3 in labels/palette_scores.json, curve resolved
     from data/palettes/clean_colormaps.json.  source in {curated_q2, curated_q3}.
-  * extracted: survey rows with composite >= 0.422 AND not near_dup (== 603, the
-    survey's net-new definition), stored best-cycle form from
+  * extracted: survey rows with composite >= 0.422 AND not near_dup AND not gate-`rejected`
+    (== 583; the survey's net-new 603 minus the 20 gate/composite disagreements, which we
+    now reject rather than keep), stored best-cycle form from
     data/wallpaper_harvest/palettes/<name>.json.  source == extracted.
 """
 
@@ -76,7 +77,9 @@ def build_extracted():
     survey = json.load(open(SURVEY))
     rows = survey["rows"]
     raw_cut = [r for r in rows if r["composite"] >= COMPOSITE_CUT]
-    kept = [r for r in raw_cut if not r["near_dup"]]
+    # Drop near_dups AND gate-`rejected` rows (the 20 gate/composite disagreements) --
+    # err toward rejecting; the pool has ample palettes. 603 -> 583.
+    kept = [r for r in raw_cut if not r["near_dup"] and not r["rejected"]]
 
     entries = []
     for r in kept:
@@ -93,6 +96,8 @@ def build_extracted():
         "n_raw_cut": len(raw_cut),
         "n_near_dup_in_cut": sum(1 for r in raw_cut if r["near_dup"]),
         "n_rejected_in_cut": sum(1 for r in raw_cut if r["rejected"]),
+        # rows dropped specifically for the gate flag (rejected but not already near_dup)
+        "n_rejected_kept_out": sum(1 for r in raw_cut if r["rejected"] and not r["near_dup"]),
         "n_kept": len(kept),
         "n_nocov_cut": sum(1 for r in rows if r["composite_nocov"] >= COMPOSITE_CUT),
     }
@@ -189,7 +194,7 @@ def main():
     if missing:
         print("  !! q2/q3 that did NOT resolve:", missing)
     print("extracted: raw_cut(comp>=%.3f)=%d  near_dup_in_cut=%d  rejected_in_cut=%d  "
-          "-> kept(& ~near_dup)=%d   [nocov_cut=%d]"
+          "-> kept(& ~near_dup & ~rejected)=%d   [nocov_cut=%d]"
           % (COMPOSITE_CUT, ediag["n_raw_cut"], ediag["n_near_dup_in_cut"],
              ediag["n_rejected_in_cut"], ediag["n_kept"], ediag["n_nocov_cut"]))
 
@@ -218,9 +223,9 @@ def main():
     bf.write_features_json(pool, feats, path=FEATURES_JSON)
     print("wrote %s  (%d entries, features)" % (os.path.relpath(FEATURES_JSON, ROOT), len(feats)))
 
-    # sanity: extracted are stored closed -> should derive cyclic. For any that derive
-    # non_cyclic, contrast the anchor-endpoint distance (what derive_type sees) with the
-    # TRUE authored seam gap (stop[0] vs stop[-1] in OKLab) to diagnose the mislabel.
+    # sanity: extracted are stored closed -> should derive cyclic. derive_type now reads the
+    # TRUE authored seam gap (stop[0] vs stop[-1] in OKLab); for any residual non_cyclic,
+    # contrast the old cell-centered anchor-endpoint distance with that seam gap.
     import color  # noqa
     ext_cyc = sum(1 for p in extracted if pf.derive_type(feats[p["name"]]) == "cyclic")
     ext_non_names = []
@@ -277,27 +282,27 @@ def write_report(curated, extracted, missing, ediag, tab, sources, types,
                 sum(e["source"] == "curated_q3" for e in curated)))
     L.append("  - Unresolved q2/q3: %s" % (missing if missing else "none"))
     L.append("- **extracted**: composite >= %.3f = %d raw; minus %d survey `near_dup` "
-             "-> **%d** kept (matches the survey's net-new 603). Stored best-cycle form, "
+             "and %d gate-`rejected` -> **%d** kept. Stored best-cycle form, "
              "no re-extraction." % (COMPOSITE_CUT, ediag["n_raw_cut"],
-                                    ediag["n_near_dup_in_cut"], ediag["n_kept"]))
-    L.append("  - Surfaced call: %d of the raw-cut carry the gate `rejected` flag "
-             "(extent<0.05 v arclen<0.3) but clear the composite axis; kept, since the "
-             "composite is the by-eye-validated cut and supersedes the gate. "
-             "no-coverage composite at the same cut would yield %d."
+                                    ediag["n_near_dup_in_cut"], ediag["n_rejected_kept_out"],
+                                    ediag["n_kept"]))
+    L.append("  - Decision: %d of the raw-cut carry the gate `rejected` flag "
+             "(extent<0.05 v arclen<0.3) yet clear the composite axis (the 20 gate/composite "
+             "disagreements). We now **reject** them -- err toward rejecting, the pool has "
+             "ample palettes. no-coverage composite at the same cut would yield %d."
              % (ediag["n_rejected_in_cut"], ediag["n_nocov_cut"]))
     L.append("")
     L.append("## Sanity: extracted derived type\n")
     L.append("Extracted are stored closed, so they should derive **cyclic**. "
              "Derived: cyclic=%d, non_cyclic=%d.\n" % (ext_cyc, ext_non))
     if ext_non_names:
-        L.append("**Surprise flagged (%d).** These are genuinely closed loops "
-                 "(true OKLab seam gap `stop[0]<->stop[-1]` is tiny), but `derive_type` "
-                 "compares the **cell-centered anchor endpoints** (t~0.016 vs t~0.984), "
-                 "which land past EPS_CYC=%.2f when color moves fast across the seam. So "
-                 "these are `derive_type` false-negatives, not bad data. Left as-is "
-                 "(scope fence: no feature-module edits); a seam-gap-based cyclic test "
-                 "would recover them if wanted.\n" % (ext_non, pf.EPS_CYC))
-        L.append("| name | anchor_endpt (derive_type) | true seam_gap |")
+        L.append("**Residual flagged (%d).** `derive_type` now dispatches on the literal "
+                 "terminal-stop seam gap `stop[0]<->stop[-1]`, so any extracted still deriving "
+                 "non_cyclic has a TRUE seam gap >= EPS_CYC=%.2f -- its stored 'closed' form "
+                 "is not perceptually closed at the authored endpoints (not a false negative). "
+                 "The `anchor_endpt` column is the old cell-centered measure, kept for "
+                 "contrast.\n" % (ext_non, pf.EPS_CYC))
+        L.append("| name | anchor_endpt (old test) | true seam_gap (derive_type) |")
         L.append("|---|---|---|")
         for nm, ed, seam in sorted(ext_non_names, key=lambda x: x[0]):
             L.append("| %s | %.3f | %.3f |" % (nm, ed, seam))

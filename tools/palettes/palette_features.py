@@ -6,8 +6,12 @@ Each q3 palette (`data/palettes/score3_colormaps.json`, 33 sRGB stops on t in
 
   * a **(32, 3) Oklab trajectory** -- the diversity feature, reverse-canonicalized so
     a palette and its reverse map to the same trajectory, and
-  * a **derived type** in {cyclic, non_cyclic}, computed from trajectory geometry
-    (cyclic iff endpoints meet; the JSON's declared `cycle` field is reference-only).
+  * a **derived type** in {cyclic, non_cyclic}, computed from the palette's *literal*
+    terminal-stop seam (cyclic iff the OKLab gap between the first and last authored
+    stops is < EPS_CYC; the JSON's declared `cycle` field is reference-only). Two
+    endpoint conventions for two jobs: the type test reads the literal terminals, while
+    the 32-anchor trajectory feature stays **cell-centered** (t = (i+0.5)/n) so
+    sequential palettes don't false-wrap in the distance/FPS metric.
     The old three-way split (cyclic/diverging/sequential) collapsed to binary once
     center-pivot -- the only knob the sequential/diverging distinction ever dispatched
     -- was dropped; the diverging *signals* are still computed (see `_compute_signals`)
@@ -42,8 +46,8 @@ N_ANCHORS = 32
 # --- provisional type-derivation thresholds (tunable by eye from the printed
 # --- distributions; see build_features.py's report). Exposed as module constants so
 # --- downstream / experiments can override before calling derive_type.
-EPS_CYC = 0.05           # endpoint Oklab distance below which -> cyclic. The ONLY
-#                          threshold derive_type dispatches on in v1.
+EPS_CYC = 0.05           # literal terminal-stop seam gap (Oklab) below which -> cyclic.
+#                          The ONLY threshold derive_type dispatches on in v1.
 # The remaining thresholds are diverging-only and RETAINED-FOR-OPTIONALITY: derive_type
 # no longer consumes them (binary {cyclic, non_cyclic}), but they still tune the
 # diverging signals surfaced in the report / stored per entry, so a future center-pivot
@@ -104,14 +108,30 @@ def _chroma(traj):
     return np.hypot(traj[:, 1], traj[:, 2])
 
 
-def _compute_signals(traj):
-    """Geometry signals surfaced in the report.
+def _literal_seam_gap(stops):
+    """OKLab distance between the palette's LITERAL terminal stops (stop[0] <-> stop[-1]),
+    whatever the t-encoding. This is the seam the *type test* reads -- the actual authored
+    endpoints, not the cell-centered trajectory anchors (which sit 1/(2n) inside each end
+    and spuriously separate when color moves fast across the seam, the false-negative that
+    misclassified genuine loops as non_cyclic). Orientation-independent, so the trajectory's
+    reverse-canonicalization does not affect it."""
+    c0 = color.srgb_to_oklab(np.asarray(stops[0][1], dtype=np.float64) / 255.0)
+    cN = color.srgb_to_oklab(np.asarray(stops[-1][1], dtype=np.float64) / 255.0)
+    return float(np.linalg.norm(c0 - cN))
 
-    Only `endpoint_dist` feeds derive_type (v1 binary {cyclic, non_cyclic}). The
-    diverging signals -- `end_L_match`, `interior_L_prominence`, `mid_vs_end_chroma`
-    (plus `end_chroma`/`mid_chroma`) -- are retained-for-optionality: computed and
-    stored but NOT used for dispatch, so a future center-pivot re-introduction can
-    re-derive diverging membership with no recomputation."""
+
+def _compute_signals(traj):
+    """Geometry signals surfaced in the report, all computed from the cell-centered
+    trajectory.
+
+    NONE of these feed derive_type -- the type test dispatches on `seam_gap` (the literal
+    terminal-stop seam, injected in `palette_feature`). `endpoint_dist` here is the
+    cell-centered anchor-endpoint distance, retained as a diagnostic (it is what the old
+    type test used, and its gap vs `seam_gap` is the false-negative surface). The diverging
+    signals -- `end_L_match`, `interior_L_prominence`, `mid_vs_end_chroma` (plus
+    `end_chroma`/`mid_chroma`) -- are retained-for-optionality: computed and stored but NOT
+    used for dispatch, so a future center-pivot re-introduction can re-derive diverging
+    membership with no recomputation."""
     L = traj[:, 0]
     ch = _chroma(traj)
     n = traj.shape[0]
@@ -159,21 +179,31 @@ def palette_feature(stops, n=N_ANCHORS):
     if canonical_reversed:
         traj = traj[::-1].copy()
 
+    signals = _compute_signals(traj)
+    # literal terminal-stop seam gap -- the type test's endpoint convention (measured on
+    # the source stops, NOT the cell-centered anchors). Orientation-independent.
+    signals["seam_gap"] = _literal_seam_gap(stops)
+
     return {
         "trajectory": traj,
         "canonical_reversed": canonical_reversed,
-        "signals": _compute_signals(traj),
+        "signals": signals,
     }
 
 
 def derive_type(feature):
-    """Derived type in {cyclic, non_cyclic} from trajectory geometry: cyclic iff the
-    endpoint OKLab distance < EPS_CYC (endpoints meet), else non_cyclic.
+    """Derived type in {cyclic, non_cyclic}: cyclic iff the LITERAL terminal-stop seam gap
+    (`seam_gap`, OKLab distance between the first and last authored stops) < EPS_CYC, else
+    non_cyclic.
+
+    The seam is measured at the palette's real endpoints, not the cell-centered trajectory
+    anchors -- the anchors sit 1/(2n) inside each end and spuriously separate when color
+    moves fast across the seam, which false-classified genuine loops as non_cyclic.
 
     Binary by design -- the old diverging/sequential split only ever dispatched
     center-pivot, which is dropped, so it no longer earns its keep. The diverging
     signals remain in `feature['signals']` for optional future re-derivation."""
-    if feature["signals"]["endpoint_dist"] < EPS_CYC:
+    if feature["signals"]["seam_gap"] < EPS_CYC:
         return "cyclic"
     return "non_cyclic"
 

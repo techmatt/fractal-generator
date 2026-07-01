@@ -83,6 +83,46 @@ def test_fps_order_wellformed():
     assert set(order).issubset(set(names))
 
 
+# ----------------------------------------------------- literal-seam type test -----
+
+def _fast_seam_loop():
+    """Synthetic genuine loop with color moving FAST across the seam: stop[0]==stop[-1]
+    (literal terminals meet -> cyclic), but a sharp color change in the first/last ~2% of
+    t drags the cell-centered anchors (t~0.016, t~0.984) far apart. This is exactly the
+    false-negative the old anchor-endpoint test produced (9 genuine loops -> non_cyclic)."""
+    return [
+        [0.00, [255, 0, 0]],    # red at the seam
+        [0.02, [0, 0, 255]],    # snap to blue just past the start
+        [0.50, [0, 255, 0]],    # green midpoint
+        [0.98, [255, 255, 0]],  # snap to yellow just before the end
+        [1.00, [255, 0, 0]],    # back to red -> literal seam gap == 0
+    ]
+
+
+def test_literal_seam_recovers_fast_seam_loop():
+    """The type test must read the LITERAL terminal stops, so a genuine loop reads cyclic
+    even when color moves fast across the seam -- the recovered-loops regression."""
+    f = pf.palette_feature(_fast_seam_loop())
+    assert f["signals"]["seam_gap"] < pf.EPS_CYC, "literal terminals meet"
+    assert pf.derive_type(f) == "cyclic", "genuine fast-seam loop -> cyclic"
+    # and confirm this is a real guard: the old cell-centered anchor test WOULD have missed
+    # it (anchors dragged past EPS_CYC by the fast seam).
+    assert f["signals"]["endpoint_dist"] >= pf.EPS_CYC, \
+        "old anchor test would false-negative this loop (guard is meaningful)"
+
+
+def test_open_maps_stay_non_cyclic():
+    """Over-correction guard: sequential (viridis) and diverging (coolwarm) maps still
+    derive non_cyclic -- their literal terminals differ (large OKLab seam gap: viridis ends
+    dark->yellow; coolwarm's matched-lightness ends still differ in hue)."""
+    feats = pf.compute_all_features(pf.load_palettes())
+    assert pf.derive_type(feats["viridis"]) == "non_cyclic", "sequential stays open"
+    assert pf.derive_type(feats["coolwarm"]) == "non_cyclic", "diverging stays open"
+    assert pf.derive_type(feats["seismic"]) == "non_cyclic", "diverging stays open"
+    # canonical cyclic still reads cyclic (didn't break the true loops)
+    assert pf.derive_type(feats["twilight"]) == "cyclic", "true loop stays cyclic"
+
+
 # ------------------------------------------------------------- soft type checks ---
 
 def _report_type_spotchecks():
@@ -112,7 +152,8 @@ def _report_type_spotchecks():
 
 def main():
     hard = [test_color_reference_points, test_color_roundtrip, test_reverse_invariance,
-            test_distance_metric_properties, test_fps_order_wellformed]
+            test_distance_metric_properties, test_fps_order_wellformed,
+            test_literal_seam_recovers_fast_seam_loop, test_open_maps_stay_non_cyclic]
     failed = 0
     for t in hard:
         try:
