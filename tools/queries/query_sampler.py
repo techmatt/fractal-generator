@@ -9,7 +9,10 @@ tail). By construction, label-space ≡ sweep-space — both draw candidates fro
 Three pieces:
 
   1. `LocationPool` — the q2+q3 location universe (both Mandelbrot and Julia families),
-     read from the label corpus batch `images.jsonl` render blocks. Uniform draw.
+     read from the label corpus batches. Labels are resolved from the labels/ store:
+     a batch's merged `images.jsonl` score, else its `labels/*.json` sidecar joined by
+     image_id (Julia/mining/scale live only in sidecars). Mirrors the v5 pipeline's join
+     (tools/v5/build_manifest.py) so no family is silently dropped. Uniform draw.
   2. `PaletteSampler` — draws palettes from `pool_colormaps.json` (777) with the
      stratification the raw pool demands: the cyclic stratum is ~95% extracted (582 vs
      33 curated), so a uniform draw would confound *source* with *type*. Within a type
@@ -49,6 +52,82 @@ import palette_features as pf  # noqa: E402  (distance_matrix over trajectory fe
 POOL_COLORMAPS = ROOT / "data" / "palettes" / "pool_colormaps.json"
 PALETTE_FEATURES = ROOT / "data" / "palettes" / "palette_features.json"
 BATCHES_DIR = ROOT / "data" / "label_corpus" / "batches"
+LABELS_DIR = ROOT / "labels"
+
+# ---------------------------------------------------------------------------
+# Authoritative label sources.
+#
+# A batch's hand labels live in ONE of two places:
+#   (a) already merged into its images.jsonl `label.score` (via
+#       tools/corpus/merge_scores.py) — the rev4 / rev4occfix / loose0 batches; or
+#   (b) ONLY in a `labels/*.json` sidecar keyed by image_id, because the merge into
+#       images.jsonl was never run — the Julia (`julia_ladder_j0`), `mining`, and
+#       `scale` batches.
+# A loader that reads `label.score` alone therefore silently drops the (b) batches;
+# for Julia that wiped out the entire FAMILY (0 Julia locations), and it also dropped
+# the mining/scale Mandelbrot labels. The labels/ store is the single source of truth
+# for "what is labeled"; SIDECAR_LABELS maps each (b) batch to its file so the loader
+# resolves both cases. NEW unmerged batches MUST be registered here (or their labels
+# merged into images.jsonl) — the loader raises if a registered batch joins 0 rows,
+# and the per-batch census makes any un-registered drop loud.
+#
+# REFERENCE for the complete label set: the v5 unified Mandelbrot+Julia classifier's
+# training-data assembly, tools/v5/build_manifest.py. It recovers the J0 Julia labels
+# from labels/location_labels_julia_ladder_j0.json JOINED to the batch's images.jsonl
+# by image_id — exactly the join mirrored below. See also data/label_corpus/CORPUS_SCHEMA.md.
+#
+# Row schema differs by FAMILY (both families share the one images.jsonl render block):
+#   Mandelbrot: cx, cy, fw                 (c_re/c_im absent or null)
+#   Julia:      cx, cy, fw + c_re, c_im    (cx/cy/fw is the z-plane VIEWPORT; c_re/c_im
+#                                           is the Julia parameter c — the fractal's
+#                                           identity, and part of the location dedup key)
+SIDECAR_LABELS = {
+    "julia_ladder_j0": "location_labels_julia_ladder_j0.json",
+    "2026-06-25_mining_v3guided_v1": "mining_v3guided_v1.json",
+    "2026-06-25_scale_2x2_labelset": "scale_2x2_labelset.json",
+    "2026-06-25_scale_controlled_2x2": "scale_2x2_labelset.json",
+}
+
+# The v5 pipeline's authoritative Julia label source — the cross-check reference
+# (see v5_julia_q23_count() and tools/queries/test_location_pool.py).
+V5_JULIA_BATCH = "julia_ladder_j0"
+V5_MANIFEST = ROOT / "data" / "v5" / "manifest.jsonl"
+
+
+def _load_sidecar(filename):
+    """Load a labels/*.json sidecar as {image_id: int score}, dropping nulls.
+
+    Tolerates both a bare {image_id: score} map and a {"labels": {...}} wrapper."""
+    d = json.loads((LABELS_DIR / filename).read_text(encoding="utf-8"))
+    body = d["labels"] if isinstance(d.get("labels"), dict) else d
+    return {k: int(v) for k, v in body.items() if v is not None}
+
+
+def v5_julia_q23_count(scores=(2, 3)):
+    """Q2+q3 Julia count computed by the SAME join tools/v5/build_manifest.py uses:
+    labels/location_labels_julia_ladder_j0.json (image_id -> score) INTERSECT the
+    julia_ladder_j0 batch images.jsonl (render params) by image_id. This is the
+    authoritative reference the sampler's Julia location count must match; empirically
+    no q2/q3 row is dropped by build_manifest's v4-seed split filter, so this equals
+    the Julia q2/q3 count in data/v5/manifest.jsonl."""
+    labels = _load_sidecar(SIDECAR_LABELS[V5_JULIA_BATCH])
+    jl = BATCHES_DIR / V5_JULIA_BATCH / "images.jsonl"
+    batch_ids = {json.loads(l)["image_id"]
+                 for l in jl.read_text(encoding="utf-8").splitlines() if l.strip()}
+    keep = set(scores)
+    return sum(1 for iid, sc in labels.items() if iid in batch_ids and sc in keep)
+
+
+def v5_manifest_julia_q23(scores=(2, 3)):
+    """Julia q2+q3 count straight from data/v5/manifest.jsonl (the v5 pipeline's own
+    output), or None if the manifest is absent. The literal 'v5 pipeline's count'."""
+    if not V5_MANIFEST.exists():
+        return None
+    keep = set(scores)
+    return sum(1 for l in V5_MANIFEST.read_text(encoding="utf-8").splitlines()
+               if l.strip()
+               for r in [json.loads(l)]
+               if r.get("fractal_type") == "julia" and r.get("label") in keep)
 
 # ---------------------------------------------------------------------------
 # Candidate-generation resolution — PINNED. Label-time and the future sweep share
@@ -122,28 +201,49 @@ class LocationPool:
     offset (the render block stores the framed center), so no offset is re-applied.
     """
 
-    def __init__(self, locations):
+    def __init__(self, locations, census=None):
         self.locations = list(locations)
+        # census[batch_id][family] = q2+q3 ROWS contributed (pre-dedup); for reporting.
+        self.census = census or {}
 
     @classmethod
-    def from_corpus(cls, batches_dir=BATCHES_DIR, scores=(2, 3)):
+    def from_corpus(cls, batches_dir=BATCHES_DIR, scores=(2, 3), verbose=True):
+        """Build the q2+q3 pool from every label-corpus batch, BOTH families.
+
+        Label resolution per row (single source of truth = the labels/ store):
+          1. `row.label.score` if already merged into images.jsonl; else
+          2. the batch's registered `labels/*.json` sidecar, joined by image_id
+             (see SIDECAR_LABELS — this is how Julia/mining/scale are recovered).
+
+        A *location* is a unique (kind, cx, cy, fw, c_re, c_im); a row qualifies if its
+        resolved score is in `scores`. cx/cy already bake the composition offset. Prints
+        a loud per-batch, per-family census (Part-4 hardening: a dropped family/batch
+        shows as a `0` that is impossible to miss) and RAISES if a registered sidecar
+        batch joins 0 rows (its image_id keys diverged)."""
         keep = set(scores)
         by_key = {}
+        census = {}
         for jl in sorted(Path(batches_dir).glob("*/images.jsonl")):
+            batch_id = jl.parent.name
+            sidecar = _load_sidecar(SIDECAR_LABELS[batch_id]) if batch_id in SIDECAR_LABELS else None
+            fams = census.setdefault(batch_id, {})
             for line in jl.open(encoding="utf-8"):
                 line = line.strip()
                 if not line:
                     continue
                 row = json.loads(line)
-                sc = (row.get("label") or {}).get("score")
-                if sc not in keep:
-                    continue
                 r = row["render"]
                 kind = "julia" if r.get("fractal_type") == "julia" else "mandelbrot"
+                sc = (row.get("label") or {}).get("score")
+                if sc is None and sidecar is not None:      # authoritative fallback
+                    sc = sidecar.get(row["image_id"])
+                if sc not in keep:
+                    continue
+                fams[kind] = fams.get(kind, 0) + 1
                 c_re = r.get("c_re")
                 c_im = r.get("c_im")
                 key = _loc_key(kind, r["cx"], r["cy"], r["fw"], c_re, c_im)
-                bid = (row.get("provenance") or {}).get("batch_id") or jl.parent.name
+                bid = (row.get("provenance") or {}).get("batch_id") or batch_id
                 if key in by_key:
                     pl = by_key[key]
                     pl.scores.append(sc)
@@ -154,7 +254,18 @@ class LocationPool:
                         maxiter=int(r["maxiter"]), c_re=c_re, c_im=c_im,
                     )
                     by_key[key] = PooledLocation(ref=ref, scores=[sc], batch_ids={bid})
-        return cls(by_key.values())
+        pool = cls(by_key.values(), census=census)
+        if verbose:
+            pool.print_census()
+        # Join-integrity guard: every registered sidecar batch is known to hold q2/q3
+        # labels, so a 0 there means the image_id join broke (renamed keys / wrong file).
+        for bid in SIDECAR_LABELS:
+            if bid in census and sum(census[bid].values()) == 0:
+                raise RuntimeError(
+                    f"batch {bid!r} has a registered label sidecar "
+                    f"({SIDECAR_LABELS[bid]}) but joined 0 q2+q3 rows — image_id keys "
+                    f"likely diverged. Fix SIDECAR_LABELS in query_sampler.py.")
+        return pool
 
     def by_family(self):
         out = {}
@@ -162,10 +273,47 @@ class LocationPool:
             out.setdefault(pl.kind, []).append(pl)
         return out
 
+    def family_counts(self):
+        """{family: unique-location count} over the deduped pool."""
+        return {k: len(v) for k, v in self.by_family().items()}
+
     def report(self):
         fam = self.by_family()
         parts = [f"{k}={len(v)}" for k, v in sorted(fam.items())]
         return f"{len(self.locations)} q2+q3 locations ({', '.join(parts)})"
+
+    def print_census(self, stream=sys.stderr):
+        """Loud per-batch x per-family q2+q3 census at load (Part-4 hardening)."""
+        print("[LocationPool] q2+q3 census by batch x family "
+              "(labels/ store; sidecar-joined where noted):", file=stream)
+        fam_tot = {}
+        for bid in sorted(self.census):
+            fams = self.census[bid]
+            parts = ", ".join(f"{k}={fams[k]}" for k in sorted(fams)) or "(none labeled)"
+            src = f"   <- {SIDECAR_LABELS[bid]}" if bid in SIDECAR_LABELS else ""
+            print(f"    {bid}: {parts}{src}", file=stream)
+            for k, v in fams.items():
+                fam_tot[k] = fam_tot.get(k, 0) + v
+        rows = ", ".join(f"{k}={fam_tot.get(k, 0)}" for k in ("mandelbrot", "julia"))
+        print(f"    -- q2+q3 rows (pre-dedup): {rows}", file=stream)
+        print(f"    -- {self.report()}", file=stream)
+
+    def assert_matches_v5(self):
+        """Cross-check the sampler's Julia location count against the v5 pipeline's
+        (Part-4 validation guard). Julia is keyed by image_id in both paths, so the two
+        must agree; a mismatch means the sampler drifted from the authoritative label
+        set (in EITHER direction). Raises AssertionError on mismatch."""
+        got = self.family_counts().get("julia", 0)
+        want_join = v5_julia_q23_count()
+        assert got == want_join, (
+            f"Julia location count {got} != v5 join-recipe count {want_join} "
+            f"(labels/{SIDECAR_LABELS[V5_JULIA_BATCH]} x {V5_JULIA_BATCH})")
+        want_man = v5_manifest_julia_q23()
+        if want_man is not None:
+            assert got == want_man, (
+                f"Julia location count {got} != v5 manifest count {want_man} "
+                f"({V5_MANIFEST})")
+        return got
 
     def sample(self, rng):
         """Uniform draw of one PooledLocation."""
@@ -392,6 +540,10 @@ if __name__ == "__main__":
     rng = np.random.default_rng(0)
     pool = LocationPool.from_corpus()
     print(pool.report())
+    print(f"v5 Julia cross-check: sampler={pool.family_counts().get('julia', 0)} "
+          f"join-recipe={v5_julia_q23_count()} manifest={v5_manifest_julia_q23()}")
+    pool.assert_matches_v5()
+    print("assert_matches_v5: OK")
     lib = load_pool_library()
     sampler = PaletteSampler(lib)
     for st, names in sorted(sampler.strata.items()):
