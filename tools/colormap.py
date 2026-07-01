@@ -515,19 +515,41 @@ def validate_config(config, library):
 # The one shared entry point.
 # ---------------------------------------------------------------------------
 
-def render_candidate(field, config, library):
-    """(FieldData, CandidateConfig, PaletteLibrary) -> (H_out, W_out, 3) uint8 sRGB.
+@dataclass
+class StretchedField:
+    """The config-independent prefix of the coloring tail: the percentile-stretched
+    field `x` in [0,1] (invalid -> 0) plus the interior `valid` mask. Depends only on
+    the raw field, so it is computed ONCE per dumped field and reused across every
+    recolor — the cache seam the inference sweep (thousands of recolors per field)
+    lives on. `render_candidate` builds it lazily when not supplied."""
+    x: np.ndarray
+    valid: np.ndarray
 
-    The full coloring tail, in the Rust-pinned order. `field.values` is the raw
-    super-res smooth field with NaN interior; never recomputes field math."""
-    validate_config(config, library)
+
+def stretch_field(field):
+    """(FieldData) -> StretchedField. Percentile-stretch on the RAW field (Rust PCT)."""
     raw = field.values
     valid = np.isfinite(raw)
-
-    # 1. percentile-stretch on the RAW field -> x in [0,1] (invalid pixels -> 0).
     lo, span = percentile_stretch(raw)
     x = np.zeros_like(raw)
     x[valid] = np.clip((raw[valid] - lo) / span, 0.0, 1.0)
+    return StretchedField(x=x, valid=valid)
+
+
+def render_candidate(field, config, library, prep=None):
+    """(FieldData, CandidateConfig, PaletteLibrary) -> (H_out, W_out, 3) uint8 sRGB.
+
+    The full coloring tail, in the Rust-pinned order. `field.values` is the raw
+    super-res smooth field with NaN interior; never recomputes field math. `prep`
+    (a `StretchedField` from `stretch_field`) skips the config-independent
+    percentile-stretch prefix — pass it to recolor a cached field cheaply; when None
+    it is computed here, so the single-call contract is unchanged."""
+    validate_config(config, library)
+    if prep is None:
+        prep = stretch_field(field)
+    x, valid = prep.x, prep.valid
+
+    # 1. percentile-stretch on the RAW field -> x in [0,1] (done in `prep`).
 
     # 2. transform curve + gamma.
     gray = apply_transform(x, config.log_premap, config.gamma)
