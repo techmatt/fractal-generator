@@ -71,19 +71,6 @@ def test_type_dispatch_cyclic_only(library):
     cm.render_candidate(field, cfg, library)
 
 
-def test_type_dispatch_diverging_only(library):
-    field = _synthetic_field()
-    ow, oh = field.out_size
-    base = dict(location=field.location, eval_width=ow, eval_height=oh)
-    # center on a non-diverging palette (twilight = cyclic) -> reject.
-    cfg = cm.CandidateConfig(palette="twilight", **base, center=0.4)
-    with pytest.raises(ValueError, match="diverging"):
-        cm.render_candidate(field, cfg, library)
-    # center on a diverging palette (berlin) -> allowed.
-    cfg = cm.CandidateConfig(palette="berlin", **base, center=0.4)
-    cm.render_candidate(field, cfg, library)
-
-
 def test_type_dispatch_domain_checks(library):
     field = _synthetic_field()
     ow, oh = field.out_size
@@ -105,7 +92,7 @@ def test_recipe_roundtrip_json():
                          c_re="0.27", c_im="0.48")
     cfg = cm.CandidateConfig(palette="twilight", location=loc, eval_width=100, eval_height=60,
                              reverse=True, log_premap="log", gamma=1.5, phase=0.25,
-                             n_cycles=2, center=None, interior_color=(0.1, 0.2, 0.3),
+                             n_cycles=2, interior_color=(0.1, 0.2, 0.3),
                              filter="lanczos3")
     back = cm.CandidateConfig.from_json(cfg.to_json())
     assert back == cfg

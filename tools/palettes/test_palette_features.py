@@ -89,14 +89,17 @@ def _report_type_spotchecks():
     pals = pf.load_palettes()
     feats = pf.compute_all_features(pals)
     types = {nm: pf.derive_type(f) for nm, f in feats.items()}
+    # Type is now binary {cyclic, non_cyclic}: cyclic iff endpoints meet. The old
+    # diverging cases (cmr.fusion/coolwarm/seismic) and the sequentials all fold into
+    # non_cyclic.
     expect = {
         "twilight": "cyclic",
-        "cmr.fusion": "diverging",   # blue<->white<->red, the headline case
-        "coolwarm": "diverging",
-        "seismic": "diverging",
-        "viridis": "sequential",
-        "cividis": "sequential",     # monotonic-L sequential that dips through gray
-        "magma": "sequential",
+        "cmr.fusion": "non_cyclic",  # was diverging (blue<->white<->red); ends don't meet
+        "coolwarm": "non_cyclic",
+        "seismic": "non_cyclic",
+        "viridis": "non_cyclic",
+        "cividis": "non_cyclic",
+        "magma": "non_cyclic",
     }
     print("\n[soft] type spot-checks (report only):")
     for nm, exp in expect.items():

@@ -10,7 +10,8 @@ Writes:
 Prints:
   * per-palette signal distributions (so the tunable eps thresholds can be set by eye)
   * a table sorted to surface derived-vs-declared mismatches at the top
-  * the derived type for cmr.fusion, highlighted (expected: diverging).
+  * the derived type for cmr.fusion, highlighted (expected: non_cyclic -- it was
+    diverging before the type collapsed to binary {cyclic, non_cyclic}).
 """
 
 import json
@@ -27,7 +28,7 @@ import palette_features as pf  # noqa: E402
 OUT_JSON = os.path.join(pf.ROOT, "data", "palettes", "palette_features.json")
 OUT_PNG = os.path.join(pf.ROOT, "out", "palette_types.png")
 
-TYPE_ORDER = ["cyclic", "diverging", "sequential"]
+TYPE_ORDER = ["cyclic", "non_cyclic"]
 
 
 def _round(x, n=5):
@@ -68,6 +69,12 @@ def print_distributions(feats):
              pf.END_L_MATCH_A, pf.END_L_MATCH_EPS, pf.INTERIOR_PROM_MIN))
 
 
+def _declared_binary(declared):
+    """Map the declared `cycle` field to the binary derived space: cyclic stays
+    cyclic, everything else (sequential, and any legacy diverging) -> non_cyclic."""
+    return "cyclic" if declared == "cyclic" else "non_cyclic"
+
+
 def print_table(palettes, feats):
     rows = []
     for p in palettes:
@@ -76,22 +83,17 @@ def print_table(palettes, feats):
         s = f["signals"]
         dt = pf.derive_type(f)
         declared = p.get("cycle")
-        # declared has no 'diverging'; count a mismatch only when derived and declared
-        # disagree on a value declared *can* express (cyclic vs sequential). A derived
-        # 'diverging' over a declared 'sequential'/'cyclic' is a refinement, flagged
-        # separately.
-        mismatch = (dt in ("cyclic", "sequential") and declared in ("cyclic", "sequential")
-                    and dt != declared)
-        refine = dt == "diverging"
-        rows.append((nm, dt, declared, mismatch, refine, s))
+        # both spaces are now binary {cyclic, non_cyclic}; flag disagreement directly.
+        mismatch = dt != _declared_binary(declared)
+        rows.append((nm, dt, declared, mismatch, s))
 
-    # sort: hard mismatches first, then diverging refinements, then the rest
-    rows.sort(key=lambda r: (0 if r[3] else (1 if r[4] else 2), r[0]))
-    print("\n=== derived vs declared (mismatches first, then diverging refinements) ===")
+    # sort: mismatches first, then the rest, name-stable within each group
+    rows.sort(key=lambda r: (0 if r[3] else 1, r[0]))
+    print("\n=== derived vs declared (mismatches first) ===")
     print("%-40s %-11s %-11s %8s %8s %8s %7s  %s"
           % ("name", "derived", "declared", "endpt", "Lmatch", "Lprom", "midR", "flag"))
-    for nm, dt, decl, mism, refine, s in rows:
-        flag = "MISMATCH" if mism else ("diverging?" if refine else "")
+    for nm, dt, decl, mism, s in rows:
+        flag = "MISMATCH" if mism else ""
         print("%-40s %-11s %-11s %8.3f %8.3f %8.3f %7.2f  %s"
               % (nm, dt, decl, s["endpoint_dist"], s["end_L_match"],
                  s["interior_L_prominence"], s["mid_vs_end_chroma"], flag))
@@ -138,7 +140,7 @@ def render_swatch_grid(palettes, feats, path=OUT_PNG):
             hi = nm == "cmr.fusion"
             draw.text((PAD, y + STRIP_H + 1),
                       "%s  [decl:%s]%s%s" % (nm, p.get("cycle"), rev,
-                                             "  <-- expect diverging" if hi else ""),
+                                             "  <-- expect non_cyclic" if hi else ""),
                       fill=(255, 220, 90) if hi else (200, 200, 205))
             y += row_h
 
@@ -155,7 +157,7 @@ def main():
     print_table(palettes, feats)
 
     ft = pf.derive_type(feats["cmr.fusion"])
-    mark = "OK" if ft == "diverging" else "!! expected diverging"
+    mark = "OK" if ft == "non_cyclic" else "!! expected non_cyclic"
     print("\n>>> cmr.fusion derived type: %s  [%s]" % (ft.upper(), mark))
 
     write_features_json(palettes, feats)

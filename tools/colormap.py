@@ -15,7 +15,7 @@ listed in the build prompt (Step 0 reads the code and pins it):
 
     raw field  ->  percentile-stretch (0.5 / 99.5, over non-NaN)  ->  x in [0,1]
                ->  transform curve (log_premap) + gamma            ->  gray in [0,1]
-               ->  center pivot (diverging) / n_cycles / phase      ->  t in [0,1)
+               ->  n_cycles / phase (cyclic-only)                   ->  t in [0,1)
                ->  OKLab LUT sample (4096, cyclic, reverse/mirror baked)
                ->  interior fill (NaN -> interior_color)
                ->  linear-light downsample (box / lanczos3 / mitchell) -> sRGB8
@@ -23,6 +23,11 @@ listed in the build prompt (Step 0 reads the code and pins it):
 i.e. the percentile-stretch is applied to the RAW field FIRST, then the transform
 curve operates on the [0,1]-stretched value (Rust `apply_transform`). Every numeric
 step mirrors the Rust source so the outputs match.
+
+Palette type is binary {cyclic, non_cyclic}. The former diverging **center-pivot**
+was the ONLY coloring knob with no Rust analog (it was Python-only); it has been
+dropped -- diverging balance is now handled by reverse + gamma -- so every remaining
+knob in this tail is either Rust-validated or trivially exact.
 """
 
 from __future__ import annotations
@@ -235,12 +240,6 @@ def apply_transform(x, log_premap, gamma):
     return y ** gamma if gamma != 1.0 else y
 
 
-def center_pivot(t, center):
-    """Diverging center remap: [0,center]->[0,0.5], [center,1]->[0.5,1]."""
-    c = min(max(center, 1e-9), 1.0 - 1e-9)
-    return np.where(t <= c, 0.5 * t / c, 0.5 + 0.5 * (t - c) / (1.0 - c))
-
-
 # ---------------------------------------------------------------------------
 # Downsample — mirrors src/render.rs downsample_linear_filtered.
 # ---------------------------------------------------------------------------
@@ -368,14 +367,15 @@ class PaletteLibrary:
         self._lut_cache = {}
 
     def palette_type(self, name):
-        """'cyclic' | 'diverging' | 'sequential'. Falls back to the colormap's
-        `cycle` field when a palette is absent from the features file."""
+        """'cyclic' | 'non_cyclic'. Falls back to the colormap's `cycle` field
+        (mapped into the binary space) when a palette is absent from the features
+        file: declared cyclic -> cyclic, everything else -> non_cyclic."""
         if name in self.types:
             return self.types[name]
         cm = self.colormaps.get(name)
         if cm is None:
             raise KeyError(f"palette '{name}' not in colormaps or features")
-        return cm.get("cycle", "sequential")
+        return "cyclic" if cm.get("cycle") == "cyclic" else "non_cyclic"
 
     def lut(self, name, reverse=False):
         """Baked linear-RGB LUT for `name`, mirror per the colormap's `mirror_needed`
@@ -419,7 +419,6 @@ class CandidateConfig:
       gamma         power u = t**gamma
       phase         cyclic-only: t -> (t+phase) mod 1
       n_cycles      cyclic-only, {1,2}: t -> (t*n_cycles) mod 1
-      center        diverging-only: pivot mapping `center` -> 0.5
       interior_color linear-RGB fill for NaN pixels (default black, = Rust)
       filter        'box' | 'mitchell' | 'lanczos3'
     """
@@ -432,7 +431,6 @@ class CandidateConfig:
     gamma: float = 1.0
     phase: float = 0.0
     n_cycles: int = 1
-    center: Optional[float] = None
     interior_color: tuple = (0.0, 0.0, 0.0)
     filter: str = "box"
 
@@ -497,17 +495,13 @@ def load_field(bin_path, json_path=None):
 # ---------------------------------------------------------------------------
 
 def validate_config(config, library):
-    """Reject a config whose params don't apply to its palette type. phase/n_cycles
-    apply only to cyclic; center only to diverging (raises ValueError otherwise).
-    'Applies' = a non-default value is set."""
+    """Reject a config whose params don't apply to its palette type. Type is binary
+    {cyclic, non_cyclic}: phase/n_cycles apply only to cyclic (raises ValueError
+    otherwise). 'Applies' = a non-default value is set."""
     ptype = library.palette_type(config.palette)
     if (config.phase != 0.0 or config.n_cycles != 1) and ptype != "cyclic":
         raise ValueError(
             f"phase/n_cycles apply only to cyclic palettes; '{config.palette}' is {ptype}"
-        )
-    if config.center is not None and ptype != "diverging":
-        raise ValueError(
-            f"center applies only to diverging palettes; '{config.palette}' is {ptype}"
         )
     if config.n_cycles not in (1, 2):
         raise ValueError(f"n_cycles must be 1 or 2, got {config.n_cycles}")
@@ -538,10 +532,9 @@ def render_candidate(field, config, library):
     # 2. transform curve + gamma.
     gray = apply_transform(x, config.log_premap, config.gamma)
 
-    # 3. LUT stage: center pivot (diverging), n_cycles, phase (Rust: gray*cycles+offset).
+    # 3. LUT stage: n_cycles, phase (Rust: gray*cycles+offset). Cyclic-only knobs;
+    #    non_cyclic palettes leave gray untouched (n_cycles=1, phase=0).
     t = gray
-    if config.center is not None:
-        t = center_pivot(t, config.center)
     t = np.mod(t * config.n_cycles, 1.0)
     t = np.mod(t + config.phase, 1.0)
     lut = library.lut(config.palette, reverse=config.reverse)
@@ -568,7 +561,6 @@ if __name__ == "__main__":
     ap.add_argument("--reverse", action="store_true")
     ap.add_argument("--phase", type=float, default=0.0)
     ap.add_argument("--n-cycles", type=int, default=1)
-    ap.add_argument("--center", type=float, default=None)
     ap.add_argument("--colormaps", default=DEFAULT_COLORMAPS)
     ap.add_argument("--features", default=DEFAULT_FEATURES)
     args = ap.parse_args()
@@ -579,7 +571,7 @@ if __name__ == "__main__":
     cfg = CandidateConfig(
         palette=args.palette, location=fld.location, eval_width=ow, eval_height=oh,
         reverse=args.reverse, log_premap=args.log_premap, gamma=args.gamma,
-        phase=args.phase, n_cycles=args.n_cycles, center=args.center, filter=args.filter,
+        phase=args.phase, n_cycles=args.n_cycles, filter=args.filter,
     )
     img = render_candidate(fld, cfg, lib)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

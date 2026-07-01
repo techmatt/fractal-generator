@@ -6,9 +6,12 @@ Each q3 palette (`data/palettes/score3_colormaps.json`, 33 sRGB stops on t in
 
   * a **(32, 3) Oklab trajectory** -- the diversity feature, reverse-canonicalized so
     a palette and its reverse map to the same trajectory, and
-  * a **derived type** in {cyclic, diverging, sequential}, computed from trajectory
-    geometry (the JSON's declared `cycle` field is reference-only -- it has no
-    `diverging` value at all).
+  * a **derived type** in {cyclic, non_cyclic}, computed from trajectory geometry
+    (cyclic iff endpoints meet; the JSON's declared `cycle` field is reference-only).
+    The old three-way split (cyclic/diverging/sequential) collapsed to binary once
+    center-pivot -- the only knob the sequential/diverging distinction ever dispatched
+    -- was dropped; the diverging *signals* are still computed (see `_compute_signals`)
+    for a future center-pivot re-introduction, just not used for dispatch.
 
 The public API downstream samplers build on: `palette_feature`, `derive_type`,
 `distance_matrix`, `farthest_point_order`, plus `load_palettes` /
@@ -39,7 +42,12 @@ N_ANCHORS = 32
 # --- provisional type-derivation thresholds (tunable by eye from the printed
 # --- distributions; see build_features.py's report). Exposed as module constants so
 # --- downstream / experiments can override before calling derive_type.
-EPS_CYC = 0.05           # endpoint Oklab distance below which -> cyclic
+EPS_CYC = 0.05           # endpoint Oklab distance below which -> cyclic. The ONLY
+#                          threshold derive_type dispatches on in v1.
+# The remaining thresholds are diverging-only and RETAINED-FOR-OPTIONALITY: derive_type
+# no longer consumes them (binary {cyclic, non_cyclic}), but they still tune the
+# diverging signals surfaced in the report / stored per entry, so a future center-pivot
+# re-introduction can re-derive diverging membership with no recomputation.
 END_CHROMA_MIN = 0.045   # diverging(a): ends must be chromatic at least this much
 MID_CHROMA_RATIO = 0.45  # diverging(a): mid chroma < this * end chroma
 END_L_MATCH_A = 0.30     # diverging(a): ends must be lightness-comparable (a diverging
@@ -97,7 +105,13 @@ def _chroma(traj):
 
 
 def _compute_signals(traj):
-    """Geometry signals used by derive_type + surfaced in the report."""
+    """Geometry signals surfaced in the report.
+
+    Only `endpoint_dist` feeds derive_type (v1 binary {cyclic, non_cyclic}). The
+    diverging signals -- `end_L_match`, `interior_L_prominence`, `mid_vs_end_chroma`
+    (plus `end_chroma`/`mid_chroma`) -- are retained-for-optionality: computed and
+    stored but NOT used for dispatch, so a future center-pivot re-introduction can
+    re-derive diverging membership with no recomputation."""
     L = traj[:, 0]
     ch = _chroma(traj)
     n = traj.shape[0]
@@ -153,21 +167,15 @@ def palette_feature(stops, n=N_ANCHORS):
 
 
 def derive_type(feature):
-    """Derived type in {cyclic, diverging, sequential} from trajectory geometry.
-    Cyclic tested first (cleanest), then diverging, else sequential."""
-    s = feature["signals"]
-    if s["endpoint_dist"] < EPS_CYC:
+    """Derived type in {cyclic, non_cyclic} from trajectory geometry: cyclic iff the
+    endpoint OKLab distance < EPS_CYC (endpoints meet), else non_cyclic.
+
+    Binary by design -- the old diverging/sequential split only ever dispatched
+    center-pivot, which is dropped, so it no longer earns its keep. The diverging
+    signals remain in `feature['signals']` for optional future re-derivation."""
+    if feature["signals"]["endpoint_dist"] < EPS_CYC:
         return "cyclic"
-    # diverging (a): chroma dips near-neutral mid, ends stay chromatic AND
-    # lightness-comparable (the end-L guard rejects monotonic sequentials like cividis)
-    sig_a = (s["end_chroma"] > END_CHROMA_MIN
-             and s["mid_vs_end_chroma"] < MID_CHROMA_RATIO
-             and s["end_L_match"] < END_L_MATCH_A)
-    # diverging (b): matched-lightness ends + strong interior L extremum
-    sig_b = s["end_L_match"] < END_L_MATCH_EPS and s["interior_L_prominence"] > INTERIOR_PROM_MIN
-    if sig_a or sig_b:
-        return "diverging"
-    return "sequential"
+    return "non_cyclic"
 
 
 def compute_all_features(palettes, n=N_ANCHORS):

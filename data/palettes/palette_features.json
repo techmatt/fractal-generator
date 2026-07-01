@@ -1,6 +1,6 @@
 {
  "magma": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -175,7 +175,7 @@
   }
  },
  "inferno": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -350,7 +350,7 @@
   }
  },
  "plasma": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -525,7 +525,7 @@
   }
  },
  "viridis": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -700,7 +700,7 @@
   }
  },
  "cividis": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -1225,7 +1225,7 @@
   }
  },
  "turbo": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -1400,7 +1400,7 @@
   }
  },
  "berlin": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -1575,7 +1575,7 @@
   }
  },
  "managua": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -1750,7 +1750,7 @@
   }
  },
  "Blues": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -1925,7 +1925,7 @@
   }
  },
  "BrBG": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -2100,7 +2100,7 @@
   }
  },
  "CMRmap": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -2275,7 +2275,7 @@
   }
  },
  "GnBu": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -2450,7 +2450,7 @@
   }
  },
  "PuOr": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -2625,7 +2625,7 @@
   }
  },
  "RdBu": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -2800,7 +2800,7 @@
   }
  },
  "RdGy": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -2975,7 +2975,7 @@
   }
  },
  "RdPu": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -3150,7 +3150,7 @@
   }
  },
  "RdYlBu": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -3325,7 +3325,7 @@
   }
  },
  "Spectral": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -3500,7 +3500,7 @@
   }
  },
  "YlGnBu": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -3675,7 +3675,7 @@
   }
  },
  "YlOrBr": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -3850,7 +3850,7 @@
   }
  },
  "YlOrRd": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -4025,7 +4025,7 @@
   }
  },
  "afmhot": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -4200,7 +4200,7 @@
   }
  },
  "bwr": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -4375,7 +4375,7 @@
   }
  },
  "coolwarm": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -4550,7 +4550,7 @@
   }
  },
  "gist_heat": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -4725,7 +4725,7 @@
   }
  },
  "gist_stern": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -4900,7 +4900,7 @@
   }
  },
  "seismic": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -5075,7 +5075,7 @@
   }
  },
  "cet_diverging_bwr_40_95_c42": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -5250,7 +5250,7 @@
   }
  },
  "cet_linear_kryw_5_100_c64": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -5425,7 +5425,7 @@
   }
  },
  "cet_linear_bgyw_15_100_c68": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -5600,7 +5600,7 @@
   }
  },
  "cet_linear_bmw_5_95_c86": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -5775,7 +5775,7 @@
   }
  },
  "cet_linear_bmy_10_95_c71": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -5950,7 +5950,7 @@
   }
  },
  "cet_linear_kry_5_98_c75": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -6125,7 +6125,7 @@
   }
  },
  "cet_linear_kry_5_95_c72": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -6300,7 +6300,7 @@
   }
  },
  "cet_linear_kryw_0_100_c71": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -6475,7 +6475,7 @@
   }
  },
  "cet_linear_bmy_10_95_c78": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -6825,7 +6825,7 @@
   }
  },
  "cet_linear_kryw_5_100_c67": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -7000,7 +7000,7 @@
   }
  },
  "cet_linear_tritanopic_krjcw_5_98_c46": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -7525,7 +7525,7 @@
   }
  },
  "cet_linear_protanopic_deuteranopic_kbw_5_98_c40": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -7700,7 +7700,7 @@
   }
  },
  "cet_linear_protanopic_deuteranopic_kbjyw_5_95_c25": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -7875,7 +7875,7 @@
   }
  },
  "cet_linear_kry_0_97_c73": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -8225,7 +8225,7 @@
   }
  },
  "cet_linear_protanopic_deuteranopic_kbw_5_95_c34": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -8575,7 +8575,7 @@
   }
  },
  "cet_linear_tritanopic_krw_5_95_c46": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -9100,7 +9100,7 @@
   }
  },
  "cmr.amber": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -9275,7 +9275,7 @@
   }
  },
  "cmr.copper": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "cyclic",
   "canonical_reversed": true,
   "trajectory": [
@@ -9450,7 +9450,7 @@
   }
  },
  "cmr.ember": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -9800,7 +9800,7 @@
   }
  },
  "cmr.fall": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -9975,7 +9975,7 @@
   }
  },
  "cmr.fusion": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "cyclic",
   "canonical_reversed": true,
   "trajectory": [
@@ -10150,7 +10150,7 @@
   }
  },
  "cmr.jungle": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -10325,7 +10325,7 @@
   }
  },
  "cmr.lilac": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -10500,7 +10500,7 @@
   }
  },
  "cmr.ocean": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -10675,7 +10675,7 @@
   }
  },
  "cmr.pride": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "cyclic",
   "canonical_reversed": true,
   "trajectory": [
@@ -10850,7 +10850,7 @@
   }
  },
  "cmr.prinsenvlag": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -11025,7 +11025,7 @@
   }
  },
  "cmr.rainforest": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -11200,7 +11200,7 @@
   }
  },
  "cmr.redshift": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -11375,7 +11375,7 @@
   }
  },
  "cmr.savanna": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -11550,7 +11550,7 @@
   }
  },
  "cmr.seasons": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "cyclic",
   "canonical_reversed": true,
   "trajectory": [
@@ -11900,7 +11900,7 @@
   }
  },
  "cmr.sunburst": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -12075,7 +12075,7 @@
   }
  },
  "cmr.swamp": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -12250,7 +12250,7 @@
   }
  },
  "cmr.torch": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -12425,7 +12425,7 @@
   }
  },
  "cmr.toxic": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -12600,7 +12600,7 @@
   }
  },
  "cmr.viola": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "cyclic",
   "canonical_reversed": true,
   "trajectory": [
@@ -12775,7 +12775,7 @@
   }
  },
  "cmr.voltage": {
-  "type": "sequential",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
@@ -12950,7 +12950,7 @@
   }
  },
  "cmr.waterlily": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": true,
   "trajectory": [
@@ -13125,7 +13125,7 @@
   }
  },
  "cmr.wildfire": {
-  "type": "diverging",
+  "type": "non_cyclic",
   "declared_cycle": "sequential",
   "canonical_reversed": false,
   "trajectory": [
