@@ -65,6 +65,9 @@ __pycache__/
 # reproducible but load-bearing -- downstream samplers/dispatch load it directly.
 !/data/palettes/score3_colormaps.json
 !/data/palettes/palette_features.json
+# durable merged palette pool (tools/palettes/build_pool.py): the preference
+# network's palette source of truth (curated q2/q3 + quality-passing extracted).
+!/data/palettes/pool_colormaps.json
 # Hand-picked reference test fixtures (load-bearing metadata, not regenerable):
 # the test render locations and the test palette selection.
 !/data/test_renders.json
