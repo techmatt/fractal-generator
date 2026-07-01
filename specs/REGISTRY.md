@@ -3,11 +3,13 @@
 **Generated from `specs/modes_registry.json` — do not hand-edit.**
 Regenerate: `uv run python tools/specs/gen_registry.py`. Consistency (keys match specs/, valid tiers, stamped-tier parity) is enforced by `cargo test --test modes_registry`.
 
-Counts: **7 promoted**, **19 niche** (26 total). Deletion candidates: **10**.
+Counts: **9 promoted**, **19 niche** (28 total). Deletion candidates: **10**.
 
 ## Promoted — standard / reference render modes
 
 - **`smooth`** — Canonical smooth-iteration gradient / base carrier all composites build on; fully palette-respecting and robust across locations.
+- **`tia`** — Triangle-inequality-average banding; strong standalone, skip 1 (drops the unstable first term), linear transform (log/sqrt are coloring-curve options, not separate modes).
+- **`stripe`** — Stripe-average banding; combed flowing striations; density 6, linear transform (the standalone form of the c13 composite base).
 - **`exp_smoothing`** — Exponential-smoothing smooth-escape field, linear stretch — the standard smooth render.
 - **`smooth_mean_angle`** — Smooth base + gaussian_int texture (color_by mean_angle), screen combine, weight 0.85.
 - **`smooth_angle_min`** — Smooth base + gaussian_int texture (color_by angle_min), screen combine, weight 0.85.
