@@ -150,6 +150,87 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     // location-profile path below.
     let coloring_params = resolve_coloring(&args.coloring)?;
 
+    // --- field dump branch (serialize the raw smooth field, exit before coloring) ---
+    if let Some(dump_path) = &args.dump_field {
+        // The dumped field is the beautiful *smooth* field. Its only iterate-stage
+        // input is the bailout: take it from an explicit `--coloring` smooth spec,
+        // else the beautiful-smooth default (2^16). A non-smooth `--coloring` is a
+        // loud error rather than a silently-ignored field.
+        let field_params = match &coloring_params {
+            Some(cp) if cp.field == render_modes::Field::Smooth => *cp,
+            Some(cp) => {
+                return Err(format!(
+                    "--dump-field serializes the smooth field, but --coloring names field={:?}. \
+                     Pass a smooth spec (e.g. '{{\"field\":\"smooth\"}}') or omit --coloring.",
+                    cp.field
+                ));
+            }
+            None => ColoringParams::beautiful(render_modes::Field::Smooth),
+        };
+        let t0 = Instant::now();
+        let (field, sub_w, sub_h) = render_modes::smooth_field_supersampled(
+            &frame,
+            ss,
+            args.maxiter,
+            julia_param,
+            &field_params,
+        );
+        let secs = t0.elapsed().as_secs_f64();
+
+        // Raw binary: little-endian f32, row-major.
+        ensure_parent_dir(dump_path)?;
+        let mut bytes = Vec::with_capacity(field.len() * 4);
+        for v in &field {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(dump_path, &bytes)
+            .map_err(|e| format!("write field {dump_path}: {e}"))?;
+
+        // JSON sidecar alongside the binary. `width`/`height` are the *supersampled*
+        // array dims (so binary length == width·height); `supersample` folds them to
+        // the eval size (out = width/ss). Location is version-invariant render keys.
+        let (kind, c_fields) = match &julia_param {
+            Some(_) => {
+                let c = args
+                    .julia_c
+                    .as_ref()
+                    .expect("julia_param implies --c present");
+                (
+                    "julia",
+                    format!(",\"c_re\":\"{}\",\"c_im\":\"{}\"", c[0], c[1]),
+                )
+            }
+            None => ("mandelbrot", String::new()),
+        };
+        let sidecar = format!(
+            "{{\"width\":{sub_w},\"height\":{sub_h},\"supersample\":{ss},\
+             \"field\":\"smooth\",\"dtype\":\"f32\",\"layout\":\"row_major\",\
+             \"bailout_b\":{bailout},\
+             \"location\":{{\"kind\":\"{kind}\",\"cx\":\"{cx}\",\"cy\":\"{cy}\",\
+             \"fw\":\"{fw}\",\"maxiter\":{maxiter}{c_fields}}}}}",
+            bailout = field_params.bailout_b,
+            cx = args.center_re,
+            cy = args.center_im,
+            fw = args.frame_width,
+            maxiter = args.maxiter,
+        );
+        let json_path = match dump_path.strip_suffix(".bin") {
+            Some(stem) => format!("{stem}.json"),
+            None => format!("{dump_path}.json"),
+        };
+        std::fs::write(&json_path, sidecar).map_err(|e| format!("write sidecar {json_path}: {e}"))?;
+
+        eprintln!(
+            "dump-field: {sub_w}x{sub_h} (ss{ss}) smooth field → {dump_path} (+ {json_path}) in {secs:.2}s"
+        );
+        println!("=== render-one (dump-field) ===");
+        println!("field:   {dump_path}");
+        println!("sidecar: {json_path}");
+        println!("dims:    {sub_w}x{sub_h} (supersampled, ss{ss})");
+        println!("total:   {secs:.3}s");
+        return Ok(());
+    }
+
     let mode = match julia_param {
         Some(p) => format!("julia c=({:.9}, {:.9})", p.re, p.im),
         None => "mandelbrot".to_string(),
@@ -421,6 +502,18 @@ pub struct RenderOneArgs {
     /// train-time JPEG-q jitter (85..95) does not compound artifacts.
     #[arg(long, default_value_t = 95)]
     pub jpg_quality: u8,
+
+    /// Dump the **raw smooth scalar field** (pre-coloring: before percentile-stretch,
+    /// transform, gamma, shade, palette) to `<path>` as little-endian `f32`,
+    /// row-major, at the supersampled resolution (`--width·ss × --height·ss`);
+    /// interior / non-escaped subpixels are `NaN`. Also writes a JSON sidecar
+    /// (`<path>` with `.bin`→`.json`, else `<path>.json`) describing dims / ss /
+    /// location. Computes the field and **exits before coloring** — no PNG is
+    /// written. The field is fixed to `smooth`; its bailout follows `--coloring`
+    /// (`{"field":"smooth", ...}`) or, when absent, the beautiful-smooth default
+    /// (`2^16`). This is the serialization half of the field⊗Python-coloring split.
+    #[arg(long)]
+    pub dump_field: Option<String>,
 
     /// Beautiful coloring params as a JSON object (inline, or `@path` to read from
     /// a file). Omitted — or any spec that resolves to the default (e.g. `{}`) —

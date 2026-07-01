@@ -1527,6 +1527,64 @@ pub fn render_beautiful(
     render_beautiful_single(frame, ss, maxiter, julia_param, params, palette, filter)
 }
 
+/// Compute the **raw smooth scalar field** over the supersampled grid — the most
+/// upstream scalar the smooth render consumes, *before* percentile-stretch,
+/// transform, gamma, shade, and palette. Interior / non-escaped subpixels are
+/// `f32::NAN` (the mask rides in the data). Row-major, length `(out_h·ss)·(out_w·ss)`.
+///
+/// This is the serialization source for the field⊗Python-coloring split
+/// (`render-one --dump-field`): the returned values are **bit-for-bit** the same
+/// `Field::Smooth` scalars [`render_beautiful_single`] reduces per subpixel (same
+/// grid geometry, same [`iterate_orbit`], same [`OrbitAccum::field`] reduction) —
+/// so a Python coloring tail fed this field reproduces the Rust smooth render.
+/// `params` supplies only the iterate-stage knobs the smooth field reads
+/// (`bailout_b`, `biomorph`); the field is fixed to `Smooth` regardless of
+/// `params.field`. Returns `(field, sub_w, sub_h)`.
+pub fn smooth_field_supersampled(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    julia_param: Option<Complex<f64>>,
+    params: &ColoringParams,
+) -> (Vec<f32>, u32, u32) {
+    let s = ss.max(1);
+    let sub_w = (frame.out_width * s) as usize;
+    let sub_h = (frame.out_height * s) as usize;
+    let fw = frame.frame_width;
+    let fh = frame.frame_height();
+    let sub_w_f = sub_w as f64;
+    let sub_h_f = sub_h as f64;
+    let center = frame.center;
+    let julia = julia_param.is_some();
+
+    // Grid geometry identical to `render_beautiful_single` (grid-centered SS).
+    let rows: Vec<Vec<f32>> = (0..sub_h)
+        .into_par_iter()
+        .map(|srow| {
+            let py = srow as f64 + 0.5;
+            let dc_im = (0.5 - py / sub_h_f) * fh;
+            let mut row = Vec::with_capacity(sub_w);
+            for scol in 0..sub_w {
+                let px = scol as f64 + 0.5;
+                let dc_re = (px / sub_w_f - 0.5) * fw;
+                let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
+                let (z0, c) = match julia_param {
+                    Some(p) => (pixel, p),
+                    None => (Complex::new(0.0, 0.0), pixel),
+                };
+                let acc = iterate_orbit(z0, c, maxiter, params, julia);
+                // NaN encodes interior / non-escaped (Field::Smooth is exterior-only).
+                let v = acc.field(Field::Smooth).map_or(f32::NAN, |x| x as f32);
+                row.push(v);
+            }
+            row
+        })
+        .collect();
+
+    let flat: Vec<f32> = rows.into_iter().flatten().collect();
+    (flat, sub_w as u32, sub_h as u32)
+}
+
 /// **Direct Orbit Traps** — the one colour-valued path (doc §"Direct Orbit Traps").
 /// Unlike the scalar fields, this composites a gradient sample into a per-pixel
 /// RGBA accumulator on every iteration the orbit enters the trap, and emits the
@@ -2054,6 +2112,58 @@ mod tests {
         // count == 1 → plain sum (deband needs ≥2 terms).
         let one = OrbitAccum { stripe: (0.42, 1, 0.42), ..acc };
         assert_eq!(one.field(Field::Stripe), Some(0.42));
+    }
+
+    /// The dumped smooth field has the supersampled dims, and its NaN mask is
+    /// exactly the interior (non-escaped) mask — i.e. a NaN entry iff
+    /// `iterate_orbit(...).field(Smooth)` is `None` at that grid point, and the
+    /// finite entries equal that scalar (the pre-coloring value the render consumes).
+    #[test]
+    fn dump_field_geometry_and_nan_mask() {
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.02,
+            out_width: 20,
+            out_height: 12,
+        };
+        let ss = 2u32;
+        let maxiter = 400u32;
+        let params = ColoringParams::beautiful(Field::Smooth);
+        let (field, w, h) = smooth_field_supersampled(&frame, ss, maxiter, None, &params);
+        assert_eq!((w, h), (40, 24));
+        assert_eq!(field.len(), (w * h) as usize);
+
+        // Recompute the reference per-subpixel scalar the same way the render does
+        // and confirm the dump matches it bit-for-bit (NaN iff interior).
+        let sub_w_f = w as f64;
+        let sub_h_f = h as f64;
+        let fw = frame.frame_width;
+        let fh = frame.frame_height();
+        let mut any_nan = false;
+        let mut any_finite = false;
+        for srow in 0..h as usize {
+            let py = srow as f64 + 0.5;
+            let dc_im = (0.5 - py / sub_h_f) * fh;
+            for scol in 0..w as usize {
+                let px = scol as f64 + 0.5;
+                let dc_re = (px / sub_w_f - 0.5) * fw;
+                let c = Complex::new(frame.center.re + dc_re, frame.center.im + dc_im);
+                let acc = iterate_orbit(Complex::new(0.0, 0.0), c, maxiter, &params, false);
+                let got = field[srow * w as usize + scol];
+                match acc.field(Field::Smooth) {
+                    Some(v) => {
+                        any_finite = true;
+                        assert_eq!(got, v as f32, "finite mismatch at ({scol},{srow})");
+                    }
+                    None => {
+                        any_nan = true;
+                        assert!(got.is_nan(), "expected NaN at interior ({scol},{srow})");
+                    }
+                }
+            }
+        }
+        assert!(any_finite, "patch had no escaped pixels");
+        assert!(any_nan, "patch had no interior pixels (pick a mixed patch)");
     }
 
     #[test]
