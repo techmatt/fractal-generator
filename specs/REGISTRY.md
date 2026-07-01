@@ -3,7 +3,7 @@
 **Generated from `specs/modes_registry.json` — do not hand-edit.**
 Regenerate: `uv run python tools/specs/gen_registry.py`. Consistency (keys match specs/, valid tiers, stamped-tier parity) is enforced by `cargo test --test modes_registry`.
 
-Counts: **9 promoted**, **19 niche** (28 total). Deletion candidates: **10**.
+Counts: **9 promoted**, **7 niche** (16 total). Deletion candidates: **0**.
 
 ## Promoted — standard / reference render modes
 
@@ -25,29 +25,8 @@ Counts: **9 promoted**, **19 niche** (28 total). Deletion candidates: **10**.
 - **`direct_trap_multiply`** — Direct-trap composite, cross shape, multiply over white start (dark lace on light). _The dark-lace-on-light look depends on start_color + multiply, not the palette; location-specialist. Family palette-respect needs two-pass whole-image key-normalization — parked._
 - **`direct_trap_lines`** — Direct-trap composite, anisotropic |Im z| lines, screen over black start. _Narrowest / most directional of the family; palette-indifferent by construction. Family palette-respect needs two-pass whole-image key-normalization — parked._
 - **`trap_circle`** — Solo trap_circle field (min of ||z|-r|), no shade. _Not viable solo at high-complexity locations; its promoted home is the C7 composite texture._
-- **`trap_cross`** — Solo cross / Pickover-stalk trap field (min(|Re z|,|Im z|)), no shade. _Floor-clustered / degenerate; superseded by the direct-trap path._
 - **`curv_linear`** — Curvature single-field, linear transform. _Curvature single-field transform probe; curvature's promoted home is the C17 composite texture._
-- **`curv_log`** — Curvature single-field, log transform. _Curvature single-field transform probe; curvature's promoted home is the C17 composite texture._
-- **`curv_sqrt`** — Curvature single-field, sqrt transform. _Curvature single-field transform probe; curvature's promoted home is the C17 composite texture._
-- **`tia_linear_skip0`** — TIA (triangle-inequality average) field, linear transform, skip 0. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_linear_skip1`** — TIA (triangle-inequality average) field, linear transform, skip 1. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_linear_skip2`** — TIA (triangle-inequality average) field, linear transform, skip 2. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_log_skip0`** — TIA (triangle-inequality average) field, log transform, skip 0. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_log_skip1`** — TIA (triangle-inequality average) field, log transform, skip 1. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_log_skip2`** — TIA (triangle-inequality average) field, log transform, skip 2. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_sqrt_skip0`** — TIA (triangle-inequality average) field, sqrt transform, skip 0. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_sqrt_skip1`** — TIA (triangle-inequality average) field, sqrt transform, skip 1. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_sqrt_skip2`** — TIA (triangle-inequality average) field, sqrt transform, skip 2. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
 
 ## Deletion candidates (flagged, not deleted)
 
-- **`trap_cross`** — Solo cross / Pickover-stalk trap field (min(|Re z|,|Im z|)), no shade. _Floor-clustered / degenerate; superseded by the direct-trap path._
-- **`tia_linear_skip0`** — TIA (triangle-inequality average) field, linear transform, skip 0. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_linear_skip1`** — TIA (triangle-inequality average) field, linear transform, skip 1. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_linear_skip2`** — TIA (triangle-inequality average) field, linear transform, skip 2. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_log_skip0`** — TIA (triangle-inequality average) field, log transform, skip 0. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_log_skip1`** — TIA (triangle-inequality average) field, log transform, skip 1. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_log_skip2`** — TIA (triangle-inequality average) field, log transform, skip 2. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_sqrt_skip0`** — TIA (triangle-inequality average) field, sqrt transform, skip 0. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_sqrt_skip1`** — TIA (triangle-inequality average) field, sqrt transform, skip 1. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
-- **`tia_sqrt_skip2`** — TIA (triangle-inequality average) field, sqrt transform, skip 2. _TIA transform x skip exploration sweep; not individually promoted — sweep scaffolding._
+_(none)_
