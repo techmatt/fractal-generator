@@ -1,4 +1,5 @@
 [
+{"spec":"smooth","tier":"promoted","identity":"Canonical smooth-iteration gradient / base carrier all composites build on; fully palette-respecting and robust across locations.","reason":""},
 {"spec":"exp_smoothing","tier":"promoted","identity":"Exponential-smoothing smooth-escape field, linear stretch — the standard smooth render.","reason":""},
 {"spec":"smooth_mean_angle","tier":"promoted","identity":"Smooth base + gaussian_int texture (color_by mean_angle), screen combine, weight 0.85.","reason":""},
 {"spec":"smooth_angle_min","tier":"promoted","identity":"Smooth base + gaussian_int texture (color_by angle_min), screen combine, weight 0.85.","reason":""},
