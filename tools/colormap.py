@@ -357,7 +357,29 @@ DEFAULT_FEATURES = "data/palettes/palette_features.json"
 
 class PaletteLibrary:
     """Loads score3_colormaps.json (stops + mirror_needed) and palette_features.json
-    (type). Bakes/caches a LUT per (name, reverse, mirror)."""
+    (type). Bakes/caches a LUT per (name, reverse, mirror).
+
+    TWO cyclic-ness fields, DIFFERENT jobs — do not use one for the other's decision:
+
+        field          file                    binary values          governs
+        -----------    --------------------    -------------------    ---------------------
+        `type`         palette_features.json   {cyclic, non_cyclic}   coloring knobs:
+                                                                       phase / n_cycles apply
+                                                                       ONLY to `type==cyclic`
+                                                                       (`validate_config` raises
+                                                                       otherwise). = `palette_type()`.
+        `cycle`        *_colormaps.json        {cyclic, sequential}   the mirror seam-fix:
+        (-> `mirror_needed`)                                          sequential maps bake
+                                                                       pre-mirrored to de-seam;
+                                                                       cyclic maps do not. = `lut()`.
+
+    They agree for most palettes but are NOT interchangeable: a few maps are
+    `type==non_cyclic` yet `cycle==cyclic` (get no cyclic knobs, no mirror). The one
+    render-relevant invariant — enforced at pool-build time (build_pool.py) — is that
+    NO palette is `type==cyclic` while `cycle==sequential`: a genuinely-cyclic palette
+    handed n_cycles/phase must never also be pre-mirrored (that would halve+reflect its
+    intended cycle). Deciding a knob from `cycle`, or the mirror from `type`, is the bug
+    this table exists to prevent."""
 
     def __init__(self, colormaps_path=DEFAULT_COLORMAPS, features_path=DEFAULT_FEATURES):
         cms = json.loads(Path(colormaps_path).read_text())

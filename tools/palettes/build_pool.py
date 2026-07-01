@@ -28,7 +28,8 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # tools/
+import _bootstrap  # noqa: E402,F401  (adds tools/{palettes,corpus,queries} to sys.path)
 import palette_features as pf  # noqa: E402
 import build_features as bf     # noqa: E402
 
@@ -202,7 +203,10 @@ def main():
     names = [p["name"] for p in pool]
     assert len(names) == len(set(names)), "duplicate names in pool!"
 
-    # --- write pool artifact (name, source, source-native quality, cycle, stops) ---
+    # --- write pool artifact (name, source, source-native quality, cycle, mirror_needed, stops) ---
+    # `mirror_needed` is emitted here so the pool shares ONE schema with score3/clean
+    # (colormap.PaletteLibrary.lut reads it): a SEQUENTIAL map needs the selective
+    # pre-mirror to de-seam, a cyclic one does not. No caller re-derives the rule.
     pool_out = []
     for p in pool:
         e = {"name": p["name"], "source": p["source"]}
@@ -211,6 +215,7 @@ def main():
         else:
             e["composite"] = p["composite"]
         e["cycle"] = p["cycle"]
+        e["mirror_needed"] = (p["cycle"] == "sequential")
         e["stops"] = p["stops"]
         pool_out.append(e)
     os.makedirs(os.path.dirname(POOL_JSON), exist_ok=True)
@@ -222,6 +227,16 @@ def main():
     feats = pf.compute_all_features(pool)
     bf.write_features_json(pool, feats, path=FEATURES_JSON)
     print("wrote %s  (%d entries, features)" % (os.path.relpath(FEATURES_JSON, ROOT), len(feats)))
+
+    # Render-safety invariant on the two cyclic-ness fields (see colormap.PaletteLibrary
+    # docstring): `type` governs the cyclic-only knobs, `cycle`/`mirror_needed` governs
+    # the mirror seam-fix. They may disagree harmlessly (type=non_cyclic yet cycle=cyclic),
+    # but NO palette may be type==cyclic while cycle==sequential — a cyclic palette that
+    # gets n_cycles/phase must never also bake pre-mirrored. Fail the build if it does.
+    bad = [p["name"] for p in pool
+           if pf.derive_type(feats[p["name"]]) == "cyclic" and p["cycle"] == "sequential"]
+    assert not bad, ("type==cyclic but cycle==sequential (mirror would corrupt the "
+                     "intended cycle): %s" % bad)
 
     # sanity: extracted are stored closed -> should derive cyclic. derive_type now reads the
     # TRUE authored seam gap (stop[0] vs stop[-1] in OKLab); for any residual non_cyclic,

@@ -30,22 +30,20 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import sys
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(ROOT / "tools" / "palettes"))
-sys.path.insert(0, str(ROOT / "tools" / "corpus"))
+import _bootstrap  # noqa: E402,F401  (adds tools/{palettes,corpus,queries} to sys.path)
 
 import colormap as cm  # noqa: E402  (CandidateConfig, LocationRef, PaletteLibrary, render_candidate, load_field)
 import palette_features as pf  # noqa: E402  (distance_matrix over trajectory features)
 import label_store as ls  # noqa: E402  (SIDECAR_LABELS + resolve_score — the shared resolver)
+import corpus_reader as cr  # noqa: E402  (iter_labeled — the ONE version-blind batch reader)
 
 # ---------------------------------------------------------------------------
 # Settled inputs (paths).
@@ -190,54 +188,50 @@ class LocationPool:
     def from_corpus(cls, batches_dir=BATCHES_DIR, scores=(2, 3), verbose=True):
         """Build the q2+q3 pool from every label-corpus batch, BOTH families.
 
-        Label resolution per row (single source of truth = the labels/ store):
-          1. `row.label.score` if already merged into images.jsonl; else
-          2. the batch's registered `labels/*.json` sidecar, joined by image_id
-             (see SIDECAR_LABELS — this is how Julia/mining/scale are recovered).
+        Batch reading + label resolution are DELEGATED to `corpus_reader.iter_labeled`
+        — the one version-blind reader — so a schema change to images.jsonl is absorbed
+        in a single place. `iter_labeled` yields one `LabeledCrop(score, image_id,
+        batch_id, render)` per non-null label (merged `label.score` ELSE the registered
+        `labels/*.json` sidecar joined by image_id — how Julia/mining/scale are
+        recovered) and runs the shared sidecar-join guard over its full pass. Here we
+        filter that stream to `scores` and dedup to unique locations.
 
-        A *location* is a unique (kind, cx, cy, fw, c_re, c_im); a row qualifies if its
-        resolved score is in `scores`. cx/cy already bake the composition offset. Prints
-        a loud per-batch, per-family census (Part-4 hardening: a dropped family/batch
-        shows as a `0` that is impossible to miss) and RAISES if a registered sidecar
-        batch joins 0 rows (its image_id keys diverged)."""
+        A *location* is a unique (kind, cx, cy, fw, c_re, c_im); cx/cy already bake the
+        composition offset. `batch_ids` is the label-corpus batch(es) the location was
+        labeled in — provenance is NOT surfaced by the version-blind reader (by design),
+        so this is the batch folder, not any upstream `provenance.batch_id`. Prints a
+        loud per-batch, per-family census (a dropped family/batch shows as a `0`) and
+        RAISES if a registered sidecar batch joins 0 q2+q3 rows."""
         keep = set(scores)
         by_key = {}
         census = {}
-        for jl in sorted(Path(batches_dir).glob("*/images.jsonl")):
-            batch_id = jl.parent.name
-            sidecar = ls.sidecar_for(batch_id)          # None unless registered
-            fams = census.setdefault(batch_id, {})
-            for line in jl.open(encoding="utf-8"):
-                line = line.strip()
-                if not line:
-                    continue
-                row = json.loads(line)
-                r = row["render"]
-                kind = "julia" if r.get("fractal_type") == "julia" else "mandelbrot"
-                sc = ls.resolve_score(row, sidecar)         # merged score ELSE sidecar join
-                if sc not in keep:
-                    continue
-                fams[kind] = fams.get(kind, 0) + 1
-                c_re = r.get("c_re")
-                c_im = r.get("c_im")
-                key = _loc_key(kind, r["cx"], r["cy"], r["fw"], c_re, c_im)
-                bid = (row.get("provenance") or {}).get("batch_id") or batch_id
-                if key in by_key:
-                    pl = by_key[key]
-                    pl.scores.append(sc)
-                    pl.batch_ids.add(bid)
-                else:
-                    ref = cm.LocationRef(
-                        kind=kind, cx=r["cx"], cy=r["cy"], fw=r["fw"],
-                        maxiter=int(r["maxiter"]), c_re=c_re, c_im=c_im,
-                    )
-                    by_key[key] = PooledLocation(ref=ref, scores=[sc], batch_ids={bid})
+        for lc in cr.iter_labeled(str(Path(batches_dir).parent)):
+            fams = census.setdefault(lc.batch_id, {})   # every labeled batch shows in the census
+            if lc.score not in keep:
+                continue
+            r = lc.render
+            kind = "julia" if r.get("fractal_type") == "julia" else "mandelbrot"
+            fams[kind] = fams.get(kind, 0) + 1
+            c_re = r.get("c_re")
+            c_im = r.get("c_im")
+            key = _loc_key(kind, r["cx"], r["cy"], r["fw"], c_re, c_im)
+            if key in by_key:
+                pl = by_key[key]
+                pl.scores.append(lc.score)
+                pl.batch_ids.add(lc.batch_id)
+            else:
+                ref = cm.LocationRef(
+                    kind=kind, cx=r["cx"], cy=r["cy"], fw=r["fw"],
+                    maxiter=int(r["maxiter"]), c_re=c_re, c_im=c_im,
+                )
+                by_key[key] = PooledLocation(ref=ref, scores=[lc.score], batch_ids={lc.batch_id})
         pool = cls(by_key.values(), census=census)
         if verbose:
             pool.print_census()
-        # Join-integrity guard (shared with corpus_reader): every registered sidecar
-        # batch is known to hold q2/q3 labels, so a 0 there means the image_id join
-        # broke (renamed keys / wrong file).
+        # Join-integrity guard on the q2+q3 census specifically (iter_labeled runs its
+        # own guard over ALL labels): every registered sidecar batch is known to hold
+        # q2/q3 labels, so a 0 here means the image_id join broke (renamed keys / wrong
+        # file).
         ls.assert_sidecars_joined({bid: sum(f.values()) for bid, f in census.items()})
         return pool
 
@@ -493,20 +487,17 @@ def compose_query(location, rng, sampler, query_type=None):
 
 
 # ===========================================================================
-# Palette library wired to the POOL (adds mirror_needed the pool file omits).
+# Palette library wired to the POOL.
 # ===========================================================================
 
 def load_pool_library(colormaps_path=POOL_COLORMAPS, features_path=PALETTE_FEATURES):
-    """`cm.PaletteLibrary` over pool_colormaps.json, injecting `mirror_needed`.
+    """`cm.PaletteLibrary` over pool_colormaps.json — a thin path-binding wrapper.
 
-    pool_colormaps.json (unlike score3/clean) carries no `mirror_needed`; the render
-    load derives it from the declared cycle exactly as score3 did — sequential maps
-    need the selective pre-mirror to de-seam, cyclic maps do not. Rule verified against
-    score3_colormaps.json: mirror_needed <=> cycle == 'sequential'."""
-    lib = cm.PaletteLibrary(colormaps_path=str(colormaps_path), features_path=str(features_path))
-    for name, c in lib.colormaps.items():
-        c["mirror_needed"] = (c.get("cycle") == "sequential")
-    return lib
+    pool_colormaps.json now carries `mirror_needed` natively (emitted by
+    tools/palettes/build_pool.py, one schema with score3/clean), so there is nothing
+    to inject: `PaletteLibrary.lut` reads it directly. Sequential maps de-seam via the
+    selective pre-mirror; cyclic maps do not."""
+    return cm.PaletteLibrary(colormaps_path=str(colormaps_path), features_path=str(features_path))
 
 
 if __name__ == "__main__":
