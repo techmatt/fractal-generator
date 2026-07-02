@@ -17,7 +17,7 @@
       "name": "cmr.fusion",
       "source": "cmasher",
       "quality": 3,
-      "type": "sequential, dark-zero warm (purple → amber)"
+      "type": "diverging (blue → white → red)"
     },
     {
       "id": "pal_03",
