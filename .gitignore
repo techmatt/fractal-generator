@@ -84,6 +84,16 @@ __pycache__/
 # regenerable view (rev4_sanity_sheet.py) — not part of the commit policy.
 /data/label_corpus/batches/*/sanity_contact_sheet.html
 
+# Palette-preference query labels (tools/queries/launch_query_label_server.py):
+# the authoritative per-batch hand-labeled tier store is tiny + irreplaceable, so
+# commit it; the query batch (records/images) and stamped *_export_* dumps are
+# regenerable and stay ignored.
+!/data/queries/
+/data/queries/*
+!/data/queries/labels/
+/data/queries/labels/*
+!/data/queries/labels/coldstart_v2.json
+
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*
 !/data_large/README.md
