@@ -18,7 +18,7 @@ re-implemented and no fractal is recomputed per candidate:
   * feature-space farthest-point over the 777 pool (palette_features.distance_matrix +
     farthest_point_order),
   * v2 scoring via the scorer's own data.build_transform(train=False) + train.build_model
-    loading data/queries/scorer/v2/model_best.pt (reuses pilot_warmstart_v1.score_frames).
+    loading data/queries/scorer/v2/model_best.pt (reuses query_batch_gen.score_frames).
 
 Algorithm (per location):
   Stage 0  gen-0: draw 60 palettes by feature-space FP (diverse-by-construction — a bad
@@ -64,7 +64,7 @@ sys.path.insert(0, str(HERE))
 import query_sampler as qs                 # noqa: E402  (pool, sampler, ranges, sample_candidate)
 import assemble_queries as aq              # noqa: E402  (ensure_field, _field_key)
 import regenerate_coldstart_v2 as rc       # noqa: E402  (thumb_lab, render_space_dmat — render-space CIEDE2000)
-import pilot_warmstart_v1 as P             # noqa: E402  (score_frames — v2/v1-agnostic deploy-transform scorer)
+import query_batch_gen as P                # noqa: E402  (score_frames — v2/v1-agnostic deploy-transform scorer)
 import diversity_diagnostic as dd          # noqa: E402  (single_linkage_clusters)
 sys.path.insert(0, str(qs.ROOT / "tools" / "palettes"))
 import palette_features as pf              # noqa: E402  (distance_matrix, farthest_point_order — FEATURE space)
@@ -81,7 +81,7 @@ N_GEN0 = 60          # gen-0 palettes drawn by feature-space FP over the 777 poo
 TOP_KEEP = 18        # beam width -> lineages -> final pool size
 K_VARIANTS = 8       # param variants drawn per lineage per refinement round
 R_MAX = 2            # deepest refinement swept (R in {0,1,2}; 0/1 are snapshots of this pass)
-SEED = 7
+DEFAULT_SEED = 7     # --seed default; threads gen-0 param draws + refinement variants (repro)
 
 # Refinement perturbation schedule (coarse-to-fine). Round r (1-indexed) uses
 # scale = ANNEAL**(r-1): round 1 broad, round 2 tighter. gamma perturbed in LOG space.
@@ -371,7 +371,7 @@ def contact_18(res, path, tw=300, pad=6, bar=30, head=22, cols=6):
     sheet.save(path)
 
 
-def write_records(res, out_loc):
+def write_records(res, out_loc, seed):
     """Ranked, re-renderable config records per R snapshot (R=2 ranked = the pool)."""
     lin = res["lineages"]
     def rec(l, score, cfg):
@@ -384,7 +384,7 @@ def write_records(res, out_loc):
                      "fw": res["ref"].fw, "maxiter": res["ref"].maxiter,
                      "c_re": res["ref"].c_re, "c_im": res["ref"].c_im},
         "constants": {"N_GEN0": N_GEN0, "TOP_KEEP": TOP_KEEP, "K_VARIANTS": K_VARIANTS,
-                      "R_MAX": R_MAX, "seed": SEED, "eval": [qs.EVAL_WIDTH, qs.EVAL_HEIGHT],
+                      "R_MAX": R_MAX, "seed": seed, "eval": [qs.EVAL_WIDTH, qs.EVAL_HEIGHT],
                       "ss": qs.CANDIDATE_SS},
         "gen0_spread": res["spread"],
         "lift": lift_table(res),
@@ -550,6 +550,9 @@ def main():
     ap.add_argument("--estimate", action="store_true", help="print runtime estimate and exit")
     ap.add_argument("--rebuild-sheets", action="store_true",
                     help="re-render before_after_paired.png from existing records.json (no sampler run)")
+    ap.add_argument("--seed", type=int, default=DEFAULT_SEED,
+                    help=f"seed for gen-0 param draws + refinement variants (default {DEFAULT_SEED}); "
+                         "a given seed reproduces the draw stream (GPU scoring is still nondeterministic)")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -562,17 +565,18 @@ def main():
         rebuild_paired_sheets()
         return
 
+    seed = args.seed
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    torch.manual_seed(SEED)
+    torch.manual_seed(seed)
 
     pool = qs.LocationPool.from_corpus()
     lib = qs.load_pool_library()
     sampler = qs.PaletteSampler(lib)
     model, epoch = load_v2(device)
     print(f"[sampler] {pool.report()}")
-    print(f"[sampler] loaded v2 model_best.pt (epoch {epoch}) on {device.type}")
+    print(f"[sampler] loaded v2 model_best.pt (epoch {epoch}) on {device.type}  seed={seed}")
 
-    locs = select_locations(pool, SEED)
+    locs = select_locations(pool, seed)
     print(f"[sampler] locations ({len(locs)}):")
     for label, r in locs:
         print(f"    {label:18} {r.kind:10} cx={r.cx[:16]} fw={r.fw[:10]} maxiter={r.maxiter}")
@@ -585,10 +589,10 @@ def main():
     t_wall = time.time()
     for label, ref in locs:
         t_loc = time.time()
-        res = run_location(label, ref, lib, sampler, model, device, SEED)
+        res = run_location(label, ref, lib, sampler, model, device, seed)
         out_loc = OUT_DIR / label
         out_loc.mkdir(parents=True, exist_ok=True)
-        rec = write_records(res, out_loc)
+        rec = write_records(res, out_loc, seed)
         before_after_strip(res, out_loc / "before_after.png")
         contact_18(res, out_loc / "top18_R2.png")
         paired_before_after(out_loc / "records.json", out_loc / "before_after_paired.png", lib)
@@ -614,7 +618,7 @@ def main():
         all_summ.append(rec)
 
     (OUT_DIR / "summary.json").write_text(json.dumps(
-        {"seed": SEED, "n_locations": len(locs), "wall_seconds": time.time() - t_wall,
+        {"seed": seed, "n_locations": len(locs), "wall_seconds": time.time() - t_wall,
          "locations": [{"label": r["label"], "lift": r["lift"], "gen0_spread": r["gen0_spread"],
                         "movement": r["movement"]} for r in all_summ]},
         indent=2))

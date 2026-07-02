@@ -1,4 +1,11 @@
-"""PILOT the v1-seeded labeling batch generator (warmstart_v1_pilot).
+"""Shared query-batch generation + render-scoring library (formerly pilot_warmstart_v1).
+
+This module is load-bearing: the full generator (`warmstart_v1.py`) and the
+per-location render sampler (`sample_location.py`) both import its pipeline
+(`run_palette`/`run_param`/`run_joint`, `select_new_locations`, `score_frames`,
+`set_stats`/`collapse_flag`, the candidate-config + render-space FP helpers). Its own
+`__main__` still runs the original cross-type PILOT (see below) as a smoke/validation
+entry, but the reusable pipeline is the reason it survives.
 
 Small cross-type sample of the type-dependent, v1-pre-concentrated candidate
 pipeline. Extends the coldstart candidate-gen front end (query_sampler +
@@ -27,8 +34,8 @@ locations, seed 2. It writes CandidateConfig records + contact sheets + a
 diagnostics report to data/queries/warmstart_v1_pilot/ and STOPS. No label-store
 wiring, no batch_meta/label-server. The full warmstart_v1 is a separate run.
 
-    uv run python tools/queries/pilot_warmstart_v1.py            # full pilot
-    uv run python tools/queries/pilot_warmstart_v1.py --estimate # est + exit
+    uv run python tools/queries/query_batch_gen.py            # full pilot
+    uv run python tools/queries/query_batch_gen.py --estimate # est + exit
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """Generate the full `warmstart_v1` labeling batch (200 queries) + wire it for labeling.
 
-Promotes the validated pilot (`pilot_warmstart_v1.py`) to the authoritative 200-query
+Promotes the validated pilot (`query_batch_gen.py`) to the authoritative 200-query
 labeling substrate. The per-type pipeline is REUSED VERBATIM from the pilot module
 (`run_palette`/`run_param`/`run_joint`, the v1-scoring insertion via the scorer's own
 `data.build_transform(train=False)` + `train.build_model` from
@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import query_sampler as qs                 # noqa: E402
 import assemble_queries as aq              # noqa: E402  (ensure_field, query_record, contact_sheet, candidate_record)
-import pilot_warmstart_v1 as P             # noqa: E402  (the validated pipeline — reused verbatim)
+import query_batch_gen as P                # noqa: E402  (the validated pipeline — reused verbatim)
 
 ROOT = qs.ROOT
 BATCH_ID = "warmstart_v1"
@@ -178,7 +178,7 @@ def write_batch_meta(plan, n_avail, n_excl, results, v1_epoch):
         "derived_from": ("v1 scorer data/queries/scorer/v1/model_best.pt; NEW corpus "
                          "locations disjoint from coldstart_v2's 188"),
         "invocation": "uv run python tools/queries/warmstart_v1.py",
-        "pipeline_module": "tools/queries/pilot_warmstart_v1.py (reused verbatim)",
+        "pipeline_module": "tools/queries/query_batch_gen.py (reused verbatim)",
         "n": N_QUERIES,
         "seed": SEED,
         "candidate_ss": qs.CANDIDATE_SS,
