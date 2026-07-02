@@ -1,0 +1,267 @@
+<!doctype html><html><head><meta charset="utf-8"><title>query label — palette preference</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#0e0f13;color:#ccc;margin:0;padding:0}
+header{position:sticky;top:0;background:#12141a;border-bottom:1px solid #23252e;padding:9px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;z-index:5}
+h1{font-size:15px;margin:0;color:#eee}
+.batch{color:#7a9;font-size:12px}
+.spacer{flex:1}
+button{font:inherit;background:#1c1f29;color:#ccc;border:1px solid #2c2f3a;border-radius:5px;padding:5px 10px;cursor:pointer}
+button:hover{background:#262a36}
+.counts{color:#888;font-size:12px}
+.counts b{color:#cdd}
+.good{color:#5ec07a}.bad{color:#e06a6a}.okay{color:#9aa}
+#instr{padding:8px 18px;color:#9aa;font-size:12px;border-bottom:1px solid #1a1c24;background:#0f1116}
+#instr b{color:#cdd}
+main{padding:16px 18px}
+.qhead{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px;color:#8a8f9c}
+.qhead .qid{color:#cdd;font-size:14px}
+.qhead .warn{color:#e0b24a}
+#grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.cell{position:relative;border:3px solid #23252e;border-radius:7px;overflow:hidden;background:#000;aspect-ratio:16/9;cursor:pointer}
+.cell img{width:100%;height:100%;object-fit:cover;display:block}
+.cell.good{border-color:#3fa262}.cell.bad{border-color:#c04a4a}.cell.okay{border-color:#3a3d48}
+.cell .keys{position:absolute;left:0;top:0;display:flex;font-size:12px}
+.cell .keys span{padding:2px 7px;background:rgba(0,0,0,.66);border-bottom-right-radius:6px}
+.cell .kg{color:#7ede9a}.cell .kb{color:#f08a8a}
+.cell .tier{position:absolute;right:0;top:0;font-size:11px;padding:2px 8px;background:rgba(0,0,0,.66);border-bottom-left-radius:6px;text-transform:uppercase;letter-spacing:.5px}
+.cell.good .tier{color:#7ede9a}.cell.bad .tier{color:#f08a8a}.cell.okay .tier{color:#888}
+.cell .dbg{position:absolute;left:0;right:0;bottom:0;font-size:10px;color:#bcd;background:rgba(0,0,0,.72);padding:2px 6px;display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.debug .cell .dbg{display:block}
+#legend{margin-top:14px;color:#777;font-size:11px}
+#legend kbd{background:#1c1f29;border:1px solid #2c2f3a;border-radius:3px;padding:0 5px;color:#cdd}
+#loader{padding:40px 18px;color:#9aa}
+#agree{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;z-index:40}
+#agree .box{background:#12141a;border:1px solid #2c2f3a;border-radius:10px;padding:22px 26px;max-width:640px;max-height:84vh;overflow:auto}
+#agree h2{margin:0 0 12px;font-size:16px;color:#eee}
+#agree .big{font-size:26px;color:#5ec07a}
+#agree .lab{color:#8a8f9c;font-size:12px}
+#agree table{border-collapse:collapse;margin-top:14px;font-size:11px;width:100%}
+#agree td,#agree th{border:1px solid #23252e;padding:2px 7px;text-align:right}
+#agree th:first-child,#agree td:first-child{text-align:left;color:#9aa}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#2a2020;color:#f0a;border:1px solid #5a2c2c;border-radius:6px;padding:7px 14px;font-size:12px;display:none;z-index:60}
+</style></head><body>
+<header>
+  <h1>query label</h1>
+  <span class="batch" id="batch-label"></span>
+  <span class="counts" id="counts"></span>
+  <span class="spacer"></span>
+  <button id="prev">◀ prev (←)</button>
+  <button id="next">confirm &amp; next (⏎)</button>
+  <button id="jump">next unconfirmed (u)</button>
+  <button id="dbg-btn">recipe (d)</button>
+  <button id="agree-btn">agreement</button>
+  <button id="export-btn">export</button>
+</header>
+
+<div id="instr">
+  Rank these <b>6 renders of the same location</b> against each other. Mark up to <b>3</b> you'd
+  keep as <b class="good">good</b> and up to <b>3</b> you'd discard as <b class="bad">bad</b>; the rest stay
+  <b class="okay">okay</b>. Judge only against the other five here, <b>not an absolute standard</b>. If they
+  all feel similar, leaving them all <b>okay</b> is a valid answer. Judge the <b>image</b>, not the recipe
+  (hidden by default — press <b>d</b> to peek).
+</div>
+
+<div id="loader">Loading batch …</div>
+
+<main id="app" style="display:none">
+  <div class="qhead">
+    <span class="qid" id="q-id"></span>
+    <span id="q-pos"></span>
+    <span id="q-pass"></span>
+    <span class="warn" id="q-warn"></span>
+  </div>
+  <div id="grid"></div>
+  <div id="legend">
+    hover a fractal, then <kbd>1</kbd> <span class="bad">bad</span> ·
+    <kbd>2</kbd> <span class="okay">okay</span> · <kbd>3</kbd> <span class="good">good</span> ·
+    <kbd>⏎</kbd>/<kbd>Space</kbd> confirm&amp;next · <kbd>←</kbd>/<kbd>→</kbd> move ·
+    <kbd>u</kbd> next unconfirmed · <kbd>d</kbd> recipe · click an image to cycle okay→good→bad
+  </div>
+</main>
+
+<div id="agree"><div class="box" id="agree-box"></div></div>
+<div id="toast"></div>
+
+<script>
+const TIER_KEY={'1':'bad','2':'okay','3':'good'};
+let ST=null;                 // /api/state payload
+let QUEUE=[], CANDS={}, LABELS={}, MAXSIDE=3;
+let cur=0;
+let hovered=null;            // cid of the cell currently under the mouse
+
+const $=id=>document.getElementById(id);
+
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block';
+  clearTimeout(toast._t); toast._t=setTimeout(()=>t.style.display='none',1400); }
+
+async function boot(){
+  const r=await fetch('/api/state'); ST=await r.json();
+  QUEUE=ST.queue; CANDS=ST.candidates; LABELS=ST.labels||{}; MAXSIDE=ST.config.max_per_side;
+  $('batch-label').textContent=ST.batch_id;
+  $('loader').style.display='none'; $('app').style.display='block';
+  cur=firstUnconfirmed();
+  render();
+}
+
+function firstUnconfirmed(){
+  const i=QUEUE.findIndex(p=>!(LABELS[p.pres_id]&&LABELS[p.pres_id].confirmed));
+  return i<0?0:i;
+}
+
+// working tiers for the current presentation (defaults all okay)
+function curTiers(){
+  const p=QUEUE[cur], lab=LABELS[p.pres_id];
+  const t={};
+  for(const c of p.display_order) t[c]=(lab&&lab.tiers&&lab.tiers[c])||'okay';
+  return t;
+}
+function counts(t){ let g=0,b=0; for(const k in t){ if(t[k]==='good')g++; else if(t[k]==='bad')b++; } return {g,b}; }
+
+function render(){
+  const p=QUEUE[cur];
+  const t=curTiers(), {g,b}=counts(t);
+  $('q-id').textContent=p.query_id;
+  $('q-pos').textContent=`${cur+1} / ${QUEUE.length}`;
+  $('q-pass').innerHTML = p.pass===2 ? '<span style="color:#c98">↻ consistency repeat</span>' : '';
+  const lab=LABELS[p.pres_id];
+  $('q-warn').textContent = (lab&&lab.confirmed)?'✓ confirmed':'';
+  const grid=$('grid'); grid.innerHTML='';
+  p.display_order.forEach((cid,i)=>{
+    const meta=CANDS[cid], tier=t[cid];
+    const rc=meta.recipe;
+    const dbg=`${cid} · ${rc.family||''} · ${rc.palette} [${rc.palette_type}/${rc.palette_source}]`
+      +` rev=${rc.reverse} n=${rc.n_cycles} γ=${(+rc.gamma).toFixed(2)} φ=${(+rc.phase).toFixed(2)} lp=${rc.log_premap}`;
+    const d=document.createElement('div');
+    d.className='cell '+tier; d.dataset.cid=cid;
+    d.innerHTML=`<img loading="lazy" src="/img/${meta.img}" title="${cid}">`
+      +`<div class="tier">${tier}</div><div class="dbg">${dbg}</div>`;
+    d.onmouseenter=()=>{hovered=cid;};
+    d.onclick=()=>cycle(cid);
+    grid.appendChild(d);
+  });
+  hovered=null;
+  refreshCounts();
+}
+
+function refreshCounts(){
+  let conf=0; for(const p of QUEUE) if(LABELS[p.pres_id]&&LABELS[p.pres_id].confirmed) conf++;
+  const t=curTiers(), {g,b}=counts(t);
+  $('counts').innerHTML=`<b>${conf}/${QUEUE.length}</b> confirmed &nbsp; `
+    +`this query: <span class="good">${g} good</span> / <span class="bad">${b} bad</span> `
+    +`<span style="color:#666">(≤${MAXSIDE} each)</span>`;
+}
+
+// set a candidate's tier, enforcing the per-side cap; posts a draft immediately
+function setTier(cid,tier){
+  const t=curTiers();
+  if(tier!=='okay'){
+    const {g,b}=counts(t);
+    const already=t[cid]===tier;
+    if(!already && tier==='good' && g>=MAXSIDE){ toast(`max ${MAXSIDE} good`); return; }
+    if(!already && tier==='bad'  && b>=MAXSIDE){ toast(`max ${MAXSIDE} bad`);  return; }
+  }
+  t[cid]=tier;
+  postLabel(t,false);            // draft (crash-safe), not yet confirmed
+  applyLocal(t);
+  paintCell(cid);
+  refreshCounts();
+}
+function toggle(cid,tier){ const t=curTiers(); setTier(cid, t[cid]===tier?'okay':tier); }
+function cycle(cid){ const t=curTiers(); const nx={okay:'good',good:'bad',bad:'okay'}[t[cid]]; setTier(cid,nx); }
+
+function applyLocal(t){
+  const p=QUEUE[cur];
+  LABELS[p.pres_id]=Object.assign({},LABELS[p.pres_id]||{},
+    {query_id:p.query_id,pass:p.pass,display_order:p.display_order,tiers:t,
+     confirmed:(LABELS[p.pres_id]&&LABELS[p.pres_id].confirmed)||false});
+}
+function paintCell(cid){
+  const t=curTiers();
+  const cell=[...$('grid').children].find(c=>c.dataset.cid===cid);
+  if(!cell)return;
+  cell.className='cell '+t[cid];
+  cell.querySelector('.tier').textContent=t[cid];
+}
+
+async function postLabel(tiers,confirmed){
+  const p=QUEUE[cur];
+  try{
+    const r=await fetch('/api/label',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pres_id:p.pres_id,tiers,confirmed})});
+    const j=await r.json();
+    if(!j.ok){ toast(j.error||'save failed'); }
+  }catch(e){ toast('save failed: '+e); }
+}
+
+async function confirmNext(){
+  const p=QUEUE[cur], t=curTiers();
+  await postLabel(t,true);
+  LABELS[p.pres_id]=Object.assign({},LABELS[p.pres_id]||{},
+    {query_id:p.query_id,pass:p.pass,display_order:p.display_order,tiers:t,confirmed:true});
+  if(cur<QUEUE.length-1){ cur++; render(); }
+  else { render(); toast('end of queue'); }
+}
+function move(d){ cur=(cur+d+QUEUE.length)%QUEUE.length; render(); }
+function jumpUnconfirmed(){
+  for(let k=1;k<=QUEUE.length;k++){ const i=(cur+k)%QUEUE.length;
+    if(!(LABELS[QUEUE[i].pres_id]&&LABELS[QUEUE[i].pres_id].confirmed)){ cur=i; render(); return; } }
+  toast('all confirmed');
+}
+
+document.addEventListener('keydown',e=>{
+  if($('app').style.display==='none')return;
+  if($('agree').style.display==='flex'){ if(e.key==='Escape')$('agree').style.display='none'; return; }
+  const k=e.key.toLowerCase();
+  const p=QUEUE[cur];
+  if(k in TIER_KEY){
+    if(hovered && p.display_order.includes(hovered)) setTier(hovered,TIER_KEY[k]);
+    else toast('hover a fractal first');
+    e.preventDefault();
+  }
+  else if(e.key==='Enter'||e.key===' '){ confirmNext(); e.preventDefault(); }
+  else if(e.key==='ArrowRight') move(1);
+  else if(e.key==='ArrowLeft') move(-1);
+  else if(k==='u') jumpUnconfirmed();
+  else if(k==='d') document.body.classList.toggle('debug');
+});
+$('prev').onclick=()=>move(-1);
+$('next').onclick=confirmNext;
+$('jump').onclick=jumpUnconfirmed;
+$('dbg-btn').onclick=()=>document.body.classList.toggle('debug');
+
+async function showAgreement(){
+  const a=await (await fetch('/api/agreement')).json();
+  const pct=x=>x==null?'—':(100*x).toFixed(1)+'%';
+  let rows='';
+  for(const q of a.per_query){
+    rows+=`<tr><td>${q.query_id}</td><td>${q.same_tier}/${q.n_candidates}</td>`
+      +`<td>${q.pair_agree}/${q.pair_total}</td></tr>`;
+  }
+  $('agree-box').innerHTML=
+    `<h2>Consistency probe — ${a.n_repeat_queries} repeated queries (both passes confirmed)</h2>`
+    +`<div class="lab">cross-tier pair-direction agreement <b>(the training-relevant number — do the constraints flip?)</b></div>`
+    +`<div class="big">${pct(a.pair_direction_rate)}</div>`
+    +`<div class="lab">${a.pair_direction_num}/${a.pair_direction_den} ordered pairs agree in direction across passes</div>`
+    +`<div class="lab" style="margin-top:14px">per-candidate same-tier rate</div>`
+    +`<div style="font-size:20px;color:#cdd">${pct(a.same_tier_rate)}</div>`
+    +`<div class="lab">${a.same_tier_num}/${a.same_tier_den} candidates land in the same tier both times</div>`
+    +(a.per_query.length?`<table><tr><th>query</th><th>same-tier</th><th>pair-dir</th></tr>${rows}</table>`:'')
+    +`<div style="margin-top:16px"><button onclick="document.getElementById('agree').style.display='none'">close (esc)</button></div>`;
+  $('agree').style.display='flex';
+}
+$('agree-btn').onclick=showAgreement;
+
+$('export-btn').onclick=async()=>{
+  const j=await (await fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+  if(j.ok){
+    const pd=j.agreement.pair_direction_rate;
+    alert(`Exported ${j.complete?'(COMPLETE)':'(partial — base '+j.progress.base_confirmed+'/'+j.progress.base_total+')'}\n`
+      +`\n${j.path}\n\nconsistency: pair-direction ${pd==null?'—':(100*pd).toFixed(1)+'%'} over ${j.agreement.n_repeat_queries} repeats`);
+  } else { toast(j.error||'export failed'); }
+};
+
+boot();
+</script>
+</body></html>
