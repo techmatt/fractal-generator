@@ -19,7 +19,7 @@ Artifacts (persistent, survive `rm -r out/*`):
         train.log
 
 Run:
-    uv run python -m tools.queries.scorer.train
+    uv run python tools/queries/scorer/train.py
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from tools.queries.scorer import data as D  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import data as D  # noqa: E402  (sibling module, script-style import)
 
 # ================= NAMED CONSTANTS =================
 SEED = 0
