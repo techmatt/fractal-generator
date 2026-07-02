@@ -1,21 +1,36 @@
-"""Train the bootstrap palette-preference scorer.
+"""Train the palette-preference scorer v2 on combined coldstart_v2 + warmstart_v1.
 
 Single-tower f(image)->scalar utility model (MobileNetV4-conv-small, timm,
 ImageNet-pretrained, head replaced with a single scalar). Trained with a
 margin-ranking loss over CROSS-TIER ordered pairs only, batched by query and
 normalized per query. Location-disjoint 80/20 split (gate: zero overlap).
 
-Scope: bootstrap scorer only. Trains, reports held-out cross-tier pair-direction
-accuracy vs the ~94.3% human ceiling, saves artifacts. No active-learning loop,
-no sweep wiring.
+v2 vs v1 — two deliberate changes: (a) DATA: v1 trained on coldstart alone (raw
+6-of-draw pools -> wide good/bad spread); v2 unions coldstart_v2 + warmstart_v1,
+the latter adding 200 v1-concentrated queries whose within-query distinctions are
+good-vs-good (the fine top-end resolution v1 never saw). (b) TRAINING PAIRS: v2
+EXCLUDES good_vs_okay from the margin-ranking loss (good_vs_bad + okay_vs_bad
+only, TRAIN_INCLUDE_PAIR_TYPES). The all-pairs recipe collapses at epoch 1 (that
+run is archived under data/queries/scorer/v2_combined_allpairs_FAILED/); dropping
+the ambiguous good-vs-okay direction from TRAINING is what unblocks it. good_vs_okay
+is still SCORED at eval as a held-out direction. Everything else — model, aug,
+loss form, LRs, margin, batch size, patience — is frozen from v1.
+
+Matched split (interpretability seam): coldstart locations reuse v1's assignment
+VERBATIM (v2's coldstart-val == v1's val locations -> clean regression check);
+warmstart gets a fresh location-disjoint 80/20 (seed 0). See data.split_combined.
+
+Reporting is decomposed per batch: coldstart-val regresses against the promoted
+v2 reference (V2_REFERENCE); warmstart-val is the new fine-resolution regime (no
+baseline).
 
 Artifacts (persistent, survive `rm -r out/*`):
-    data/queries/scorer/v1/
+    data/queries/scorer/v2/
         model_best.pt   (state_dict + config; best by val pair accuracy)
         model_last.pt
-        metrics.json    (headline + per-pair-type + per-epoch log)
+        metrics.json    (headline + per-pair-type + per-batch + surfacing + per-epoch)
         config.json     (all constants, seed, model string, aug)
-        split_manifest.json
+        split_manifest.json  (combined, reproducible)
         train.log
 
 Run:
@@ -51,7 +66,45 @@ MAX_EPOCHS = 40
 PATIENCE = 8                         # early-stop on val pair accuracy
 VAL_FRAC = 0.20
 
-OUT_DIR = os.path.join(D.REPO, "data", "queries", "scorer", "v1")
+OUT_DIR = os.path.join(D.REPO, "data", "queries", "scorer", "v2")
+V1_DIR = os.path.join(D.REPO, "data", "queries", "scorer", "v1")
+V1_MANIFEST = os.path.join(V1_DIR, "split_manifest.json")
+
+# Which cross-tier pair types TRAINING optimizes. good_vs_okay is EXCLUDED by
+# default: the all-pairs recipe COLLAPSES at epoch 1 (the combined-all-pairs run,
+# archived under data/queries/scorer/v2_combined_allpairs_FAILED/); good_vs_bad +
+# okay_vs_bad only is the validated, promoted recipe (best_epoch 26). This is an
+# EXPLICIT, LOGGED choice (dumped as config["train_include_pair_types"]), never an
+# implicit None=all. To reproduce the old collapsing all-pairs behavior you must
+# ask for it by name -- set this to all three types. EVALUATION is unaffected:
+# eval_pair_accuracy always scores all three types (include_types stays None there),
+# so good_vs_okay is reported as a HELD-OUT direction in the val tables.
+TRAIN_INCLUDE_PAIR_TYPES = ("good_vs_bad", "okay_vs_bad")
+
+# v1 reported val baselines (coldstart-only), kept for the historical record.
+V1_BASELINE = {
+    "pair_overall": 0.656,
+    "pair_good_vs_bad": 0.773,
+    "pair_okay_vs_bad": 0.678,
+    "pair_good_vs_okay": 0.578,
+    "surf_top1_good": 0.425,
+    "surf_top1_bad": 0.075,
+    "surf_top3_contains_good": 0.850,
+}
+
+# Promoted v2 (gvo-excluded) reference — coldstart-val numbers from the promoted
+# exp_no_gvo run (best_epoch 26). good_vs_okay here is HELD-OUT (trained on neither
+# batch). Future runs regress the matched coldstart-val against THESE, not v1's.
+V2_REFERENCE = {
+    "pair_overall": 0.677,
+    "pair_good_vs_bad": 0.825,
+    "pair_okay_vs_bad": 0.726,
+    "pair_good_vs_okay": 0.561,   # HELD-OUT (excluded from training)
+    "surf_top1_good": 0.500,
+    "surf_top1_bad": 0.075,
+    "surf_top3_contains_good": 0.850,
+    "best_epoch": 26,
+}
 
 _LOG_FH = None
 
@@ -75,8 +128,17 @@ def build_model():
 
 
 # ================= LOSS + PAIR ACCURACY =================
-def query_pairs_from_ranks(ranks: torch.Tensor):
-    """ranks: [6] long tier ranks. Return list of (hi_idx, lo_idx) cross-tier pairs."""
+TIER_NAME = {v: k for k, v in D.TIER_RANK.items()}
+
+
+def query_pairs_from_ranks(ranks: torch.Tensor, include_types=None):
+    """ranks: [6] long tier ranks. Return list of (hi_idx, lo_idx) cross-tier pairs.
+
+    include_types: optional set of pair-type names (subset of
+    {good_vs_bad, okay_vs_bad, good_vs_okay}). When given, keep only pairs whose
+    type is in the set -- the mechanism for dropping a pair type from TRAINING.
+    Default None -> every cross-tier pair (unchanged v1/v2 behavior; EVALUATION
+    always calls with None so the val report scores all three types regardless)."""
     pairs = []
     n = ranks.shape[0]
     for i in range(n):
@@ -84,19 +146,25 @@ def query_pairs_from_ranks(ranks: torch.Tensor):
             if i == j:
                 continue
             if ranks[i] > ranks[j]:
+                if include_types is not None:
+                    name = D.pair_type_name(TIER_NAME[ranks[i].item()], TIER_NAME[ranks[j].item()])
+                    if name not in include_types:
+                        continue
                 pairs.append((i, j))
     return pairs
 
 
-def batch_margin_loss(scores: torch.Tensor, ranks: torch.Tensor):
+def batch_margin_loss(scores: torch.Tensor, ranks: torch.Tensor, include_types=None):
     """scores: [B,6], ranks: [B,6]. Per-query mean hinge over cross-tier pairs,
-    then mean across queries that HAVE pairs. Returns (loss, n_correct, n_pairs)."""
+    then mean across queries that HAVE pairs. Returns (loss, n_correct, n_pairs).
+    include_types filters which cross-tier pair types contribute (see
+    query_pairs_from_ranks); None -> all types."""
     B = scores.shape[0]
     per_query_losses = []
     n_correct = 0
     n_pairs = 0
     for b in range(B):
-        pairs = query_pairs_from_ranks(ranks[b])
+        pairs = query_pairs_from_ranks(ranks[b], include_types)
         if not pairs:
             continue
         losses = []
@@ -136,6 +204,97 @@ def eval_pair_accuracy(model, loader, device):
     return acc, per_type
 
 
+# ================= CENSUS =================
+def census(qlist):
+    """Tier counts, cross-tier pair counts by type, within-tier ties dropped."""
+    from collections import Counter
+
+    tier_ct = Counter(t for q in qlist for t in q.tiers)
+    pair_ct = Counter()
+    within = 0
+    for q in qlist:
+        n = len(q.tiers)
+        for i in range(n):
+            for j in range(i + 1, n):
+                ri, rj = D.TIER_RANK[q.tiers[i]], D.TIER_RANK[q.tiers[j]]
+                if ri == rj:
+                    within += 1
+                else:
+                    hi, lo = (q.tiers[i], q.tiers[j]) if ri > rj else (q.tiers[j], q.tiers[i])
+                    pair_ct[D.pair_type_name(hi, lo)] += 1
+    return dict(tier_ct), dict(pair_ct), within
+
+
+def eval_subset(model, qlist, device, nw):
+    """Pair-direction accuracy (overall + per-type) over a query subset, deploy transform."""
+    if not qlist:
+        return 0.0, {k: [0, 0] for k in ("good_vs_bad", "good_vs_okay", "okay_vs_bad")}
+    ds = D.QueryDataset(qlist, train=False)
+    ld = DataLoader(ds, batch_size=BATCH_QUERIES, shuffle=False,
+                    collate_fn=D.collate_queries, num_workers=nw)
+    return eval_pair_accuracy(model, ld, device)
+
+
+def _acc(pt):
+    return {k: (v[0] / v[1] if v[1] else None) for k, v in pt.items()}
+
+
+# ================= REPORT =================
+def _report_tables(val_acc, val_pt, cold_acc, cold_pt, warm_acc, warm_pt,
+                   surf_cold, surf_warm, train_acc, best_epoch):
+    B = V2_REFERENCE  # promoted gvo-excluded reference; future runs regress against this
+
+    def a(pt, k):
+        c, n = pt[k]
+        return (c / n if n else None), n
+
+    def d(x, base):
+        if x is None:
+            return "n/a"
+        return f"{x:.3f} (ref {base:.3f}, d{x-base:+.3f})"
+
+    def f3(x):
+        return f"{x:.3f}" if x is not None else "n/a"
+
+    log("")
+    log("=== (1) PAIR-DIRECTION ACCURACY ===")
+    log("--- coldstart-val [MATCHED to v2 reference -> regression check; good_vs_okay HELD-OUT] ---")
+    log(f"  overall      {d(cold_acc, B['pair_overall'])}")
+    log(f"  good_vs_bad  {d(a(cold_pt,'good_vs_bad')[0], B['pair_good_vs_bad'])}  (n={a(cold_pt,'good_vs_bad')[1]})")
+    log(f"  okay_vs_bad  {d(a(cold_pt,'okay_vs_bad')[0], B['pair_okay_vs_bad'])}  (n={a(cold_pt,'okay_vs_bad')[1]})")
+    log(f"  good_vs_okay {d(a(cold_pt,'good_vs_okay')[0], B['pair_good_vs_okay'])}  (n={a(cold_pt,'good_vs_okay')[1]})")
+    log("--- warmstart-val [new fine-resolution regime, no v1 baseline] ---")
+    log(f"  overall      {f3(warm_acc)}")
+    log(f"  good_vs_bad  {f3(a(warm_pt,'good_vs_bad')[0])}  (n={a(warm_pt,'good_vs_bad')[1]})")
+    log(f"  okay_vs_bad  {f3(a(warm_pt,'okay_vs_bad')[0])}  (n={a(warm_pt,'okay_vs_bad')[1]})")
+    log(f"  good_vs_okay {f3(a(warm_pt,'good_vs_okay')[0])}  (n={a(warm_pt,'good_vs_okay')[1]})")
+    log(f"--- combined-val overall {f3(val_acc)}   | train overall {f3(train_acc)} (overfit check) | best_epoch={best_epoch}")
+
+    log("")
+    log("=== (2) SURFACING / SELECTION (within-query, per batch) ===")
+
+    def surf_block(name, m, matched):
+        if m is None:
+            log(f"--- {name}: no val queries ---")
+            return
+        p, s = m["primary"], m["secondary"]
+        mr = s["mean_norm_rank_by_tier"]
+        log(f"--- {name} ({m['n_val_queries']} queries){'  [v2-ref-comparable]' if matched else '  [v1-concentrated, NOT coldstart-comparable]'} ---")
+        if matched:
+            log(f"  top1-good {d(p['top1_good_rate'], B['surf_top1_good'])}")
+            log(f"  top1-bad  {d(p['top1_bad_rate'], B['surf_top1_bad'])}")
+            log(f"  top3-contains-good {d(s['top3_contains_good_rate'], B['surf_top3_contains_good'])}")
+        else:
+            log(f"  top1-good {f3(p['top1_good_rate'])}   top1-bad {f3(p['top1_bad_rate'])}")
+            log(f"  top3-contains-good {f3(s['top3_contains_good_rate'])}")
+        log(f"  top2-contains-good {f3(s['top2_contains_good_rate'])}   "
+            f"good-recall@3 {f3(s['good_recall_in_top3'])} ({s['total_good_candidates']} goods)")
+        log(f"  mean norm rank good/okay/bad (0=top) {f3(mr['good'])}/{f3(mr['okay'])}/{f3(mr['bad'])}")
+
+    surf_block("coldstart-val", surf_cold, matched=True)
+    surf_block("warmstart-val", surf_warm, matched=False)
+
+
 # ================= MAIN =================
 def main():
     global _LOG_FH
@@ -145,40 +304,35 @@ def main():
     torch.manual_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ---- data assembly ----
-    queries = D.load_queries()
-    train_q, val_q, manifest = D.split_by_location(queries, VAL_FRAC, SEED)
+    # ---- data assembly (combined) ----
+    queries = D.load_combined_queries()
+    train_q, val_q, manifest = D.split_combined(queries, VAL_FRAC, SEED, V1_MANIFEST)
 
-    # assembly + pair stats (report)
-    from collections import Counter
+    cold_q = [q for q in queries if q.batch == D.COLDSTART.name]
+    warm_q = [q for q in queries if q.batch == D.WARMSTART.name]
 
-    tier_ct = Counter(t for q in queries for t in q.tiers)
-    pair_ct = Counter()
-    within_dropped = 0
-    tier_name = {v: k for k, v in D.TIER_RANK.items()}
-    for q in queries:
-        seen_pairs = set()
-        n = len(q.tiers)
-        for i in range(n):
-            for j in range(i + 1, n):
-                ri, rj = D.TIER_RANK[q.tiers[i]], D.TIER_RANK[q.tiers[j]]
-                if ri == rj:
-                    within_dropped += 1
-                else:
-                    hi, lo = (q.tiers[i], q.tiers[j]) if ri > rj else (q.tiers[j], q.tiers[i])
-                    pair_ct[D.pair_type_name(hi, lo)] += 1
+    log("=== DATA ASSEMBLY (combined coldstart_v2 + warmstart_v1) ===")
+    log(f"excluded queries (named, zero pairs): {D.EXCLUDED_QUERIES}")
+    for name, ql in (("coldstart_v2", cold_q), ("warmstart_v1", warm_q)):
+        tc, pc, wd = census(ql)
+        log(f"[{name}] queries(pass-1)={len(ql)}  tiers={tc}")
+        log(f"[{name}] cross-tier pairs={pc} total={sum(pc.values())}  within-tier dropped={wd}")
+    tc_all, pc_all, wd_all = census(queries)
+    log(f"[combined] queries={len(queries)}  tiers={tc_all}  "
+        f"cross-tier total={sum(pc_all.values())}  within-tier dropped={wd_all}")
 
-    log("=== DATA ASSEMBLY ===")
-    log(f"queries used (pass-1 only): {len(queries)}  (excluded 20 pass-2 consistency repeats)")
-    log(f"candidate tier counts: {dict(tier_ct)}")
-    log(f"cross-tier ordered pairs by type: {dict(pair_ct)}  total={sum(pair_ct.values())}")
-    log(f"within-tier (tie) pairs dropped: {within_dropped}")
-
-    log("=== SPLIT (location-disjoint 80/20) ===")
-    log(f"seed={SEED} val_frac={VAL_FRAC}")
-    log(f"locations: total={manifest['n_locations_total']} "
-        f"train={manifest['n_locations_train']} val={manifest['n_locations_val']}")
-    log(f"queries: train={manifest['n_queries_train']} val={manifest['n_queries_val']}")
+    log("=== SPLIT (matched combined, location-disjoint 80/20) ===")
+    log(f"seed={SEED} val_frac={VAL_FRAC}  (coldstart split reused verbatim from v1)")
+    log(f"locations: train={manifest['n_locations_train']} val={manifest['n_locations_val']}")
+    log(f"queries:   train={manifest['n_queries_train']} val={manifest['n_queries_val']}")
+    log(f"  coldstart train/val queries: {manifest['coldstart_train']['n_queries']}"
+        f"/{manifest['coldstart_val']['n_queries']}  "
+        f"locations: {manifest['coldstart_train']['n_locations']}"
+        f"/{manifest['coldstart_val']['n_locations']}")
+    log(f"  warmstart train/val queries: {manifest['warmstart_train']['n_queries']}"
+        f"/{manifest['warmstart_val']['n_queries']}  "
+        f"locations: {manifest['warmstart_train']['n_locations']}"
+        f"/{manifest['warmstart_val']['n_locations']}")
     log(f"ZERO-OVERLAP PROOF: train-cap-val locations = {manifest['location_overlap_count']} (must be 0)")
     log(f"type breakdown train: {manifest['type_breakdown_train']}")
     log(f"type breakdown val:   {manifest['type_breakdown_val']}")
@@ -217,7 +371,7 @@ def main():
     B, Cn = imgs.shape[0], imgs.shape[1]
     flat = imgs.view(B * Cn, *imgs.shape[2:]).to(device)
     scores = model(flat).view(B, Cn)
-    loss, _, _ = batch_margin_loss(scores, ranks)
+    loss, _, _ = batch_margin_loss(scores, ranks, TRAIN_INCLUDE_PAIR_TYPES)
     opt.zero_grad(); loss.backward(); opt.step()
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -230,7 +384,14 @@ def main():
 
     # ---- config dump ----
     config = {
-        "task": "bootstrap palette-preference scorer (single-tower utility, margin-ranking)",
+        "task": "palette-preference scorer v2 (single-tower utility, margin-ranking)",
+        "version": "v2",
+        "data": "combined coldstart_v2 + warmstart_v1 (union, provenance-blind)",
+        "excluded_queries": list(D.EXCLUDED_QUERIES),
+        "split_design": "matched: coldstart reuses v1 split verbatim; warmstart fresh 80/20 seed 0",
+        "frozen_from_v1": "model, input/geometry, aug, loss, margin, LRs, wd, batch, patience",
+        "train_include_pair_types": list(TRAIN_INCLUDE_PAIR_TYPES),
+        "eval_pair_types": "ALL (held-out types still scored in the val report)",
         "model": MODEL,
         "input_size": INPUT_SIZE,
         "geometry": GEOMETRY,
@@ -251,7 +412,9 @@ def main():
         "device": device.type,
         "human_consistency_ceiling": 0.943,
         "pass1_only": True,
-        "excluded_pass2_repeats": 20,
+        "excluded_pass2_repeats_per_batch": 20,
+        "v1_baseline": V1_BASELINE,
+        "v2_reference": V2_REFERENCE,
     }
     json.dump(config, open(os.path.join(OUT_DIR, "config.json"), "w"), indent=2)
 
@@ -271,7 +434,7 @@ def main():
             B, Cn = imgs.shape[0], imgs.shape[1]
             flat = imgs.view(B * Cn, *imgs.shape[2:]).to(device)
             scores = model(flat).view(B, Cn)
-            loss, nc, npr = batch_margin_loss(scores, ranks)
+            loss, nc, npr = batch_margin_loss(scores, ranks, TRAIN_INCLUDE_PAIR_TYPES)
             if loss is None:
                 continue
             opt.zero_grad(); loss.backward()
@@ -315,28 +478,67 @@ def main():
                 log(f"early stop: no val improvement for {PATIENCE} epochs")
                 break
 
-    # ---- final metrics ----
-    # reload best, report per-type on val
+    # ---- final metrics (reload best) ----
     ck = torch.load(os.path.join(OUT_DIR, "model_best.pt"), map_location=device, weights_only=False)
     model.load_state_dict(ck["state_dict"])
+
+    # (1) pair-direction accuracy: overall + per-batch (coldstart-val is v1-matched)
     val_acc, val_per_type = eval_pair_accuracy(model, val_ld, device)
+    cold_val_q = [q for q in val_q if q.batch == D.COLDSTART.name]
+    warm_val_q = [q for q in val_q if q.batch == D.WARMSTART.name]
+    cold_acc, cold_per_type = eval_subset(model, cold_val_q, device, nw)
+    warm_acc, warm_per_type = eval_subset(model, warm_val_q, device, nw)
     train_eval_ld = DataLoader(D.QueryDataset(train_q, train=False), batch_size=BATCH_QUERIES,
                                shuffle=False, collate_fn=D.collate_queries, num_workers=nw)
     train_acc_final, train_per_type = eval_pair_accuracy(model, train_eval_ld, device)
+
+    # (2) surfacing/selection metrics, per batch (reuse surfacing_eval within-query logic)
+    import surfacing_eval as SE  # lazy: avoids circular import at module load
+    surf_cold = SE.compute_metrics(SE.score_queries(model, cold_val_q, device)) if cold_val_q else None
+    surf_warm = SE.compute_metrics(SE.score_queries(model, warm_val_q, device)) if warm_val_q else None
+
+    def _pt(pt):
+        return {k: {"acc": (v[0] / v[1] if v[1] else None), "n": v[1]} for k, v in pt.items()}
+
+    # (3) census per batch (train/val split-aware)
+    def batch_census(name):
+        tr = [q for q in train_q if q.batch == name]
+        va = [q for q in val_q if q.batch == name]
+        tc_t, pc_t, wd_t = census(tr)
+        tc_v, pc_v, wd_v = census(va)
+        return {
+            "train": {"n_queries": len(tr), "n_locations": len({q.location_key for q in tr}),
+                      "tier_counts": tc_t, "cross_tier_pairs": pc_t, "within_tier_dropped": wd_t},
+            "val": {"n_queries": len(va), "n_locations": len({q.location_key for q in va}),
+                    "tier_counts": tc_v, "cross_tier_pairs": pc_v, "within_tier_dropped": wd_v},
+        }
 
     metrics = {
         "headline_val_pair_acc": val_acc,
         "human_consistency_ceiling": 0.943,
         "best_epoch": best_epoch,
-        "val_per_pair_type": {k: {"acc": (v[0] / v[1] if v[1] else None), "n": v[1]} for k, v in val_per_type.items()},
-        "train_pair_acc_final": train_acc_final,
-        "train_per_pair_type": {k: {"acc": (v[0] / v[1] if v[1] else None), "n": v[1]} for k, v in train_per_type.items()},
-        "data_assembly": {
-            "queries_used": len(queries),
-            "excluded_pass2_repeats": 20,
-            "tier_counts": dict(tier_ct),
-            "cross_tier_pairs": dict(pair_ct),
-            "within_tier_dropped": within_dropped,
+        "train_include_pair_types": list(TRAIN_INCLUDE_PAIR_TYPES),
+        "v1_baseline": V1_BASELINE,
+        "v2_reference": V2_REFERENCE,
+        "pair_direction": {
+            "combined_val": {"overall": val_acc, "per_type": _pt(val_per_type)},
+            "coldstart_val": {"overall": cold_acc, "per_type": _pt(cold_per_type),
+                              "note": "v1-matched (same val locations) -> regression check"},
+            "warmstart_val": {"overall": warm_acc, "per_type": _pt(warm_per_type),
+                              "note": "new fine-resolution regime, no v1 baseline"},
+            "train_overall": train_acc_final,
+            "train_per_type": _pt(train_per_type),
+        },
+        "surfacing": {
+            "coldstart_val": surf_cold,
+            "warmstart_val": surf_warm,
+            "note": "within-query; warmstart is v1-concentrated so top1-good is mechanically high, "
+                    "NOT comparable to coldstart -- read per batch, never pooled",
+        },
+        "census": {
+            "coldstart_v2": batch_census(D.COLDSTART.name),
+            "warmstart_v1": batch_census(D.WARMSTART.name),
+            "excluded_queries": list(D.EXCLUDED_QUERIES),
         },
         "split": {
             "n_locations_train": manifest["n_locations_train"],
@@ -349,11 +551,8 @@ def main():
     }
     json.dump(metrics, open(os.path.join(OUT_DIR, "metrics.json"), "w"), indent=2)
 
-    log("=== RESULT ===")
-    log(f"HEADLINE val cross-tier pair-direction acc = {val_acc:.4f}  (human ceiling ~0.943)  best_epoch={best_epoch}")
-    log(f"val per-pair-type: " + ", ".join(
-        f"{k}={(v[0]/v[1] if v[1] else float('nan')):.4f} (n={v[1]})" for k, v in val_per_type.items()))
-    log(f"train pair acc (overfit check) = {train_acc_final:.4f}")
+    _report_tables(val_acc, val_per_type, cold_acc, cold_per_type, warm_acc, warm_per_type,
+                   surf_cold, surf_warm, train_acc_final, best_epoch)
     log(f"artifacts in {OUT_DIR}")
 
 
