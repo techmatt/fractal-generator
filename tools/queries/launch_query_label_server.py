@@ -499,7 +499,7 @@ def selftest():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--batch", default="coldstart_v2")
+    ap.add_argument("--batch", default="warmstart_v1")
     ap.add_argument("--seed", type=int, default=7, help="queue/shuffle seed (persisted in store)")
     ap.add_argument("--port", type=int, default=5099)
     ap.add_argument("--selftest", action="store_true")

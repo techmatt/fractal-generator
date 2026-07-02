@@ -93,6 +93,7 @@ __pycache__/
 !/data/queries/labels/
 /data/queries/labels/*
 !/data/queries/labels/coldstart_v2.json
+!/data/queries/labels/warmstart_v1.json
 
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*
