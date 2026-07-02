@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import query_sampler as qs                     # noqa: E402
 import assemble_queries as aq                  # noqa: E402  (ensure_field, candidate_record, contact_sheet)
-import diversity_diagnostic as dd              # noqa: E402  (validated CIEDE2000 + srgb_to_lab + THUMB_WIDTH)
+import color_metrics as cmet                   # noqa: E402  (validated CIEDE2000 + srgb_to_lab + THUMB_WIDTH)
 sys.path.insert(0, str(qs.ROOT / "tools" / "palettes"))
 import palette_features as pf                  # noqa: E402  (farthest_point_order — reused w/ render-space dmat)
 
@@ -50,7 +50,7 @@ V2_DIR = ROOT / "data" / "queries" / "coldstart_v2"
 
 CANDIDATES_PER_QUERY = qs.CANDIDATES_PER_QUERY
 POOL_SIZE = qs.POOL_MULTIPLIER * CANDIDATES_PER_QUERY
-THUMB_WIDTH = dd.THUMB_WIDTH
+THUMB_WIDTH = cmet.THUMB_WIDTH
 
 
 def per_query_rng(qid):
@@ -66,7 +66,7 @@ def thumb_lab(img_u8):
     w, h = im.size
     th = max(1, round(THUMB_WIDTH * h / w))
     im = im.resize((THUMB_WIDTH, th), Image.BOX)
-    return dd.srgb_to_lab(np.asarray(im))
+    return cmet.srgb_to_lab(np.asarray(im))
 
 
 def render_space_dmat(labs):
@@ -75,7 +75,7 @@ def render_space_dmat(labs):
     D = np.zeros((n, n), dtype=np.float64)
     for i in range(n):
         for j in range(i + 1, n):
-            D[i, j] = D[j, i] = float(dd.ciede2000(labs[i], labs[j]).mean())
+            D[i, j] = D[j, i] = float(cmet.ciede2000(labs[i], labs[j]).mean())
     return D
 
 
