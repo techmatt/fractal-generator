@@ -22,7 +22,9 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "corpus"))
 import colormap as cm  # noqa: E402
+import location as loc_mod  # noqa: E402  (the one render-one flag builder)
 
 REPO = Path(__file__).resolve().parents[1]
 BIN = REPO / "target" / "release" / ("fractal-generator.exe" if sys.platform == "win32" else "fractal-generator")
@@ -35,22 +37,17 @@ TOL_FRAC_GT1 = 1e-4
 
 
 def _location_args(loc):
-    """CLI location flags for a test_renders.json entry. `system` selects the family:
-    mandelbrot (bare), julia (--julia/--c), multibrot3/4/5 (--family), or phoenix
-    (--family, optional --c/--p)."""
-    a = ["--cx", loc["cx"], "--cy", loc["cy"], "--fw", loc["fw"], "--maxiter", str(loc["maxiter"])]
-    system = loc["system"]
-    if system == "julia":
-        a += ["--julia", "--c", loc["c_re"], loc["c_im"]]
-    elif system.startswith("multibrot"):
-        a += ["--family", system]
-    elif system == "phoenix":
-        a += ["--family", "phoenix"]
-        if loc.get("c_re") is not None:
-            a += ["--c", loc["c_re"], loc["c_im"]]
-        if loc.get("p_re") is not None:
-            a += ["--p", loc["p_re"], loc["p_im"]]
-    return a
+    """CLI location flags for a test_renders.json entry, built through the ONE shared
+    `location.render_one_flags` builder. `system` selects the family: mandelbrot,
+    julia (--julia/--c), multibrot3/4/5 (--family), or phoenix (--family, optional
+    --c/--p — the builder emits Phoenix's constants only when present)."""
+    canon = loc_mod.Location(
+        family=loc["system"], cx=loc["cx"], cy=loc["cy"], fw=loc["fw"],
+        maxiter=int(loc["maxiter"]), c_re=loc.get("c_re"), c_im=loc.get("c_im"),
+        family_params={k: loc.get(k) for k in ("p_re", "p_im")},
+    )
+    return (["--cx", loc["cx"], "--cy", loc["cy"], "--fw", loc["fw"],
+             "--maxiter", str(loc["maxiter"])] + loc_mod.render_one_flags(canon))
 
 
 def run_gate(test_id="test_01", palette="twilight", filt="box",

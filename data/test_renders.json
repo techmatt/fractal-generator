@@ -63,6 +63,20 @@
       "cy": "0.0",
       "fw": "3.0",
       "maxiter": 400
+    },
+    {
+      "id": "test_06",
+      "system": "phoenix",
+      "quality": 3,
+      "note": "classic Ushiki Phoenix (c=0.5667, p=-0.5), whole-set view; exercises the two-state smooth field AND the --c/--p flag path + p_re/p_im sidecar round-trip in the coloring-parity gate. Not from the labeled corpus — a synthetic family check.",
+      "cx": "0.0",
+      "cy": "0.0",
+      "fw": "3.0",
+      "c_re": "0.5667",
+      "c_im": "0.0",
+      "p_re": "-0.5",
+      "p_im": "0.0",
+      "maxiter": 400
     }
   ]
 }

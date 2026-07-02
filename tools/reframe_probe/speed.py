@@ -144,6 +144,7 @@ def tile_path(anchor_dir: Path, setting_key: str, f: dict) -> Path:
 
 
 def render_frame(anchor: dict, f: dict, out: Path, w: int, h: int, ss: int) -> tuple[bool, str]:
+    import location as loc_mod
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         str(BIN), "render-one",
@@ -153,8 +154,10 @@ def render_frame(anchor: dict, f: dict, out: Path, w: int, h: int, ss: int) -> t
         "--palette", PALETTE, "--jpg-quality", str(JPG_Q),
         "--out", str(out),
     ]
-    if anchor["family"] == "julia":
-        cmd[2:2] = ["--julia", "--c", anchor["c_re"], anchor["c_im"]]
+    cmd += loc_mod.render_one_flags(loc_mod.Location(
+        family=anchor["family"], cx=f["cx"], cy=f["cy"], fw=f["fw"],
+        c_re=anchor.get("c_re"), c_im=anchor.get("c_im"),
+        family_params=anchor.get("family_params") or {}))
     r = subprocess.run(cmd, capture_output=True, text=True)
     ok = r.returncode == 0 and out.exists()
     return ok, ("" if ok else r.stderr[-300:])

@@ -145,7 +145,7 @@ def score_frames(model, imgs_u8, device, chunk=64):
 def anchor_config(ref, palette):
     """The one canonical linear spec (gamma=1, no log, no reverse/phase/cycles)."""
     return qs.cm.CandidateConfig(
-        palette=palette, location=ref,
+        palette=palette, location=qs.loc_mod.to_location_ref(ref),
         eval_width=qs.EVAL_WIDTH, eval_height=qs.EVAL_HEIGHT,
         reverse=False, log_premap="none", gamma=1.0,
         phase=0.0, n_cycles=1, filter=qs.CANDIDATE_FILTER,

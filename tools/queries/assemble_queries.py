@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import query_sampler as qs  # noqa: E402
+import location as loc_mod  # noqa: E402  (canonical Location key + render-one flag builder)
 
 ROOT = qs.ROOT
 EXE = ROOT / "target" / "release" / "fractal-generator.exe"
@@ -46,12 +47,24 @@ OUT_RECORDS = OUT_QUERIES / "records"
 # ---------------------------------------------------------------------------
 
 def _field_key(ref):
-    """Stable filename stem for a location's ss2/eval field dump."""
-    parts = [ref.kind, ref.cx, ref.cy, ref.fw, str(ref.maxiter),
-             ref.c_re or "", ref.c_im or "",
-             str(qs.CANDIDATE_SS), str(qs.EVAL_WIDTH), str(qs.EVAL_HEIGHT)]
+    """Stable filename stem for a location's ss2/eval field dump.
+
+    Keyed on the canonical location (family + geometry + family_params) so
+    multibrot3 vs mandelbrot at one viewport, and two Phoenix locations differing
+    only in `p`, get distinct dumps. `family_params` is appended AFTER the c fields
+    and BEFORE ss/W/H, so for empty-params families (mandelbrot/julia) the joined
+    string — and therefore the sha1 filename — is byte-identical to the pre-slot
+    scheme (no cached field is orphaned)."""
+    fam = loc_mod.family_of(ref)
+    p = loc_mod.params_of(ref)
+    parts = [fam, ref.cx, ref.cy, ref.fw, str(ref.maxiter),
+             ref.c_re or "", ref.c_im or ""]
+    for k in loc_mod.family_param_keys(fam):
+        v = p.get(k)
+        parts.append("" if v is None else str(v))
+    parts += [str(qs.CANDIDATE_SS), str(qs.EVAL_WIDTH), str(qs.EVAL_HEIGHT)]
     h = hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
-    return f"{ref.kind}_{h}"
+    return f"{fam}_{h}"
 
 
 def ensure_field(ref):
@@ -70,8 +83,7 @@ def ensure_field(ref):
                "--supersample", str(qs.CANDIDATE_SS),
                "--maxiter", str(ref.maxiter),
                "--dump-field", str(bin_path)]
-        if ref.kind == "julia":
-            cmd += ["--julia", "--c", ref.c_re, ref.c_im]
+        cmd += loc_mod.render_one_flags(ref)   # --family (+ --julia/--c, --p) via the one builder
         t0 = time.time()
         r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
         dump_secs = time.time() - t0
@@ -113,6 +125,7 @@ def query_record(qid, location, query_type, cands, sampler, image_rels):
             "family": ref.kind,
             "cx": ref.cx, "cy": ref.cy, "fw": ref.fw,
             "maxiter": ref.maxiter, "c_re": ref.c_re, "c_im": ref.c_im,
+            "family_params": loc_mod.params_of(ref),
             "eval_width": qs.EVAL_WIDTH, "eval_height": qs.EVAL_HEIGHT, "ss": qs.CANDIDATE_SS,
             "qualifying_scores": sorted(location.scores),
             "source_batches": sorted(location.batch_ids),

@@ -78,6 +78,7 @@ sys.path.insert(0, str(ROOT / "tools" / "mining"))
 from probe import (  # noqa: E402
     BIN, PALETTE, JPG_Q, auto_maxiter, make_scorer, _unique_score3_locations,
 )
+import location as loc_mod  # noqa: E402  (the one render-one flag builder + family_params)
 
 OUT_DIR = ROOT / "out" / "reframe"
 SPEED_DIR = ROOT / "out" / "reframe_speed"    # source of the V1 reference picks
@@ -96,12 +97,17 @@ GATE_ANCHORS = ["m3_shallow", "j0_deep", "j1_shallow", "m1_mid", "m2_mid"]
 # --------------------------------------------------------------------------- #
 # Public interface
 # --------------------------------------------------------------------------- #
-Location = namedtuple("Location", "family c_re c_im cx cy fw")
+# `family_params` carries the per-family extra-constant slot (empty for mandelbrot/
+# julia/multibrot; {p_re,p_im} for phoenix) so a discovery-produced Phoenix location
+# reframes with its `p` intact instead of silently dropping it. Defaults empty, so all
+# existing (family, c_re, c_im, cx, cy, fw) call sites are unchanged.
+Location = namedtuple("Location", "family c_re c_im cx cy fw family_params",
+                      defaults=({},))
 ReframeResult = namedtuple("ReframeResult", "cx cy fw score trace")
 
 
 def as_location(loc) -> Location:
-    """Accept a Location or a bare (family, c_re, c_im, cx, cy, fw) tuple."""
+    """Accept a Location or a bare (family, c_re, c_im, cx, cy, fw[, family_params]) tuple."""
     return loc if isinstance(loc, Location) else Location(*loc)
 
 
@@ -130,8 +136,7 @@ def _render(loc: Location, c: dict, out: Path, w: int, h: int, ss: int) -> tuple
         "--palette", PALETTE, "--jpg-quality", str(JPG_Q),
         "--out", str(out),
     ]
-    if loc.family == "julia":
-        cmd[2:2] = ["--julia", "--c", loc.c_re, loc.c_im]
+    cmd += loc_mod.render_one_flags(loc)   # --family (+ --julia/--c, --p) via the one builder
     r = subprocess.run(cmd, capture_output=True, text=True)
     ok = r.returncode == 0 and out.exists()
     return ok, ("" if ok else r.stderr[-300:])
@@ -302,7 +307,8 @@ def sample_quality3(n_total: int, seed: int) -> list[Location]:
         for i in idxs:
             r = rows[i]
             out.append(Location(family=r["family"], c_re=r["c_re"], c_im=r["c_im"],
-                                cx=r["cx"], cy=r["cy"], fw=r["fw"]))
+                                cx=r["cx"], cy=r["cy"], fw=r["fw"],
+                                family_params=r.get("family_params") or {}))
     out.sort(key=lambda l: (l.family, float(l.fw)))
     return out
 

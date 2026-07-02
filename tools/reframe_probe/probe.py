@@ -72,25 +72,31 @@ def auto_maxiter(fw: float) -> int:
 # Step 2 — anchor selection (deterministic).
 # --------------------------------------------------------------------------- #
 def _unique_score3_locations():
-    """Dedup score==3 crops into unique (family, cx, cy, fw, c) locations."""
+    """Dedup score==3 crops into unique locations (family + geometry + family_params).
+
+    Family-general: the dedup key and the returned row carry the per-family extra
+    constants (Phoenix's `p_re/p_im`) via `location.location_key` / the params slot,
+    so two Phoenix locations differing only in `p` are distinct and `p` survives into
+    the reframe Location."""
     import corpus_reader as cr
-    seen: dict[tuple, dict] = {}
+    import location as loc_mod
+    seen: dict = {}
     for lc in cr.iter_labeled():
         if lc.score != 3:
             continue
         r = lc.render
-        fam = r.get("fractal_type", "mandelbrot")
-        cx, cy, fw = r.get("cx"), r.get("cy"), r.get("fw")
-        c_re, c_im = r.get("c_re"), r.get("c_im")
-        if cx is None or cy is None or fw is None:
+        if r.get("cx") is None or r.get("cy") is None or r.get("fw") is None:
             continue
-        key = (fam, str(cx), str(cy), str(fw), str(c_re), str(c_im))
+        canon = loc_mod.from_render_block(r)
+        key = canon.key()
         if key in seen:
             continue
         seen[key] = {
-            "family": fam, "cx": str(cx), "cy": str(cy), "fw": str(fw),
-            "c_re": None if c_re is None else str(c_re),
-            "c_im": None if c_im is None else str(c_im),
+            "family": canon.family, "cx": str(canon.cx), "cy": str(canon.cy),
+            "fw": str(canon.fw),
+            "c_re": None if canon.c_re is None else str(canon.c_re),
+            "c_im": None if canon.c_im is None else str(canon.c_im),
+            "family_params": canon.params,
             "example_image_id": lc.image_id, "batch_id": lc.batch_id,
         }
     return list(seen.values())
@@ -170,6 +176,7 @@ def tile_path(anchor_dir: Path, f: dict) -> Path:
 
 
 def render_one(anchor: dict, f: dict, out: Path, ss: int) -> tuple[bool, str]:
+    import location as loc_mod
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         str(BIN), "render-one",
@@ -179,8 +186,10 @@ def render_one(anchor: dict, f: dict, out: Path, ss: int) -> tuple[bool, str]:
         "--palette", PALETTE, "--jpg-quality", str(JPG_Q),
         "--out", str(out),
     ]
-    if anchor["family"] == "julia":
-        cmd[2:2] = ["--julia", "--c", anchor["c_re"], anchor["c_im"]]
+    cmd += loc_mod.render_one_flags(loc_mod.Location(
+        family=anchor["family"], cx=f["cx"], cy=f["cy"], fw=f["fw"],
+        c_re=anchor.get("c_re"), c_im=anchor.get("c_im"),
+        family_params=anchor.get("family_params") or {}))
     r = subprocess.run(cmd, capture_output=True, text=True)
     ok = r.returncode == 0 and out.exists()
     return ok, ("" if ok else r.stderr[-300:])

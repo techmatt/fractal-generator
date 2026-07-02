@@ -44,6 +44,7 @@ import colormap as cm  # noqa: E402  (CandidateConfig, LocationRef, PaletteLibra
 import palette_features as pf  # noqa: E402  (distance_matrix over trajectory features)
 import label_store as ls  # noqa: E402  (SIDECAR_LABELS + resolve_score — the shared resolver)
 import corpus_reader as cr  # noqa: E402  (iter_labeled — the ONE version-blind batch reader)
+import location as loc_mod  # noqa: E402  (canonical Location + key + render-one flags)
 
 # ---------------------------------------------------------------------------
 # Settled inputs (paths).
@@ -165,15 +166,16 @@ GAMMA_MIN_SPACING = 0.15   # a new pool draw is rejected if a same-discrete-tupl
 # 1. Location pool.
 # ===========================================================================
 
-def _loc_key(kind, cx, cy, fw, c_re, c_im):
-    return (kind, cx, cy, fw, c_re, c_im)
-
-
 @dataclass
 class PooledLocation:
-    """A q2+q3 location plus a light provenance tail (kept for reporting only; never
-    enters a candidate recipe — the recipe carries `cm.LocationRef`)."""
-    ref: "cm.LocationRef"
+    """A q2+q3 location plus a light provenance tail (scores/batch_ids kept for
+    reporting only). `ref` is the canonical `location.Location` (family + geometry +
+    family_params) — it exposes `.kind`/`.cx`/`.cy`/`.fw`/`.maxiter`/`.c_re`/`.c_im`
+    like `cm.LocationRef`, so downstream is unchanged, and additionally carries
+    `family_params` (Phoenix's `p`) for the field cache + render args. It is converted
+    to a `cm.LocationRef` (dropping family_params) only when it enters a coloring
+    recipe (`location.to_location_ref`)."""
+    ref: "loc_mod.Location"
     scores: list                # the q2/q3 scores that qualified this location
     batch_ids: set
 
@@ -221,20 +223,19 @@ class LocationPool:
             if lc.score not in keep:
                 continue
             r = lc.render
-            kind = "julia" if r.get("fractal_type") == "julia" else "mandelbrot"
+            # Family-general: read `fractal_type` (mandelbrot when absent) and the
+            # per-family params slot. The canonical Location is the pool's `ref` — it
+            # exposes `.kind`/`.cx`/... like LocationRef but also carries family_params,
+            # so Phoenix's `p` threads through the field cache + render args downstream.
+            ref = loc_mod.from_render_block(r)
+            kind = ref.family
             fams[kind] = fams.get(kind, 0) + 1
-            c_re = r.get("c_re")
-            c_im = r.get("c_im")
-            key = _loc_key(kind, r["cx"], r["cy"], r["fw"], c_re, c_im)
+            key = ref.key()
             if key in by_key:
                 pl = by_key[key]
                 pl.scores.append(lc.score)
                 pl.batch_ids.add(lc.batch_id)
             else:
-                ref = cm.LocationRef(
-                    kind=kind, cx=r["cx"], cy=r["cy"], fw=r["fw"],
-                    maxiter=int(r["maxiter"]), c_re=c_re, c_im=c_im,
-                )
                 by_key[key] = PooledLocation(ref=ref, scores=[lc.score], batch_ids={lc.batch_id})
         pool = cls(by_key.values(), census=census)
         if verbose:
@@ -273,7 +274,10 @@ class LocationPool:
             print(f"    {bid}: {parts}{src}", file=stream)
             for k, v in fams.items():
                 fam_tot[k] = fam_tot.get(k, 0) + v
-        rows = ", ".join(f"{k}={fam_tot.get(k, 0)}" for k in ("mandelbrot", "julia"))
+        # All families present (additive): mandelbrot/julia first, then any new family.
+        order = [k for k in ("mandelbrot", "julia") if k in fam_tot]
+        order += sorted(k for k in fam_tot if k not in ("mandelbrot", "julia"))
+        rows = ", ".join(f"{k}={fam_tot[k]}" for k in order) or "mandelbrot=0, julia=0"
         print(f"    -- q2+q3 rows (pre-dedup): {rows}", file=stream)
         print(f"    -- {self.report()}", file=stream)
 
@@ -281,7 +285,12 @@ class LocationPool:
         """Cross-check the sampler's Julia location count against the v5 pipeline's
         (Part-4 validation guard). Julia is keyed by image_id in both paths, so the two
         must agree; a mismatch means the sampler drifted from the authoritative label
-        set (in EITHER direction). Raises AssertionError on mismatch."""
+        set (in EITHER direction). Raises AssertionError on mismatch.
+
+        SCOPED to the v5 (mandelbrot+julia) subset by construction: it asserts on the
+        `julia` family count ONLY, so future new-family locations (multibrot/phoenix),
+        which don't exist in the v5 manifest, add to the pool without tripping this
+        check."""
         got = self.family_counts().get("julia", 0)
         want_join = v5_julia_q23_count()
         assert got == want_join, (
@@ -453,7 +462,7 @@ def sample_candidate(location_ref, rng, sampler, palette=None,
         n_cycles = 1
 
     return cm.CandidateConfig(
-        palette=name, location=location_ref,
+        palette=name, location=loc_mod.to_location_ref(location_ref),
         eval_width=EVAL_WIDTH, eval_height=EVAL_HEIGHT,
         reverse=reverse, log_premap=log_premap, gamma=gamma,
         phase=phase, n_cycles=n_cycles, filter=CANDIDATE_FILTER,

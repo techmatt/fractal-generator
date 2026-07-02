@@ -152,7 +152,7 @@ def select_locations(pool, seed):
 
 def _cfg(ref, palette, reverse, log_premap, gamma, phase, n_cycles):
     return cm.CandidateConfig(
-        palette=palette, location=ref,
+        palette=palette, location=qs.loc_mod.to_location_ref(ref),
         eval_width=qs.EVAL_WIDTH, eval_height=qs.EVAL_HEIGHT,
         reverse=reverse, log_premap=log_premap, gamma=gamma,
         phase=phase, n_cycles=n_cycles, filter=qs.CANDIDATE_FILTER,
@@ -382,7 +382,8 @@ def write_records(res, out_loc, seed):
         "label": res["label"],
         "location": {"family": res["ref"].kind, "cx": res["ref"].cx, "cy": res["ref"].cy,
                      "fw": res["ref"].fw, "maxiter": res["ref"].maxiter,
-                     "c_re": res["ref"].c_re, "c_im": res["ref"].c_im},
+                     "c_re": res["ref"].c_re, "c_im": res["ref"].c_im,
+                     "family_params": qs.loc_mod.params_of(res["ref"])},
         "constants": {"N_GEN0": N_GEN0, "TOP_KEEP": TOP_KEEP, "K_VARIANTS": K_VARIANTS,
                       "R_MAX": R_MAX, "seed": seed, "eval": [qs.EVAL_WIDTH, qs.EVAL_HEIGHT],
                       "ss": qs.CANDIDATE_SS},
@@ -415,9 +416,14 @@ def write_records(res, out_loc, seed):
 # ===========================================================================
 
 def _ref_from_records(rec):
+    """Rebuild the canonical Location from a records.json location block. Carries
+    family_params (Phoenix's `p`) so the re-dumped field / render args are exact."""
     L = rec["location"]
-    return cm.LocationRef(kind=L["family"], cx=L["cx"], cy=L["cy"], fw=L["fw"],
-                          maxiter=int(L["maxiter"]), c_re=L.get("c_re"), c_im=L.get("c_im"))
+    return qs.loc_mod.Location(
+        family=L["family"], cx=L["cx"], cy=L["cy"], fw=L["fw"],
+        maxiter=int(L["maxiter"]), c_re=L.get("c_re"), c_im=L.get("c_im"),
+        family_params=L.get("family_params") or {},
+    )
 
 
 def paired_before_after(records_path, out_path, lib, tw=260, pad=6, bar=44, head=22,
