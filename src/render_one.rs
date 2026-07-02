@@ -30,7 +30,7 @@ use crate::generate::color_params;
 use crate::palette::Palette;
 use crate::palette_pick::parse_colormaps;
 use crate::render::{self, Frame};
-use crate::render_modes::{self, ColoringParams};
+use crate::render_modes::{self, ColoringParams, Family};
 use crate::{coloring, ensure_parent_dir, hp};
 
 /// Resolve `--coloring` to a beautiful [`ColoringParams`], or `None` for the
@@ -61,27 +61,20 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     }
     let ss = args.supersample.max(1);
 
-    // Julia/parameter coupling: `--c` is required iff `--julia`, and forbidden
-    // otherwise (so a stray `--c` on a Mandelbrot render is a loud error, not a
-    // silently ignored flag).
-    let julia_param = match (args.julia, &args.julia_c) {
-        (true, None) => {
-            return Err("--julia requires --c <re> <im> (the Julia parameter)".into());
-        }
-        (false, Some(_)) => {
-            return Err("--c given without --julia; --c is the Julia parameter and \
-                        is meaningless on a Mandelbrot render"
-                .into());
-        }
-        (false, None) => None,
-        (true, Some(c)) => {
-            // num_args = 2 guarantees exactly two values; guard anyway.
-            if c.len() != 2 {
-                return Err(format!("--c expects exactly two values <re> <im>, got {}", c.len()));
-            }
-            Some((c[0].clone(), c[1].clone()))
-        }
-    };
+    // Flag-combo validation (string level, before parsing constants):
+    //  - `--julia` only pairs with the (default) mandelbrot family (multibrot /
+    //    phoenix carry their own plane/constants).
+    //  - `--p` (Phoenix's z_{n-1} coefficient) is valid only for `--family phoenix`.
+    if args.julia && args.family != FamilyChoice::Mandelbrot {
+        return Err(format!(
+            "--julia is the z²+c dynamical plane and only applies to --family mandelbrot; \
+             got --family {:?}",
+            args.family
+        ));
+    }
+    if args.phoenix_p.is_some() && args.family != FamilyChoice::Phoenix {
+        return Err("--p is the Phoenix z_{n-1} coefficient; valid only with --family phoenix".into());
+    }
 
     // Center at full precision (parsed exactly as render/aa-filter do, so the
     // f64 projection matches bit-for-bit).
@@ -90,16 +83,78 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     let cy = hp::to_f64(&hp::parse_decimal(&args.center_im, prec_bits)?);
     let center = Complex::new(cx, cy);
 
-    // Julia parameter `c`, parsed as decimal strings exactly like the center and
-    // projected to f64 (Julia is a shallow base-scale render — f64 is accurate).
-    let julia_param = match julia_param {
-        Some((re, im)) => {
-            let pr = hp::to_f64(&hp::parse_decimal(&re, prec_bits)?);
-            let pi = hp::to_f64(&hp::parse_decimal(&im, prec_bits)?);
-            Some(Complex::new(pr, pi))
+    // Parse a fixed complex constant (two decimal strings) → f64, exactly like the
+    // center (these are shallow base-scale renders — f64 is accurate).
+    let parse_const = |v: &[String], name: &str| -> Result<Complex<f64>, String> {
+        if v.len() != 2 {
+            return Err(format!("--{name} expects exactly two values <re> <im>, got {}", v.len()));
         }
-        None => None,
+        let re = hp::to_f64(&hp::parse_decimal(&v[0], prec_bits)?);
+        let im = hp::to_f64(&hp::parse_decimal(&v[1], prec_bits)?);
+        Ok(Complex::new(re, im))
     };
+
+    // Resolve the render family + its fixed constants. `c_strings`/`p_strings` carry
+    // the original decimal strings for the dump-field sidecar (dynamical families).
+    let (family, c_strings, p_strings): (
+        Family,
+        Option<(String, String)>,
+        Option<(String, String)>,
+    ) = match args.family {
+        FamilyChoice::Mandelbrot => {
+            if args.julia {
+                let c = args
+                    .julia_c
+                    .as_ref()
+                    .ok_or("--julia requires --c <re> <im> (the Julia parameter)")?;
+                (
+                    Family::Julia { c: parse_const(c, "c")? },
+                    Some((c[0].clone(), c[1].clone())),
+                    None,
+                )
+            } else {
+                if args.julia_c.is_some() {
+                    return Err("--c is the Julia parameter and is meaningless on a plain \
+                                Mandelbrot render (did you mean --julia?)"
+                        .into());
+                }
+                (Family::Mandelbrot, None, None)
+            }
+        }
+        FamilyChoice::Multibrot3 | FamilyChoice::Multibrot4 | FamilyChoice::Multibrot5 => {
+            if args.julia_c.is_some() {
+                return Err("--c is not valid for multibrot (parameter-plane) families".into());
+            }
+            let degree = match args.family {
+                FamilyChoice::Multibrot3 => 3,
+                FamilyChoice::Multibrot4 => 4,
+                _ => 5,
+            };
+            (Family::Multibrot { degree }, None, None)
+        }
+        FamilyChoice::Phoenix => {
+            // Ushiki Phoenix: `--c` (additive const) and `--p` (z_{n-1} coeff) both
+            // optional, defaulting to the classic real-valued spot c≈0.5667, p≈-0.5.
+            let cs = args
+                .julia_c
+                .clone()
+                .unwrap_or_else(|| vec!["0.5667".into(), "0".into()]);
+            let ps = args
+                .phoenix_p
+                .clone()
+                .unwrap_or_else(|| vec!["-0.5".into(), "0".into()]);
+            let c = parse_const(&cs, "c")?;
+            let p = parse_const(&ps, "p")?;
+            (
+                Family::Phoenix { c, p },
+                Some((cs[0].clone(), cs[1].clone())),
+                Some((ps[0].clone(), ps[1].clone())),
+            )
+        }
+    };
+    // Location-profile (settled byte-identical) backends exist only for the two
+    // degree-2 families; the new families always render through the beautiful path.
+    let has_location_profile = matches!(family, Family::Mandelbrot | Family::Julia { .. });
 
     let frame = Frame {
         center,
@@ -172,7 +227,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
             &frame,
             ss,
             args.maxiter,
-            julia_param,
+            family,
             &field_params,
         );
         let secs = t0.elapsed().as_secs_f64();
@@ -189,19 +244,17 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         // JSON sidecar alongside the binary. `width`/`height` are the *supersampled*
         // array dims (so binary length == width·height); `supersample` folds them to
         // the eval size (out = width/ss). Location is version-invariant render keys.
-        let (kind, c_fields) = match &julia_param {
-            Some(_) => {
-                let c = args
-                    .julia_c
-                    .as_ref()
-                    .expect("julia_param implies --c present");
-                (
-                    "julia",
-                    format!(",\"c_re\":\"{}\",\"c_im\":\"{}\"", c[0], c[1]),
-                )
-            }
-            None => ("mandelbrot", String::new()),
-        };
+        // Dynamical families (julia/phoenix) emit their fixed constant as `c_re/c_im`;
+        // Phoenix additionally emits its `p_re/p_im` coefficient (extra keys the
+        // Python `load_field` reader ignores). `kind` follows the family.
+        let kind = family.kind_str();
+        let mut c_fields = String::new();
+        if let Some((re, im)) = &c_strings {
+            c_fields.push_str(&format!(",\"c_re\":\"{re}\",\"c_im\":\"{im}\""));
+        }
+        if let Some((re, im)) = &p_strings {
+            c_fields.push_str(&format!(",\"p_re\":\"{re}\",\"p_im\":\"{im}\""));
+        }
         let sidecar = format!(
             "{{\"width\":{sub_w},\"height\":{sub_h},\"supersample\":{ss},\
              \"field\":\"smooth\",\"dtype\":\"f32\",\"layout\":\"row_major\",\
@@ -231,9 +284,22 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         return Ok(());
     }
 
-    let mode = match julia_param {
-        Some(p) => format!("julia c=({:.9}, {:.9})", p.re, p.im),
-        None => "mandelbrot".to_string(),
+    // Render coloring: an explicit `--coloring` wins; absent, the two degree-2
+    // families take the settled location-profile path (`None`), while the new
+    // families (no location-profile backend) default to the beautiful smooth field.
+    let coloring_params: Option<ColoringParams> = match (coloring_params, has_location_profile) {
+        (Some(cp), _) => Some(cp),
+        (None, true) => None,
+        (None, false) => Some(ColoringParams::beautiful(render_modes::Field::Smooth)),
+    };
+
+    let mode = match family {
+        Family::Mandelbrot => "mandelbrot".to_string(),
+        Family::Julia { c } => format!("julia c=({:.9}, {:.9})", c.re, c.im),
+        Family::Multibrot { degree } => format!("multibrot d={degree}"),
+        Family::Phoenix { c, p } => {
+            format!("phoenix c=({:.4}, {:.4}) p=({:.4}, {:.4})", c.re, c.im, p.re, p.im)
+        }
     };
     let coloring_label = match &coloring_params {
         Some(cp) => format!("field={:?} transform={:?} shade={:?} biomorph={:?} B={:.0}",
@@ -258,7 +324,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
             &frame,
             ss,
             args.maxiter,
-            julia_param,
+            family,
             cp,
             &palette,
             args.filter.into(),
@@ -281,12 +347,14 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     }
 
     // --- iterate (the only expensive stage) ---
-    // Mandelbrot uses the channel-intent f64 path; Julia uses the JuliaBackend
-    // (z₀ = pixel, fixed parameter). `channels` is irrelevant to Julia (it always
-    // computes the gated trap and never a `dz`), so it is unused on that branch.
+    // Location-profile path: only the two degree-2 families reach here (the new
+    // families were routed to the beautiful branch above). Mandelbrot uses the
+    // channel-intent f64 path; Julia uses the JuliaBackend (z₀ = pixel, fixed
+    // parameter). `channels` is irrelevant to Julia (it always computes the gated
+    // trap and never a `dz`), so it is unused on that branch.
     let t_iter = Instant::now();
-    let buf = match julia_param {
-        None => {
+    let buf = match family {
+        Family::Mandelbrot => {
             let backend = F64Backend::new(args.maxiter, BAILOUT, trap);
             render::iterate_samples_f64_pattern(
                 &backend,
@@ -297,8 +365,8 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                 args.seed,
             )
         }
-        Some(param) => {
-            let backend = JuliaBackend::new(param, args.maxiter, BAILOUT, trap);
+        Family::Julia { c } => {
+            let backend = JuliaBackend::new(c, args.maxiter, BAILOUT, trap);
             render::iterate_samples_julia_pattern(
                 &backend,
                 &frame,
@@ -306,6 +374,14 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                 args.pattern.into(),
                 args.seed,
             )
+        }
+        // Unreachable: new families always set `coloring_params = Some(..)` above,
+        // so they take the beautiful branch and never fall through here.
+        other => {
+            return Err(format!(
+                "internal: {} has no location-profile backend (should have routed to beautiful)",
+                other.kind_str()
+            ));
         }
     };
     let iter_secs = t_iter.elapsed().as_secs_f64();
@@ -354,6 +430,25 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
 
 
 // ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+/// Fractal family selector for `render-one`. `Mandelbrot` (default) is the classic
+/// `z²+c` parameter plane (pair with `--julia`/`--c` for the Julia dynamical plane);
+/// `Multibrot3/4/5` are `z^d+c` parameter planes; `Phoenix` is the Ushiki two-state
+/// dynamical plane. The two degree-2 families keep the settled location-profile
+/// render path; the new families render through the beautiful smooth pipeline.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum FamilyChoice {
+    /// `z → z² + c`, `z₀ = 0` (or Julia with `--julia`/`--c`).
+    Mandelbrot,
+    /// `z → z³ + c`, parameter plane.
+    Multibrot3,
+    /// `z → z⁴ + c`, parameter plane.
+    Multibrot4,
+    /// `z → z⁵ + c`, parameter plane.
+    Multibrot5,
+    /// Ushiki Phoenix `z_{n+1} = z_n² + c + p·z_{n-1}`, dynamical.
+    Phoenix,
+}
+
 /// Sub-pixel sample placement for `render-one` (maps to [`crate::render::SubsamplePattern`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum PatternChoice {
@@ -433,16 +528,25 @@ pub struct RenderOneArgs {
     #[arg(long = "fw", default_value_t = 0.000583)]
     pub frame_width: f64,
 
+    /// Fractal **family**. `mandelbrot` (default) is the classic `z²+c` parameter
+    /// plane; `multibrot3`/`multibrot4`/`multibrot5` are `z^d+c` (parameter plane);
+    /// `phoenix` is the Ushiki two-state dynamical plane. `--julia` pairs only with
+    /// `mandelbrot`; `phoenix` reuses `--c` (additive constant) and adds `--p`.
+    #[arg(long, value_enum, default_value_t = FamilyChoice::Mandelbrot)]
+    pub family: FamilyChoice,
+
     /// Render a **Julia** set instead of Mandelbrot. Off ⇒ today's Mandelbrot
     /// behavior exactly (bit-for-bit). When on, the viewport (`--cx`/`--cy`/`--fw`)
     /// addresses the **z-plane** and `--c` supplies the fixed Julia parameter.
-    /// Requires `--c`; using `--c` without `--julia` is an error.
+    /// Requires `--c`; using `--c` without `--julia` is an error. Only valid with
+    /// `--family mandelbrot`.
     #[arg(long, default_value_t = false)]
     pub julia: bool,
 
-    /// Julia parameter `c` as two arbitrary-precision decimal strings:
-    /// `--c <re> <im>` (e.g. `--c -0.8 0.156`). Required iff `--julia`; ignored —
-    /// and an error — without `--julia`.
+    /// Fixed constant `c` as two arbitrary-precision decimal strings:
+    /// `--c <re> <im>` (e.g. `--c -0.8 0.156`). The **Julia parameter** (required iff
+    /// `--julia`, error without it) or the **Phoenix additive constant** (optional
+    /// under `--family phoenix`, defaults to the classic `0.5667 0`).
     #[arg(
         long = "c",
         num_args = 2,
@@ -450,6 +554,18 @@ pub struct RenderOneArgs {
         allow_hyphen_values = true
     )]
     pub julia_c: Option<Vec<String>>,
+
+    /// Phoenix second constant `p` (the `z_{n-1}` coefficient / Ushiki's `q`) as two
+    /// decimal strings `--p <re> <im>`. Valid only with `--family phoenix`; defaults
+    /// to the classic `-0.5 0`. Carried through for future exploration even though
+    /// the classic instance is the only known-good point today.
+    #[arg(
+        long = "p",
+        num_args = 2,
+        value_names = ["RE", "IM"],
+        allow_hyphen_values = true
+    )]
+    pub phoenix_p: Option<Vec<String>>,
 
     /// Palette name, looked up in `--colormaps` (loaded through the selective-mirror
     /// path, so cyclic and sequential maps both render seam-free).

@@ -53,6 +53,16 @@
       "c_re": "-0.7496331230825287",
       "c_im": "0.04166181753158057",
       "maxiter": 800
+    },
+    {
+      "id": "test_05",
+      "system": "multibrot3",
+      "quality": 3,
+      "note": "whole-set view of the degree-3 multibrot (z³+c); exercises the base-d smooth field in the coloring-parity gate. Not from the labeled corpus — a synthetic family check.",
+      "cx": "0.0",
+      "cy": "0.0",
+      "fw": "3.0",
+      "maxiter": 400
     }
   ]
 }

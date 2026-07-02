@@ -63,6 +63,75 @@ pub const BEAUTIFUL_BAILOUT: f64 = 65536.0; // 2^16
 // Enums
 // ===========================================================================
 
+/// The orbit-escape **family** — which recurrence the iterate stage runs and how
+/// the viewport plane seeds it. This is the generalization of the old
+/// Mandelbrot-vs-Julia `julia: bool` (whose entire semantics were: dynamical
+/// families fix the constant and sweep `z₀ = pixel`, parameter-plane families fix
+/// `z₀ = 0` and sweep `c = pixel`).
+///
+///  - [`Mandelbrot`](Self::Mandelbrot) / [`Julia`](Self::Julia) — `z → z² + c`,
+///    degree 2 (parameter / dynamical). Reproduce the prior two paths byte-for-byte.
+///  - [`Multibrot`](Self::Multibrot) — `z → z^d + c`, parameter plane (`z₀ = 0`),
+///    `d ∈ {3,4,5}`. `z^d` by repeated complex multiplication.
+///  - [`Phoenix`](Self::Phoenix) — Ushiki `z_{n+1} = z_n² + c + p·z_{n-1}`,
+///    dynamical (`z₀ = pixel`, `z_{-1} = 0`), degree 2. `c` is the additive constant
+///    (Julia's role); `p` is the `z_{n-1}` coefficient (Ushiki's `q`). Both fixed
+///    per render.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Family {
+    /// `z → z² + c`, `z₀ = 0` (parameter plane).
+    Mandelbrot,
+    /// `z → z² + c`, `z₀ = pixel`, `c` fixed (dynamical / seed plane).
+    Julia { c: Complex<f64> },
+    /// `z → z^d + c`, `z₀ = 0` (parameter plane), `d ∈ {3,4,5}`.
+    Multibrot { degree: u32 },
+    /// `z_{n+1} = z_n² + c + p·z_{n-1}`, `z₀ = pixel`, `z_{-1} = 0` (dynamical).
+    Phoenix { c: Complex<f64>, p: Complex<f64> },
+}
+
+impl Family {
+    /// Escape degree `d`: the exponent in `z^d` that dominates near escape, so the
+    /// smooth-field outer log base is `ln d` (Phoenix's `z²` dominates → 2).
+    pub fn degree(self) -> u32 {
+        match self {
+            Family::Multibrot { degree } => degree,
+            Family::Mandelbrot | Family::Julia { .. } | Family::Phoenix { .. } => 2,
+        }
+    }
+
+    /// Dynamical (seed-plane) families fix the constant and sweep `z₀ = pixel`;
+    /// parameter-plane families fix `z₀ = 0` and sweep `c = pixel`. This also sets
+    /// the `dz` seed (`1` dynamical, `0` parameter) and whether the `dz` recurrence
+    /// carries the parameter-plane `+1`.
+    pub fn is_dynamical(self) -> bool {
+        matches!(self, Family::Julia { .. } | Family::Phoenix { .. })
+    }
+
+    /// `(z₀, c)` for a pixel: dynamical → `(pixel, fixed_const)`, parameter-plane →
+    /// `(0, pixel)`. The single source for the per-pixel seed the render fns used to
+    /// inline as `match julia_param`.
+    pub fn seed(self, pixel: Complex<f64>) -> (Complex<f64>, Complex<f64>) {
+        match self {
+            Family::Julia { c } => (pixel, c),
+            Family::Phoenix { c, .. } => (pixel, c),
+            Family::Mandelbrot | Family::Multibrot { .. } => (Complex::new(0.0, 0.0), pixel),
+        }
+    }
+
+    /// Version-invariant `location.kind` string for the `--dump-field` sidecar.
+    pub fn kind_str(self) -> &'static str {
+        match self {
+            Family::Mandelbrot => "mandelbrot",
+            Family::Julia { .. } => "julia",
+            Family::Multibrot { degree: 3 } => "multibrot3",
+            Family::Multibrot { degree: 4 } => "multibrot4",
+            Family::Multibrot { degree: 5 } => "multibrot5",
+            Family::Multibrot { .. } => "multibrot",
+            Family::Phoenix { .. } => "phoenix",
+        }
+    }
+}
+
 /// The coloring method / "style" — the field stage (doc §4). Each maps an orbit
 /// to a scalar, then percentile-stretch + transform.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1181,11 +1250,19 @@ impl OrbitAccum {
     }
 }
 
-/// Iterate one orbit, accumulating the full channel union. `z0` is `0` for
-/// Mandelbrot (`c` = pixel) and the pixel for Julia (`c` = fixed parameter); the
-/// `z'` recurrence differs accordingly (`dz0 = 0`, `+1` for Mandelbrot; `dz0 = 1`,
-/// no `+1` for Julia — doc §0). Order matches [`crate::backend::F64Backend`]: `z'`
-/// updates from `zₙ` before `z` advances.
+/// Iterate one orbit, accumulating the full channel union. `z0` is `0` for the
+/// parameter-plane families (`c` = pixel) and the pixel for the dynamical families
+/// (`c` = fixed parameter); the `z'` recurrence differs accordingly (`dz0 = 0`,
+/// `+1` for parameter plane; `dz0 = 1`, no `+1` for dynamical — doc §0). `family`
+/// selects the recurrence: `z^d + c` for Mandelbrot/Julia/Multibrot (degree 2 or
+/// `d ∈ {3,4,5}`, by repeated complex multiplication), or the two-state Phoenix
+/// `z_{n+1} = z_n² + c + p·z_{n-1}`. Order matches [`crate::backend::F64Backend`]:
+/// `z'` updates from `zₙ` before `z` advances.
+///
+/// **Degree byte-identity:** for degree 2 the `z^d`/`dz` ops and the smooth base
+/// reduce to exactly the prior Mandelbrot/Julia float sequence (`z^1 = z`,
+/// `z^2 = z·z`, base [`LN_2`](std::f64::consts::LN_2)), so a degree-2 render is
+/// bit-for-bit unchanged; only `d ∈ {3,4,5}` take the new terms.
 // The orbit-history bindings (`zprev2`, `escaped`) are initialized then
 // unconditionally overwritten on the first loop pass before they're read — the
 // loop always runs ≥1 iteration. That's the carried-history idiom, not a bug.
@@ -1195,7 +1272,7 @@ pub fn iterate_orbit(
     c: Complex<f64>,
     maxiter: u32,
     params: &ColoringParams,
-    julia: bool,
+    family: Family,
 ) -> OrbitAccum {
     let b = params.bailout_b;
     let b2 = b * b;
@@ -1204,12 +1281,26 @@ pub fn iterate_orbit(
     let r = params.trap_radius;
     let cabs = c.norm();
 
+    let degree = family.degree();
+    let dynamical = family.is_dynamical();
+    // Phoenix's second constant `p` (the z_{n-1} coefficient); zero / unused for the
+    // z^d families.
+    let phoenix_p = match family {
+        Family::Phoenix { p, .. } => p,
+        _ => Complex::new(0.0, 0.0),
+    };
+
     let mut z = z0;
-    let mut dz = if julia {
+    let mut dz = if dynamical {
         Complex::new(1.0, 0.0)
     } else {
         Complex::new(0.0, 0.0)
     };
+    // Phoenix two-state: z_{n-1} and dz_{n-1}, both seeded 0 (z_{-1} = 0). Distinct
+    // from the curvature history below (which seeds z0) so the first Phoenix step
+    // couples against z_{-1} = 0, not z_0.
+    let mut ph_zprev = Complex::new(0.0, 0.0);
+    let mut ph_dzprev = Complex::new(0.0, 0.0);
     // Orbit history for curvature: zprev1 = zₙ₋₁, zprev2 = zₙ₋₂.
     let mut zprev1 = z0;
     let mut zprev2 = Complex::new(0.0, 0.0);
@@ -1238,15 +1329,42 @@ pub fn iterate_orbit(
     let mut smooth = 0.0f64;
 
     loop {
-        // z' first (uses zₙ), then z advances. |zₙ²| feeds tia's lo/hi.
-        let dz_next = if julia {
-            Complex::new(2.0, 0.0) * z * dz
-        } else {
-            Complex::new(2.0, 0.0) * z * dz + Complex::new(1.0, 0.0)
-        };
+        // z' first (uses zₙ), then z advances. |zₙ²| feeds tia's lo/hi (kept for
+        // every family — tia is a niche exterior field, not a degree-correctness
+        // target; only the smooth base tracks the degree).
         let zn_sq = z * z;
         let zn_sq_abs = zn_sq.norm(); // |zₙ²| = |z_prev²| for tia
-        let z_next = zn_sq + c;
+
+        // Recurrence + derivative, per family. Degree 2 reduces to the prior
+        // `z·z + c` / `2·z·z' (+1)` float sequence exactly (z^{d-1} = z, so
+        // `cpow_deriv` returns `(z·z, z)`); d ∈ {3,4,5} take the base-d power and
+        // degree-scaled derivative. Phoenix carries the two-state z_{n-1} coupling.
+        let (z_next, dz_next) = match family {
+            Family::Phoenix { .. } => {
+                // z_{n+1} = z_n² + c + p·z_{n-1}; z'_{n+1} = 2·z_n·z'_n + p·z'_{n-1}
+                // (dynamical — no +1). Shift the two-state after reading it.
+                let z_next = zn_sq + c + phoenix_p * ph_zprev;
+                let dz_next = Complex::new(2.0, 0.0) * z * dz + phoenix_p * ph_dzprev;
+                ph_zprev = z;
+                ph_dzprev = dz;
+                (z_next, dz_next)
+            }
+            _ => {
+                // z^d and z^{d-1} by repeated complex multiplication (exact, fast).
+                let (zd, zd_minus_1) = cpow_deriv(z, degree);
+                let z_next = zd + c;
+                // dz' = d·z^{d-1}·z' (+1 on the parameter plane only). Branch on the
+                // `+1` (not `+ 0`) so the dynamical arm never adds a `+0.0` that
+                // could flip a signed zero vs the prior degree-2 Julia bytes.
+                let core = Complex::new(degree as f64, 0.0) * zd_minus_1 * dz;
+                let dz_next = if dynamical {
+                    core
+                } else {
+                    core + Complex::new(1.0, 0.0)
+                };
+                (z_next, dz_next)
+            }
+        };
 
         zprev2 = zprev1;
         zprev1 = z;
@@ -1338,7 +1456,7 @@ pub fn iterate_orbit(
         };
         if bail {
             escaped = true;
-            smooth = smooth_value(n, zabs2, b);
+            smooth = smooth_value(n, zabs2, b, degree);
             break;
         }
     }
@@ -1368,27 +1486,54 @@ pub fn iterate_orbit(
     }
 }
 
-/// `nu = (n+1) − log2(ln|z| / ln B)` — the **bailout-normalized** smooth iteration,
+/// `nu = (n+1) − log_d(ln|z| / ln B)` — the **bailout-normalized** smooth iteration,
 /// which → 0 at the escape boundary (`|z| = B`). Its fraction is therefore the
 /// correct deband weight ([`field`](OrbitAccum::field) / [`deband`]).
 ///
-/// For the *smooth field itself* the `−log2(ln B)` term is an additive constant the
+/// For the *smooth field itself* the `−log_d(ln B)` term is an additive constant the
 /// percentile-stretch absorbs (so the smooth render is invariant to it — verified
 /// by pixel-diff against the un-normalized formula). But in the **deband weight**
 /// path the constant is load-bearing: omitting it (the previous shortcut) phase-
-/// shifts the lerp by `log2(ln B) mod 1` and terraces the bands. We normalize here
+/// shifts the lerp by `log_d(ln B) mod 1` and terraces the bands. We normalize here
 /// once so both paths share the correct value. `B` is threaded from
 /// `params.bailout_b` — never hardcoded — so the normalization tracks the bailout.
+///
+/// **Outer log base = `ln d`, the degree correctness landmine.** Near escape
+/// `|z_{n+1}| ≈ |z_n|^d`, so the double-log base is the family degree, not always 2.
+/// Only this base changes with degree; every other term (the `+1`, the `ln B`
+/// normalization) is identical. Degree 2 uses the exact [`LN_2`](std::f64::consts::LN_2)
+/// constant (not `2.0.ln()`), so the degree-2 output is bit-for-bit the prior value;
+/// `d ∈ {3,4,5}` use `(d as f64).ln()` and converge instead of banding.
 #[inline]
-fn smooth_value(n: u32, zabs2: f64, bailout_b: f64) -> f64 {
+fn smooth_value(n: u32, zabs2: f64, bailout_b: f64, degree: u32) -> f64 {
     let log_zn = 0.5 * zabs2.ln(); // ln|z|
     let log_b = bailout_b.ln(); // ln B
     let ratio = log_zn / log_b;
+    // Degree 2 pins the exact LN_2 const so d=2 is byte-identical to before.
+    let ln_d = if degree == 2 {
+        std::f64::consts::LN_2
+    } else {
+        (degree as f64).ln()
+    };
     if log_zn > 0.0 && log_b > 0.0 && ratio.is_finite() && ratio > 0.0 {
-        (n + 1) as f64 - ratio.ln() / std::f64::consts::LN_2
+        (n + 1) as f64 - ratio.ln() / ln_d
     } else {
         (n + 1) as f64
     }
+}
+
+/// `(z^d, z^{d-1})` by repeated complex multiplication, for `d ≥ 2`. Exact and fast
+/// (no `powf`/polar). Returns the derivative-power `z^{d-1}` alongside `z^d` so the
+/// caller's `dz` recurrence (`d·z^{d-1}·z'`) shares the work. For `d = 2` this is
+/// `(z·z, z)` — the exact float sequence the degree-2 path had inline.
+#[inline]
+fn cpow_deriv(z: Complex<f64>, d: u32) -> (Complex<f64>, Complex<f64>) {
+    let mut zd_minus_1 = z; // z^1
+    for _ in 2..d {
+        zd_minus_1 *= z; // build up to z^{d-1}
+    }
+    let zd = zd_minus_1 * z; // z^d
+    (zd, zd_minus_1)
 }
 
 // ===========================================================================
@@ -1496,8 +1641,10 @@ struct CompositePix {
 
 /// Render one location through the beautiful pipeline → sRGB image.
 ///
-/// `julia_param = Some(c)` renders a Julia (viewport is the z-plane, `z0 = pixel`);
-/// `None` renders the Mandelbrot. Grid-centered supersampling (the rgss/jitter
+/// `family` selects the recurrence and how the viewport seeds it (see [`Family`]):
+/// dynamical families (Julia/Phoenix) address the z-plane with `z0 = pixel`;
+/// parameter-plane families (Mandelbrot/Multibrot) sweep `c = pixel`.
+/// Grid-centered supersampling (the rgss/jitter
 /// placements are a smooth-path AA study; beautiful v1 uses grid). The trap fields
 /// fill the interior; exterior-only fields render interior pixels black.
 ///
@@ -1511,7 +1658,7 @@ pub fn render_beautiful(
     frame: &Frame,
     ss: u32,
     maxiter: u32,
-    julia_param: Option<Complex<f64>>,
+    family: Family,
     params: &ColoringParams,
     palette: &Palette,
     filter: DownsampleFilter,
@@ -1519,12 +1666,12 @@ pub fn render_beautiful(
     // Direct orbit traps are colour-valued (composite-during-iteration), not a
     // scalar field — they take their own output path, ignoring texture/normalize.
     if params.field == Field::DirectTrap {
-        return render_direct_trap(frame, ss, maxiter, julia_param, params, palette, filter);
+        return render_direct_trap(frame, ss, maxiter, family, params, palette, filter);
     }
     if params.texture_field.is_some() {
-        return render_beautiful_composite(frame, ss, maxiter, julia_param, params, palette, filter);
+        return render_beautiful_composite(frame, ss, maxiter, family, params, palette, filter);
     }
-    render_beautiful_single(frame, ss, maxiter, julia_param, params, palette, filter)
+    render_beautiful_single(frame, ss, maxiter, family, params, palette, filter)
 }
 
 /// Compute the **raw smooth scalar field** over the supersampled grid — the most
@@ -1544,7 +1691,7 @@ pub fn smooth_field_supersampled(
     frame: &Frame,
     ss: u32,
     maxiter: u32,
-    julia_param: Option<Complex<f64>>,
+    family: Family,
     params: &ColoringParams,
 ) -> (Vec<f32>, u32, u32) {
     let s = ss.max(1);
@@ -1555,7 +1702,6 @@ pub fn smooth_field_supersampled(
     let sub_w_f = sub_w as f64;
     let sub_h_f = sub_h as f64;
     let center = frame.center;
-    let julia = julia_param.is_some();
 
     // Grid geometry identical to `render_beautiful_single` (grid-centered SS).
     let rows: Vec<Vec<f32>> = (0..sub_h)
@@ -1568,11 +1714,8 @@ pub fn smooth_field_supersampled(
                 let px = scol as f64 + 0.5;
                 let dc_re = (px / sub_w_f - 0.5) * fw;
                 let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
-                let (z0, c) = match julia_param {
-                    Some(p) => (pixel, p),
-                    None => (Complex::new(0.0, 0.0), pixel),
-                };
-                let acc = iterate_orbit(z0, c, maxiter, params, julia);
+                let (z0, c) = family.seed(pixel);
+                let acc = iterate_orbit(z0, c, maxiter, params, family);
                 // NaN encodes interior / non-escaped (Field::Smooth is exterior-only).
                 let v = acc.field(Field::Smooth).map_or(f32::NAN, |x| x as f32);
                 row.push(v);
@@ -1603,7 +1746,7 @@ fn render_direct_trap(
     frame: &Frame,
     ss: u32,
     maxiter: u32,
-    julia_param: Option<Complex<f64>>,
+    family: Family,
     params: &ColoringParams,
     palette: &Palette,
     filter: DownsampleFilter,
@@ -1634,8 +1777,15 @@ fn render_direct_trap(
 
     // Iterate one orbit and composite the direct-trap accumulator → linear RGB. The
     // second return is the orbit's closest-approach distance (for `stats`).
+    let degree = family.degree();
+    let phoenix_p = match family {
+        Family::Phoenix { p, .. } => p,
+        _ => Complex::new(0.0, 0.0),
+    };
     let composite = |z0: Complex<f64>, c: Complex<f64>| -> ([f64; 3], f64) {
         let mut z = z0;
+        // Phoenix two-state (z_{n-1}, seeded 0); unused for the z^d families.
+        let mut ph_zprev = Complex::new(0.0, 0.0);
         // Linear-RGB accumulator initialized to the `start color` background (doc §3).
         // Black (default) is the absorbing background the multiplicative modes darken
         // from; a white start lets `multiply` build dark lace down from light.
@@ -1643,7 +1793,14 @@ fn render_direct_trap(
         let mut min_d = f64::INFINITY;
         let mut n = 0u32;
         loop {
-            z = z * z + c;
+            z = match family {
+                Family::Phoenix { .. } => {
+                    let z_next = z * z + c + phoenix_p * ph_zprev;
+                    ph_zprev = z;
+                    z_next
+                }
+                _ => cpow_deriv(z, degree).0 + c,
+            };
             n += 1;
             // Trap distance of the iterate to the chosen shape (trapcenter 0, rot
             // identity, aspect 1 → z2 = z). `Cross` reproduces the prior baked
@@ -1693,10 +1850,7 @@ fn render_direct_trap(
                 let px = scol as f64 + 0.5;
                 let dc_re = (px / sub_w_f - 0.5) * fw;
                 let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
-                let (z0, c) = match julia_param {
-                    Some(p) => (pixel, p),
-                    None => (Complex::new(0.0, 0.0), pixel),
-                };
+                let (z0, c) = family.seed(pixel);
                 row.push(composite(z0, c));
             }
             row
@@ -1751,7 +1905,7 @@ fn render_beautiful_single(
     frame: &Frame,
     ss: u32,
     maxiter: u32,
-    julia_param: Option<Complex<f64>>,
+    family: Family,
     params: &ColoringParams,
     palette: &Palette,
     filter: DownsampleFilter,
@@ -1764,7 +1918,6 @@ fn render_beautiful_single(
     let sub_w_f = sub_w as f64;
     let sub_h_f = sub_h as f64;
     let center = frame.center;
-    let julia = julia_param.is_some();
     let want_shade = params.shade == Shade::NormalMap;
     // Output-pixel size in the complex plane — the zoom-invariant unit the `de`
     // field normalizes against (`fw/width`). `field()` can't see this; `de_value`
@@ -1782,12 +1935,9 @@ fn render_beautiful_single(
                 let px = scol as f64 + 0.5;
                 let dc_re = (px / sub_w_f - 0.5) * fw;
                 let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
-                // Mandelbrot: z0 = 0, c = pixel. Julia: z0 = pixel, c = param.
-                let (z0, c) = match julia_param {
-                    Some(p) => (pixel, p),
-                    None => (Complex::new(0.0, 0.0), pixel),
-                };
-                let acc = iterate_orbit(z0, c, maxiter, params, julia);
+                // Parameter plane: z0 = 0, c = pixel. Dynamical: z0 = pixel, c = param.
+                let (z0, c) = family.seed(pixel);
+                let acc = iterate_orbit(z0, c, maxiter, params, family);
                 let value = match params.field {
                     Field::De => acc.de_value(pixel_size, params.de_scale),
                     // Color-By-aware reduction (the default `field()` is min-distance only).
@@ -1905,7 +2055,7 @@ fn render_beautiful_composite(
     frame: &Frame,
     ss: u32,
     maxiter: u32,
-    julia_param: Option<Complex<f64>>,
+    family: Family,
     params: &ColoringParams,
     palette: &Palette,
     filter: DownsampleFilter,
@@ -1918,7 +2068,6 @@ fn render_beautiful_composite(
     let sub_w_f = sub_w as f64;
     let sub_h_f = sub_h as f64;
     let center = frame.center;
-    let julia = julia_param.is_some();
     let want_shade = params.shade == Shade::NormalMap;
     let texture_field = params
         .texture_field
@@ -1945,11 +2094,8 @@ fn render_beautiful_composite(
                 let px = scol as f64 + 0.5;
                 let dc_re = (px / sub_w_f - 0.5) * fw;
                 let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
-                let (z0, c) = match julia_param {
-                    Some(p) => (pixel, p),
-                    None => (Complex::new(0.0, 0.0), pixel),
-                };
-                let acc = iterate_orbit(z0, c, maxiter, params, julia);
+                let (z0, c) = family.seed(pixel);
+                let acc = iterate_orbit(z0, c, maxiter, params, family);
                 // One pass, two fields off the shared channel union.
                 let bv = eval(&acc, params.field);
                 let tv = eval(&acc, texture_field);
@@ -2129,7 +2275,7 @@ mod tests {
         let ss = 2u32;
         let maxiter = 400u32;
         let params = ColoringParams::beautiful(Field::Smooth);
-        let (field, w, h) = smooth_field_supersampled(&frame, ss, maxiter, None, &params);
+        let (field, w, h) = smooth_field_supersampled(&frame, ss, maxiter, Family::Mandelbrot, &params);
         assert_eq!((w, h), (40, 24));
         assert_eq!(field.len(), (w * h) as usize);
 
@@ -2148,7 +2294,7 @@ mod tests {
                 let px = scol as f64 + 0.5;
                 let dc_re = (px / sub_w_f - 0.5) * fw;
                 let c = Complex::new(frame.center.re + dc_re, frame.center.im + dc_im);
-                let acc = iterate_orbit(Complex::new(0.0, 0.0), c, maxiter, &params, false);
+                let acc = iterate_orbit(Complex::new(0.0, 0.0), c, maxiter, &params, Family::Mandelbrot);
                 let got = field[srow * w as usize + scol];
                 match acc.field(Field::Smooth) {
                     Some(v) => {
@@ -2231,7 +2377,7 @@ mod tests {
             Complex::new(1.0, 1.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(m.escaped && m.smooth.is_finite());
         // Julia exterior point (c = -0.8 + 0.156i, z0 far out).
@@ -2240,7 +2386,7 @@ mod tests {
             Complex::new(-0.8, 0.156),
             500,
             &p,
-            true,
+            Family::Julia { c: Complex::new(-0.8, 0.156) },
         );
         assert!(j.escaped && j.smooth.is_finite());
         assert!(j.ushade().norm() <= 1.0 + 1e-9);
@@ -2306,7 +2452,7 @@ mod tests {
             &frame,
             1,
             300,
-            None,
+            Family::Mandelbrot,
             &p,
             &palette,
             DownsampleFilter::Box,
@@ -2337,8 +2483,8 @@ mod tests {
         dressed.combine = Combine::Screen;
         dressed.texture_weight = 0.7;
         dressed.texture_transform = Transform::Histeq;
-        let a = render_beautiful(&frame, 2, 400, None, &single, &palette, DownsampleFilter::Lanczos3);
-        let b = render_beautiful(&frame, 2, 400, None, &dressed, &palette, DownsampleFilter::Lanczos3);
+        let a = render_beautiful(&frame, 2, 400, Family::Mandelbrot, &single, &palette, DownsampleFilter::Lanczos3);
+        let b = render_beautiful(&frame, 2, 400, Family::Mandelbrot, &dressed, &palette, DownsampleFilter::Lanczos3);
         assert_eq!(a.into_raw(), b.into_raw());
     }
 
@@ -2373,7 +2519,7 @@ mod tests {
             Complex::new(1.0, 1.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(ext.escaped);
         assert!(ext.field(Field::De).is_none());
@@ -2385,7 +2531,7 @@ mod tests {
             Complex::new(-0.2, 0.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(!interior.escaped);
         assert!(interior.de_value(ps, 1.0).is_none());
@@ -2408,7 +2554,7 @@ mod tests {
             Complex::new(1.0, 0.0),
             50,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         let v = acc.field(Field::GaussianInt).expect("interior-valued");
         assert!(v.abs() < 1e-12, "integer orbit lattice distance {v} ≠ 0");
@@ -2419,7 +2565,7 @@ mod tests {
             Complex::new(-0.2, 0.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         let iv = interior.field(Field::GaussianInt).expect("fills interior");
         assert!(iv.is_finite() && (0.0..=0.7072).contains(&iv));
@@ -2436,7 +2582,7 @@ mod tests {
             Complex::new(-0.2, 0.3),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         let g = |m| acc.gaussint_value(m).expect("interior-valued");
         let rmin = g(GaussianColorBy::MinimumDistance);
@@ -2495,7 +2641,7 @@ mod tests {
             Complex::new(1.0, 1.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(ext.escaped);
         let a = ext.field(Field::Decomposition).expect("escaped angle");
@@ -2506,7 +2652,7 @@ mod tests {
             Complex::new(-0.2, 0.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(!interior.escaped);
         assert!(interior.field(Field::Decomposition).is_none());
@@ -2523,7 +2669,7 @@ mod tests {
             Complex::new(1.0, 1.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(ext.escaped);
         let s = ext.field(Field::ExpSmoothing).expect("escaped sum");
@@ -2536,7 +2682,7 @@ mod tests {
             Complex::new(-0.2, 0.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(!interior.escaped);
         assert!(interior.field(Field::ExpSmoothing).is_none());
@@ -2559,7 +2705,7 @@ mod tests {
         // Reachable trap (threshold 0.5): some pixels composite a gradient sample.
         let mut lit = ColoringParams::beautiful(Field::DirectTrap);
         lit.direct_threshold = 0.5;
-        let img_lit = render_beautiful(&frame, 1, 300, None, &lit, &palette, DownsampleFilter::Box);
+        let img_lit = render_beautiful(&frame, 1, 300, Family::Mandelbrot, &lit, &palette, DownsampleFilter::Box);
         assert!(
             img_lit.pixels().any(|px| px.0 != [0, 0, 0]),
             "direct trap rendered all background despite a reachable trap"
@@ -2568,7 +2714,7 @@ mod tests {
         let mut dark = ColoringParams::beautiful(Field::DirectTrap);
         dark.direct_threshold = 1e-300;
         let img_dark =
-            render_beautiful(&frame, 1, 300, None, &dark, &palette, DownsampleFilter::Box);
+            render_beautiful(&frame, 1, 300, Family::Mandelbrot, &dark, &palette, DownsampleFilter::Box);
         assert!(
             img_dark.pixels().all(|px| px.0 == [0, 0, 0]),
             "direct trap lit pixels with an unreachable trap"
@@ -2632,8 +2778,8 @@ mod tests {
         let mut q = ColoringParams::beautiful(Field::DirectTrap);
         q.merge_mode = MergeMode::Multiply;
         q.direct_threshold = 0.5;
-        let a = render_beautiful(&frame, 2, 300, None, &q, &palette, DownsampleFilter::Box);
-        let b = render_beautiful(&frame, 2, 300, None, &q, &palette, DownsampleFilter::Box);
+        let a = render_beautiful(&frame, 2, 300, Family::Mandelbrot, &q, &palette, DownsampleFilter::Box);
+        let b = render_beautiful(&frame, 2, 300, Family::Mandelbrot, &q, &palette, DownsampleFilter::Box);
         assert_eq!(a.into_raw(), b.into_raw());
     }
 
@@ -2674,9 +2820,9 @@ mod tests {
         let mut screen_black = screen_default;
         screen_black.start_color = [0.0, 0.0, 0.0];
         let img_default =
-            render_beautiful(&frame, 2, 300, None, &screen_default, &palette, DownsampleFilter::Box);
+            render_beautiful(&frame, 2, 300, Family::Mandelbrot, &screen_default, &palette, DownsampleFilter::Box);
         let img_black =
-            render_beautiful(&frame, 2, 300, None, &screen_black, &palette, DownsampleFilter::Box);
+            render_beautiful(&frame, 2, 300, Family::Mandelbrot, &screen_black, &palette, DownsampleFilter::Box);
         assert_eq!(img_default.clone().into_raw(), img_black.into_raw());
 
         // Multiply on a white start differs from multiply on black, and isn't
@@ -2687,9 +2833,9 @@ mod tests {
         let mut mul_white = mul_black;
         mul_white.start_color = [1.0, 1.0, 1.0];
         let img_mb =
-            render_beautiful(&frame, 2, 300, None, &mul_black, &palette, DownsampleFilter::Box);
+            render_beautiful(&frame, 2, 300, Family::Mandelbrot, &mul_black, &palette, DownsampleFilter::Box);
         let img_mw =
-            render_beautiful(&frame, 2, 300, None, &mul_white, &palette, DownsampleFilter::Box);
+            render_beautiful(&frame, 2, 300, Family::Mandelbrot, &mul_white, &palette, DownsampleFilter::Box);
         assert_ne!(img_mb.into_raw(), img_mw.clone().into_raw());
         assert!(
             img_mw.pixels().any(|px| px.0 != [0, 0, 0]),
@@ -2707,10 +2853,125 @@ mod tests {
             Complex::new(-0.2, 0.0),
             500,
             &p,
-            false,
+            Family::Mandelbrot,
         );
         assert!(!acc.escaped);
         assert!(acc.field(Field::TrapCross).is_some());
         assert!(acc.field(Field::Smooth).is_none());
+    }
+
+    // === New families: multibrot d=3,4,5 + classic Phoenix ===
+
+    /// Degree-2 reduction is the exact prior float sequence: `cpow_deriv(z, 2)` is
+    /// `(z·z, z)` bit-for-bit (so Mandelbrot/Julia `z^d`/`dz` are unchanged), and the
+    /// higher degrees are plain repeated multiplication.
+    #[test]
+    fn cpow_deriv_reduces_exactly() {
+        for &(re, im) in &[(0.3, -0.7), (1.5, 0.0), (-0.9, 1.1), (0.0, 0.4)] {
+            let z = Complex::new(re, im);
+            let (z2, z1) = cpow_deriv(z, 2);
+            assert_eq!(z2.re.to_bits(), (z * z).re.to_bits());
+            assert_eq!(z2.im.to_bits(), (z * z).im.to_bits());
+            assert_eq!(z1.re.to_bits(), z.re.to_bits()); // z^1 = z
+            assert_eq!(z1.im.to_bits(), z.im.to_bits());
+            // z^3 = z·z·z, derivative-power z^2; z^5 derivative-power z^4.
+            let (z3, z3d) = cpow_deriv(z, 3);
+            assert_eq!(z3.re.to_bits(), (z * z * z).re.to_bits());
+            assert_eq!(z3d.re.to_bits(), (z * z).re.to_bits());
+            let (z5, z5d) = cpow_deriv(z, 5);
+            assert_eq!(z5.re.to_bits(), (z * z * z * z * z).re.to_bits());
+            assert_eq!(z5d.re.to_bits(), (z * z * z * z).re.to_bits());
+        }
+    }
+
+    /// Degree-2 smooth value pins the exact `LN_2` constant (not `2.0.ln()`), so a
+    /// degree-2 render is bit-for-bit the prior value.
+    #[test]
+    fn smooth_value_degree2_uses_ln2() {
+        let (n, zabs2, b) = (12u32, 1.0e9f64, 65536.0f64);
+        let got = smooth_value(n, zabs2, b, 2);
+        let log_zn = 0.5 * zabs2.ln();
+        let want = (n + 1) as f64 - (log_zn / b.ln()).ln() / std::f64::consts::LN_2;
+        assert_eq!(got.to_bits(), want.to_bits());
+        // Degree 3 uses ln(3) — a different, converging base.
+        let got3 = smooth_value(n, zabs2, b, 3);
+        let want3 = (n + 1) as f64 - (log_zn / b.ln()).ln() / 3.0f64.ln();
+        assert_eq!(got3.to_bits(), want3.to_bits());
+        assert_ne!(got.to_bits(), got3.to_bits());
+    }
+
+    /// Multibrot `z^d + c` is invariant under `c → ω·c` with `ω^{d-1} = 1`. For the
+    /// two degrees where `ω` is exactly representable — d=3 (`ω = -1`) and d=5
+    /// (`ω = i`) — the rotated orbit is the exact float negation/`i`-multiple of the
+    /// original, so the escape classification and smooth value are **byte-identical**.
+    #[test]
+    fn multibrot_rotational_symmetry_exact() {
+        let p = ColoringParams::beautiful(Field::Smooth);
+        let z0 = Complex::new(0.0, 0.0);
+        for &(re, im) in &[(0.4, 0.3), (-0.6, 0.8), (1.1, -0.2), (0.05, 1.0)] {
+            let c = Complex::new(re, im);
+            // d=3: ω = -1 (d-1 = 2).
+            let a = iterate_orbit(z0, c, 400, &p, Family::Multibrot { degree: 3 });
+            let b = iterate_orbit(z0, -c, 400, &p, Family::Multibrot { degree: 3 });
+            assert_eq!(a.escaped, b.escaped);
+            assert_eq!(a.smooth.to_bits(), b.smooth.to_bits(), "d=3 c=({re},{im})");
+            // d=5: ω = i (d-1 = 4). i·c = (-im, re).
+            let ic = Complex::new(-im, re);
+            let a5 = iterate_orbit(z0, c, 400, &p, Family::Multibrot { degree: 5 });
+            let b5 = iterate_orbit(z0, ic, 400, &p, Family::Multibrot { degree: 5 });
+            assert_eq!(a5.escaped, b5.escaped);
+            assert_eq!(a5.smooth.to_bits(), b5.smooth.to_bits(), "d=5 c=({re},{im})");
+        }
+    }
+
+    /// Phoenix with `p = 0` drops the `z_{n-1}` coupling and reduces to a plain Julia
+    /// (`z_{n+1} = z_n² + c`, same `z₀ = pixel`, same `dz₀ = 1`, same `dz` recurrence
+    /// with no `+1`), so the two paths must agree **bit-for-bit** on every channel.
+    #[test]
+    fn phoenix_p_zero_is_julia() {
+        let p = ColoringParams::beautiful(Field::Smooth);
+        let c = Complex::new(-0.8, 0.156);
+        for &(re, im) in &[(0.5, 0.5), (-1.2, 0.3), (0.0, -0.9), (2.0, 2.0)] {
+            let pixel = Complex::new(re, im);
+            let ph = iterate_orbit(
+                pixel,
+                c,
+                500,
+                &p,
+                Family::Phoenix { c, p: Complex::new(0.0, 0.0) },
+            );
+            let ju = iterate_orbit(pixel, c, 500, &p, Family::Julia { c });
+            assert_eq!(ph.escaped, ju.escaped);
+            assert_eq!(ph.smooth.to_bits(), ju.smooth.to_bits(), "pixel=({re},{im})");
+            assert_eq!(ph.z.re.to_bits(), ju.z.re.to_bits());
+            assert_eq!(ph.z.im.to_bits(), ju.z.im.to_bits());
+            assert_eq!(ph.dz.re.to_bits(), ju.dz.re.to_bits());
+            assert_eq!(ph.dz.im.to_bits(), ju.dz.im.to_bits());
+        }
+    }
+
+    /// Family metadata: degree threads the exponent; dynamical families seed the
+    /// z-plane (`z₀ = pixel`), parameter-plane families seed `z₀ = 0`.
+    #[test]
+    fn family_seed_and_degree() {
+        let pixel = Complex::new(0.37, -0.11);
+        assert_eq!(Family::Mandelbrot.degree(), 2);
+        assert_eq!(Family::Multibrot { degree: 4 }.degree(), 4);
+        assert_eq!(Family::Phoenix { c: pixel, p: pixel }.degree(), 2);
+        // Parameter plane: z0 = 0, c = pixel.
+        assert_eq!(Family::Mandelbrot.seed(pixel), (Complex::new(0.0, 0.0), pixel));
+        assert_eq!(
+            Family::Multibrot { degree: 3 }.seed(pixel),
+            (Complex::new(0.0, 0.0), pixel)
+        );
+        // Dynamical: z0 = pixel, c = fixed const.
+        let k = Complex::new(0.5667, 0.0);
+        assert_eq!(Family::Julia { c: k }.seed(pixel), (pixel, k));
+        assert_eq!(
+            Family::Phoenix { c: k, p: Complex::new(-0.5, 0.0) }.seed(pixel),
+            (pixel, k)
+        );
+        assert!(!Family::Mandelbrot.is_dynamical());
+        assert!(Family::Phoenix { c: k, p: k }.is_dynamical());
     }
 }

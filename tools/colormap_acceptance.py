@@ -35,10 +35,21 @@ TOL_FRAC_GT1 = 1e-4
 
 
 def _location_args(loc):
-    """CLI location flags for a test_renders.json entry."""
+    """CLI location flags for a test_renders.json entry. `system` selects the family:
+    mandelbrot (bare), julia (--julia/--c), multibrot3/4/5 (--family), or phoenix
+    (--family, optional --c/--p)."""
     a = ["--cx", loc["cx"], "--cy", loc["cy"], "--fw", loc["fw"], "--maxiter", str(loc["maxiter"])]
-    if loc["system"] == "julia":
+    system = loc["system"]
+    if system == "julia":
         a += ["--julia", "--c", loc["c_re"], loc["c_im"]]
+    elif system.startswith("multibrot"):
+        a += ["--family", system]
+    elif system == "phoenix":
+        a += ["--family", "phoenix"]
+        if loc.get("c_re") is not None:
+            a += ["--c", loc["c_re"], loc["c_im"]]
+        if loc.get("p_re") is not None:
+            a += ["--p", loc["p_re"], loc["p_im"]]
     return a
 
 
