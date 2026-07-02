@@ -58,9 +58,10 @@ body.debug .cell .dbg{display:block}
 <div id="instr">
   Rank these <b>6 renders of the same location</b> against each other. Mark up to <b>3</b> you'd
   keep as <b class="good">good</b> and up to <b>3</b> you'd discard as <b class="bad">bad</b>; the rest stay
-  <b class="okay">okay</b>. Judge only against the other five here, <b>not an absolute standard</b>. If they
-  all feel similar, leaving them all <b>okay</b> is a valid answer. Judge the <b>image</b>, not the recipe
-  (hidden by default — press <b>d</b> to peek).
+  <b class="okay">okay</b>. Judge only against the other five here, <b>not an absolute standard</b>.
+  To <b>confirm</b> an entry you must mark <b>at least one <span class="good">good</span> and one
+  <span class="bad">bad</span></b> — pick a best and worst even when they feel close. Judge the
+  <b>image</b>, not the recipe (hidden by default — press <b>d</b> to peek).
 </div>
 
 <div id="loader">Loading batch …</div>
@@ -76,8 +77,9 @@ body.debug .cell .dbg{display:block}
   <div id="legend">
     hover a fractal, then <kbd>1</kbd> <span class="bad">bad</span> ·
     <kbd>2</kbd> <span class="okay">okay</span> · <kbd>3</kbd> <span class="good">good</span> ·
-    <kbd>⏎</kbd>/<kbd>Space</kbd> confirm&amp;next · <kbd>←</kbd>/<kbd>→</kbd> move ·
-    <kbd>4</kbd>/<kbd>u</kbd> next unlabeled · <kbd>d</kbd> recipe · click an image to cycle okay→good→bad
+    <kbd>⏎</kbd>/<kbd>Space</kbd>/<kbd>4</kbd> confirm&amp;next · <kbd>←</kbd>/<kbd>→</kbd> move ·
+    <kbd>u</kbd> next unlabeled · <kbd>d</kbd> recipe · click an image to cycle okay→good→bad ·
+    <b>confirm needs ≥1 <span class="good">good</span> and ≥1 <span class="bad">bad</span></b>
   </div>
 </main>
 
@@ -196,7 +198,8 @@ async function postLabel(tiers,confirmed){
 }
 
 async function confirmNext(){
-  const p=QUEUE[cur], t=curTiers();
+  const p=QUEUE[cur], t=curTiers(), {g,b}=counts(t);
+  if(g<1||b<1){ toast('confirm needs ≥1 good and ≥1 bad'); return; }
   await postLabel(t,true);
   LABELS[p.pres_id]=Object.assign({},LABELS[p.pres_id]||{},
     {query_id:p.query_id,pass:p.pass,display_order:p.display_order,tiers:t,confirmed:true});
@@ -220,10 +223,10 @@ document.addEventListener('keydown',e=>{
     else toast('hover a fractal first');
     e.preventDefault();
   }
-  else if(e.key==='Enter'||e.key===' '){ confirmNext(); e.preventDefault(); }
+  else if(e.key==='Enter'||e.key===' '||k==='4'){ confirmNext(); e.preventDefault(); }
   else if(e.key==='ArrowRight') move(1);
   else if(e.key==='ArrowLeft') move(-1);
-  else if(k==='u'||k==='4') jumpUnconfirmed();
+  else if(k==='u') jumpUnconfirmed();
   else if(k==='d') document.body.classList.toggle('debug');
 });
 $('prev').onclick=()=>move(-1);

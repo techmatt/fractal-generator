@@ -324,12 +324,22 @@ def api_label():
         err = valid_tiers(tiers, pres["display_order"])
         if err:
             return jsonify({"ok": False, "error": err}), 400
+        confirmed = bool(d.get("confirmed", False))
+        # A confirmed entry must contain a real ranking signal: at least one good
+        # and one bad. An all-okay (or one-sided) entry carries no training
+        # constraint, so it is never allowed to count as confirmed — drafts are fine.
+        if confirmed:
+            g = sum(1 for v in tiers.values() if v == "good")
+            b = sum(1 for v in tiers.values() if v == "bad")
+            if g < 1 or b < 1:
+                return jsonify({"ok": False,
+                                "error": "confirm needs at least 1 good and 1 bad"}), 400
         STORE["labels"][pres_id] = {
             "query_id": pres["query_id"],
             "pass": pres["pass"],
             "display_order": pres["display_order"],   # order actually shown (audit)
             "tiers": tiers,
-            "confirmed": bool(d.get("confirmed", False)),
+            "confirmed": confirmed,
             "labeled_at": now_iso(),
         }
         persist()                                     # atomic write on every change
@@ -428,16 +438,31 @@ def selftest():
         t1[order1[-1]] = "bad"
         r = client.post("/api/label", json={"pres_id": p1, "tiers": t1, "confirmed": True})
         assert r.get_json()["ok"], r.get_json()
-        # POST pass 2: a DIFFERENT labeling (flip one) to show both are preserved
+        # POST pass 2: a DIFFERENT labeling (flip which candidate is bad) to show
+        # both are preserved. Still one good + one bad so the confirm rule passes.
         t2 = {c: "okay" for c in order2}
         t2[order2[0]] = "good"
+        t2[order2[1]] = "bad"
         r = client.post("/api/label", json={"pres_id": p2, "tiers": t2, "confirmed": True})
         assert r.get_json()["ok"], r.get_json()
 
-        # also label one plain pass-1 presentation
+        # also label one plain pass-1 presentation (needs a good + a bad to confirm)
         plain = next(p for p in st["queue"] if p["pass"] == 1 and p["query_id"] != rep_q)
         tp = {c: "okay" for c in plain["display_order"]}
+        tp[plain["display_order"][0]] = "good"
+        tp[plain["display_order"][-1]] = "bad"
         client.post("/api/label", json={"pres_id": plain["pres_id"], "tiers": tp, "confirmed": True})
+
+        # confirm-rule enforcement: an all-okay confirm must be rejected
+        allokay = {c: "okay" for c in order1}
+        r = client.post("/api/label", json={"pres_id": p1, "tiers": allokay, "confirmed": True})
+        assert r.status_code == 400, "all-okay confirm not rejected"
+        # but the same all-okay tiers as a DRAFT (confirmed=False) is allowed
+        r = client.post("/api/label", json={"pres_id": p1, "tiers": allokay, "confirmed": False})
+        assert r.get_json()["ok"], "all-okay draft wrongly rejected"
+        # restore p1's real confirmed labeling for the agreement/repeat checks below
+        client.post("/api/label", json={"pres_id": p1, "tiers": t1, "confirmed": True})
+        print("[selftest] confirm-rule OK (all-okay confirm rejected, draft allowed)")
 
         # verify store on disk kept BOTH passes distinctly (atomic write landed)
         disk = json.loads(CFG["store_path"].read_text(encoding="utf-8"))
