@@ -59,10 +59,12 @@ use crate::render::{self, Frame};
 use crate::root_field::{PassWindow, RootField};
 use crate::{hp, sheet};
 
-/// f64-safety sanity guard on the descended frame width. Depth ≤ 6 at 0.4×/step
-/// keeps `fw` ≈ 0.012 — nowhere near this — so it only ever fires on a
-/// misconfigured deep run. No real deep-zoom handling (that is the search's job).
-const FW_FLOOR: f64 = 1e-7;
+/// Conservative safe-f64 zoom floor on the descended frame width. At the finest
+/// sampling any location ever sees (wallpaper 2560×1440 ss4, ~1e4 samples/axis),
+/// `fw = 1e-9` still leaves ~100–1000 ULPs per sample even near the worst-case
+/// `|c|≈2` — comfortably clear of the f64 precision wall (~5e-12) with no guard
+/// required. No real deep-zoom handling (perturbation is the search's job).
+const FW_FLOOR: f64 = 1e-9;
 
 /// Per-scale local-maxima percentile floor (over the exterior smoothed field):
 /// a candidate maximum must sit above this quantile of its scale to count.
@@ -1817,8 +1819,11 @@ pub struct GuidedDescendArgs {
     #[arg(long, default_value_t = 4)]
     pub depth_min: u32,
 
-    /// Maximum terminal walk depth (inclusive).
-    #[arg(long, default_value_t = 10)]
+    /// Maximum terminal walk depth (inclusive). Raised 10→17 so the deepest-
+    /// starting roots can reach the loosened `FW_FLOOR` (1e-9): walks step ~0.4×/
+    /// step, so from a ~0.003 root depth 10 only reaches ~5e-7 and the depth cap
+    /// bound before the floor ever did.
+    #[arg(long, default_value_t = 17)]
     pub depth_max: u32,
 
     /// LEGACY fixed per-step zoom (rev1–3). rev4 B4 samples the per-step zoom from
