@@ -149,6 +149,17 @@ QUERY_TYPES = ("palette", "param", "joint")
 QUERY_SPLIT = (0.50, 0.35, 0.15)   # starting guess; retune against ranking-accuracy plateaus
 CANDIDATES_PER_QUERY = 6
 
+# Param-query render-space selection (coldstart_v2). Param candidates collapse in
+# render space even when their recipes differ, so instead of drawing 6 directly we draw
+# a larger POOL and farthest-point-select 6 in render space (mean CIEDE2000 over the
+# recolored thumbnails — see the v2 driver). Ranges are UNCHANGED; this only changes
+# which of the same-range draws survive.
+POOL_MULTIPLIER = 4        # pool size = POOL_MULTIPLIER * CANDIDATES_PER_QUERY (=> 24)
+GAMMA_MIN_SPACING = 0.15   # a new pool draw is rejected if a same-discrete-tuple member
+                           #   (palette fixed; same reverse/log_premap/n_cycles/phase) is
+                           #   within this |Δγ|. > GAMMA_DUP_EPS (0.10) in the diagnostic,
+                           #   so no surviving same-discrete pair can be a sampler_dup.
+
 
 # ===========================================================================
 # 1. Location pool.
@@ -484,6 +495,42 @@ def compose_query(location, rng, sampler, query_type=None):
     else:
         raise ValueError(f"unknown query_type {query_type!r}")
     return query_type, cands
+
+
+def _discrete_key(cfg):
+    """The sampler_dup discrete tuple (everything but gamma) for the γ-spacing guard —
+    mirrors diversity_diagnostic.classify_pair's `same_discrete`. Palette is held fixed
+    across a param pool, so it's not part of the key."""
+    return (cfg.reverse, cfg.log_premap, cfg.n_cycles, cfg.phase)
+
+
+def draw_param_pool(loc_ref, rng, sampler, palette, pool_size=None,
+                    gamma_min_spacing=GAMMA_MIN_SPACING, max_attempts_mult=50):
+    """Draw a param-query candidate POOL on one fixed palette + held-constant location.
+
+    Same D draw as v1's param branch (`sample_candidate(..., palette=palette,
+    canonical=False)` — identical rev/γ/phase/n_cycles ranges), but sized to `pool_size`
+    (default POOL_MULTIPLIER * CANDIDATES_PER_QUERY) with a min-γ-spacing rejection guard:
+    a draw is dropped if a pool member with the same discrete tuple (reverse/log_premap/
+    n_cycles/phase) sits within `gamma_min_spacing` in γ. This removes the literal
+    sampler-dups cheaply at draw time; the render-space farthest-point select (in the
+    driver) then thins the perceptual collapse the guard can't see. Returns a list of
+    CandidateConfig (may be shorter than `pool_size` only if the guard starves, which is
+    reported by the caller)."""
+    if pool_size is None:
+        pool_size = POOL_MULTIPLIER * CANDIDATES_PER_QUERY
+    pool = []
+    attempts = 0
+    cap = pool_size * max_attempts_mult
+    while len(pool) < pool_size and attempts < cap:
+        attempts += 1
+        cfg = sample_candidate(loc_ref, rng, sampler, palette=palette, canonical=False)
+        key = _discrete_key(cfg)
+        if any(_discrete_key(p) == key and abs(p.gamma - cfg.gamma) < gamma_min_spacing
+               for p in pool):
+            continue
+        pool.append(cfg)
+    return pool
 
 
 # ===========================================================================

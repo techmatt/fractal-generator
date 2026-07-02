@@ -236,12 +236,18 @@ def distance_matrix(features_by_name, names):
     return D
 
 
-def farthest_point_order(names, features_by_name, k=None, weights=None):
+def farthest_point_order(names, features_by_name=None, k=None, weights=None, dmat=None):
     """Greedy farthest-point sampling order over the distance matrix.
 
     Seeds with the two most-distant palettes, then iteratively appends the palette
     maximizing its min-distance to the already-chosen set. Returns the first `k`
     names (all, if k is None) in selection order.
+
+    Distance source: normally the OKLab trajectory `distance_matrix` over
+    `features_by_name`. Pass `dmat` (an (M, M) symmetric matrix aligned to `names`) to
+    spread over a *different* distance instead — e.g. the render-space mean-CIEDE2000
+    matrix the param-pool selection feeds — reusing this exact greedy primitive rather
+    than reimplementing FPS. When `dmat` is given `features_by_name` may be None.
 
     `weights` is reserved for a later global-score prior and is currently a no-op."""
     if weights is not None:
@@ -254,7 +260,12 @@ def farthest_point_order(names, features_by_name, k=None, weights=None):
         k = m
     k = min(k, m)
 
-    D = distance_matrix(features_by_name, names)
+    if dmat is not None:
+        D = np.asarray(dmat, dtype=np.float64)
+        if D.shape != (m, m):
+            raise ValueError(f"dmat shape {D.shape} != ({m}, {m}) for the given names")
+    else:
+        D = distance_matrix(features_by_name, names)
     i0, i1 = np.unravel_index(int(np.argmax(D)), D.shape)  # two most-distant
     chosen = [int(i0), int(i1)]
     min_d = np.minimum(D[i0], D[i1])

@@ -18,7 +18,7 @@ never corrupts or loses prior work; on launch we load existing labels and resume
 
 Run:
   uv run python tools/queries/launch_query_label_server.py
-  uv run python tools/queries/launch_query_label_server.py --batch coldstart_v1 --port 5099
+  uv run python tools/queries/launch_query_label_server.py --batch coldstart_v2 --port 5099
   uv run python tools/queries/launch_query_label_server.py --selftest   # headless, temp store
 
 Store:   data/queries/labels/<batch_id>.json   (authoritative, incremental)
@@ -399,7 +399,7 @@ def selftest():
     tmp = Path(tempfile.mkdtemp(prefix="qlabel_selftest_"))
     print(f"[selftest] temp store dir: {tmp}")
     try:
-        queries = configure("coldstart_v1", seed=1234, store_dir=tmp)
+        queries = configure("coldstart_v2", seed=1234, store_dir=tmp)
         assert CFG["store_path"].exists(), "store not created on init"
         client = app.test_client()
 
@@ -410,7 +410,7 @@ def selftest():
 
         # GET state
         st = client.get("/api/state").get_json()
-        assert st["batch_id"] == "coldstart_v1"
+        assert st["batch_id"] == "coldstart_v2"
         assert len(st["queue"]) > len(queries), "queue missing consistency repeats"
         n_repeat = sum(1 for p in st["queue"] if p["pass"] == 2)
         print(f"[selftest] queue={len(st['queue'])} (base={len(queries)}, repeats={n_repeat})")
@@ -474,7 +474,7 @@ def selftest():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--batch", default="coldstart_v1")
+    ap.add_argument("--batch", default="coldstart_v2")
     ap.add_argument("--seed", type=int, default=7, help="queue/shuffle seed (persisted in store)")
     ap.add_argument("--port", type=int, default=5099)
     ap.add_argument("--selftest", action="store_true")
