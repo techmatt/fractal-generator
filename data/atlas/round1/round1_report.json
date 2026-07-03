@@ -1,0 +1,103 @@
+{
+  "config": {
+    "good": 1.0,
+    "strong": 1.4,
+    "TAU": 0.01,
+    "tau_sweep": [
+      0.005,
+      0.01,
+      0.02,
+      0.03,
+      0.05
+    ],
+    "matched_count_M": 28,
+    "cover_grid": [
+      14,
+      12
+    ]
+  },
+  "yield": {
+    "arm1": {
+      "n": 250,
+      "mean": 0.7924899891316891,
+      "med": 0.6893692314624786,
+      "p90": 1.3877930402755736,
+      "f10": 0.236,
+      "f14": 0.1,
+      "reached": 8.172,
+      "prod": 0.956
+    },
+    "arm2": {
+      "n": 250,
+      "mean": 0.7291607454419136,
+      "med": 0.5612019300460815,
+      "p90": 1.1196147918701171,
+      "f10": 0.112,
+      "f14": 0.048,
+      "reached": 3.88,
+      "prod": 0.388
+    },
+    "arm3": {
+      "n": 250,
+      "mean": 0.8804251174330712,
+      "med": 0.8605462312698364,
+      "p90": 1.5282099485397338,
+      "f10": 0.208,
+      "f14": 0.12,
+      "reached": 4.316,
+      "prod": 0.436
+    }
+  },
+  "spread": {
+    "arm1": {
+      "cover": 28,
+      "n_good": 59,
+      "distinct_full": 25,
+      "distinct_per_good": 0.423728813559322,
+      "distinct_topM": 14,
+      "distinct_randM_mean": 15.88,
+      "distinct_randM_sd": 1.4783774890061063
+    },
+    "arm2": {
+      "cover": 21,
+      "n_good": 28,
+      "distinct_full": 14,
+      "distinct_per_good": 0.5,
+      "distinct_topM": 14,
+      "distinct_randM_mean": 14.0,
+      "distinct_randM_sd": 0.0
+    },
+    "arm3": {
+      "cover": 31,
+      "n_good": 52,
+      "distinct_full": 25,
+      "distinct_per_good": 0.4807692307692308,
+      "distinct_topM": 16,
+      "distinct_randM_mean": 17.135,
+      "distinct_randM_sd": 1.5958618361249197
+    }
+  },
+  "attribution": {
+    "exploit": {
+      "n": 223,
+      "mean": 0.9153304295154965,
+      "med": 0.8605462312698364,
+      "f10": 0.23318385650224216,
+      "f14": 0.13452914798206278
+    },
+    "explore": {
+      "n": 27,
+      "mean": 0.5921330954189654,
+      "med": 0.5582104921340942,
+      "f10": 0.0,
+      "f14": 0.0
+    }
+  },
+  "decomposition": {
+    "declustering_yield_dmean": -0.06332924368977555,
+    "valuetarget_yield_dmean": 0.1512643719911576,
+    "total_yield_dmean": 0.08793512830138206,
+    "declustering_div_drandM": -1.8800000000000008,
+    "valuetarget_div_drandM": 3.1350000000000016
+  }
+}

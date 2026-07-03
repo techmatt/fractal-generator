@@ -92,6 +92,47 @@ const SCAN_STRIDE_FRAC: f64 = 0.5;
 /// Max redraw attempts for either root sampler before a walk's root step dies.
 const ROOT_MAX_TRIES: usize = 4000;
 
+/// Parse an injected-seed list (`--seed-list`): one JSON object per line carrying at
+/// least `"cx"`, `"cy"`, `"fw"` (extra keys, e.g. an `exploit`/`explore` tag, are
+/// ignored — the atlas proposer keeps provenance in its own emitted file). Hand-rolled
+/// to match the repo's serde-free JSON convention. Returns the depth-1 (cx,cy,fw) per
+/// walk, in file order (walk `w` ← row `w`).
+fn load_seed_list(path: &str) -> Result<Vec<(f64, f64, f64)>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
+    let mut out = Vec::new();
+    for (ln, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let get = |key: &str| -> Result<f64, String> {
+            let pat = format!("\"{key}\"");
+            let i = line
+                .find(&pat)
+                .ok_or_else(|| format!("seed-list line {}: missing key {key}", ln + 1))?;
+            let rest = &line[i + pat.len()..];
+            let colon = rest.find(':').ok_or_else(|| format!("seed-list line {}: no ':' after {key}", ln + 1))?;
+            // number token = chars after ':' up to the next comma/brace/space
+            let tok: String = rest[colon + 1..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))
+                .collect();
+            tok.parse::<f64>()
+                .map_err(|_| format!("seed-list line {}: bad {key} value '{tok}'", ln + 1))
+        };
+        let (cx, cy, fw) = (get("cx")?, get("cy")?, get("fw")?);
+        if !(fw > 0.0) || !cx.is_finite() || !cy.is_finite() {
+            return Err(format!("seed-list line {}: need finite cx/cy and fw>0", ln + 1));
+        }
+        out.push((cx, cy, fw));
+    }
+    if out.is_empty() {
+        return Err(format!("seed-list {path} produced no rows"));
+    }
+    Ok(out)
+}
+
 /// Which policy branch chose a step's target.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Branch {
@@ -248,6 +289,24 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // gate it off in Julia mode (the branch then draws a DE-free interior point).
     let random_boundary = args.random_boundary && julia_c.is_none();
 
+    // --- Injected-seed mode (`--seed-list`): pin the depth-1 frame from an external
+    //     proposer (the atlas round-1 acceptance harness) instead of the internal
+    //     8k/flat draw. All depth>=2 walk mechanics are byte-identical to a native
+    //     run — ONLY the depth-1 seed source changes — so multiple arms differing
+    //     only in their seed lists are directly comparable. `--n-walks` is overridden
+    //     by the list length. Mandelbrot only; incompatible with --julia. ---
+    let injected_seeds: Option<Vec<(f64, f64, f64)>> = match &args.seed_list {
+        Some(p) => {
+            if julia_c.is_some() {
+                return Err("--seed-list is Mandelbrot-only; drop --julia".into());
+            }
+            Some(load_seed_list(p)?)
+        }
+        None => None,
+    };
+    // Effective walk count: the injected list length, else --n-walks.
+    let n_walks = injected_seeds.as_ref().map_or(args.n_walks, |s| s.len());
+
     let (pl_center, pl_horizon, pl_random) = args.resolved_placement()?;
     let plsum = pl_center + pl_horizon + pl_random;
     let sigmas = args.resolved_sigmas()?;
@@ -337,7 +396,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
          node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
          descent culls (depth>=2): flat spread>={} + instant-escape esc_med>={}\n  \
          best-of-{}: Stage-1 interior-cap {} (probe {}px), Stage-2 occ-floor {} (@{}px), select min-interior",
-        args.n_walks, args.depth_min, args.depth_max, zoom_lo, zoom_hi, args.seed,
+        n_walks, args.depth_min, args.depth_max, zoom_lo, zoom_hi, args.seed,
         root_desc,
         p_foci, p_density, 1.0 - p_foci - p_density,
         pl_center / plsum, pl_horizon / plsum, pl_random / plsum, sigmas,
@@ -377,6 +436,13 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     //     so it skips the c-plane field entirely. ---
     let windows: Vec<PassWindow> = if julia_c.is_some() {
         eprintln!("  Julia mode: skipping c-plane 8k field (root is the base-scale z-plane view)");
+        Vec::new()
+    } else if injected_seeds.is_some() {
+        eprintln!(
+            "  injected-seed mode: {} seeds from {} — skipping 8k field (depth-1 pinned)",
+            n_walks,
+            args.seed_list.as_deref().unwrap_or("?")
+        );
         Vec::new()
     } else {
         let rf: RootField = RootField::load_or_build(args.maxiter, args.bailout, trap)?;
@@ -432,15 +498,15 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let mut rng = SplitMix64(args.seed);
     let mut cands: Vec<Candidate> = Vec::new();
     // Per-walk reached depth + intended target (for the ladder view + died-early count).
-    let mut walk_reached: Vec<(u32, u32)> = Vec::with_capacity(args.n_walks);
+    let mut walk_reached: Vec<(u32, u32)> = Vec::with_capacity(n_walks);
     // Per-walk terminal cause (instrumentation: the field that didn't survive run4 —
     // persisted to walks.jsonl for the per-cell generated-fate breakdown).
-    let mut walk_cause: Vec<EndCause> = Vec::with_capacity(args.n_walks);
+    let mut walk_cause: Vec<EndCause> = Vec::with_capacity(n_walks);
     let mut branch_counts = [0usize; 3]; // foci, density, random
     let mut root8k_count = 0usize; // depth-1 nodes seeded by the 8k field
     let mut rootflat_count = 0usize; // depth-1 nodes seeded by the flat sampler
     // Per-walk root sampler ("8k" | "flat" | "" if the root died) for attribution.
-    let mut walk_root_src: Vec<&'static str> = Vec::with_capacity(args.n_walks);
+    let mut walk_root_src: Vec<&'static str> = Vec::with_capacity(n_walks);
     let mut died_early = 0usize;
     // End-of-walk cause: [ReachedTerminalDepth, BlackCapExhausted, OccFloorExhausted, DegenerateExhausted].
     let mut cause_counts = [0usize; 4];
@@ -453,7 +519,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // Derive well-mixed, walk-independent sub-seeds by running a SplitMix64 keyed on
     // the global seed and taking one output per walk index.
     let mut walk_seed_src = SplitMix64(args.seed);
-    for w in 0..args.n_walks {
+    for w in 0..n_walks {
         // Paired-study mode: reseed this walk's stream from (seed, walk_index) so its
         // depth-1 seed does not depend on prior walks' (config-dependent) draw counts.
         if args.per_walk_rng {
@@ -471,7 +537,13 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
 
         for d in 1..=target {
             let result = if d == 1 {
-                if julia_c.is_some() {
+                if let Some(seeds) = &injected_seeds {
+                    // --- INJECTED ROOT STEP: pin depth-1 to the proposer's seed.
+                    //     Consumes NO rng (unlike the native samplers' screen-redraw
+                    //     loops), so depth>=2 shares one rng stream across arms. ---
+                    cur_root_src = "injected";
+                    root_step_injected(seeds[w], node_w, node_h, args.maxiter, &render_node)
+                } else if julia_c.is_some() {
                     // --- JULIA ROOT STEP: deterministic base-scale z-plane view at
                     //     the z→−z symmetry center 0. Descent then leaves it. ---
                     cur_root_src = "julia";
@@ -570,11 +642,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         }
         walk_reached.push((reached, target));
         walk_cause.push(end_cause);
-        if (w + 1) % 20 == 0 || w + 1 == args.n_walks {
+        if (w + 1) % 20 == 0 || w + 1 == n_walks {
             eprintln!(
                 "  walk {}/{}: {} candidates so far ({:.1}s)",
                 w + 1,
-                args.n_walks,
+                n_walks,
                 cands.len(),
                 t0.elapsed().as_secs_f64()
             );
@@ -621,7 +693,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         }
     }
     let mut walks_jsonl = String::new();
-    for w in 0..args.n_walks {
+    for w in 0..n_walks {
         let (reached, target) = walk_reached[w];
         let cause = walk_cause[w];
         let death_depth = if reached < target {
@@ -697,7 +769,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     let html = build_html(
         &cands, &walk_reached, &walk_root_src, &branch_counts, root8k_count, rootflat_count,
         died_early, &cause_counts, black_rejects, black_cap_on, black_cap, occ_rejects, occ_on,
-        occ_floor, &ci, args, &sigmas, zoom_lo, zoom_hi,
+        occ_floor, &ci, args, n_walks, &sigmas, zoom_lo, zoom_hi,
     );
     let html_path = out_dir.join("pool_sheet.html");
     std::fs::write(&html_path, html).map_err(|e| format!("write pool_sheet.html: {e}"))?;
@@ -731,11 +803,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     println!("=== guided-descend (rev4) ===");
     println!(
         "seed={}  walks={}  candidates={}  best-of-{}",
-        args.seed, args.n_walks, cands.len(), screen.n_cand
+        args.seed, n_walks, cands.len(), screen.n_cand
     );
     println!(
         "realized root-mix (target {:.2}): 8k={}/{} walks (productive {}), flat={}/{} walks (productive {})",
-        root_mix, n_8k, args.n_walks, prod_8k, n_flat, args.n_walks, prod_flat
+        root_mix, n_8k, n_walks, prod_8k, n_flat, n_walks, prod_flat
     );
     println!(
         "branch breakdown: root8k={} rootflat={} foci={} density={} random={} (target foci/density/random {:.2}/{:.2}/{:.2})",
@@ -783,7 +855,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     );
     println!(
         "walks died early (terminated before target depth): {}/{}",
-        died_early, args.n_walks
+        died_early, n_walks
     );
     println!(
         "end-of-walk cause: terminal={} black_cap_exhausted={} occ_floor_exhausted={} degenerate_exhausted={}",
@@ -1036,6 +1108,32 @@ fn root_step_julia(
     let buf = render_node(&frame);
     let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
     StepResult::Accepted(frame, buf, "rootjulia", "center", f64::NAN, int_frac)
+}
+
+/// Injected root: pin the depth-1 node to an externally proposed `(cx, cy, fw)`
+/// (`--seed-list`). No sampling, no gate — the proposer already selected the
+/// location; the depth>=2 best-of-N screen does all tightening from here. Renders the
+/// node so the finder has a parent buffer, exactly like the native roots. Permissive
+/// by construction: a proposer seed into bland/set-dominated territory is *kept* at
+/// depth 1 (and typically dies at depth 2), so a weak proposer honestly shows up as
+/// low yield rather than being silently filtered.
+fn root_step_injected(
+    seed: (f64, f64, f64),
+    node_w: u32,
+    node_h: u32,
+    maxiter: u32,
+    render_node: &impl Fn(&Frame) -> render::SampleBuffer,
+) -> StepResult {
+    let (cx, cy, fw) = seed;
+    let frame = Frame {
+        center: Complex::new(cx, cy),
+        frame_width: fw,
+        out_width: node_w,
+        out_height: node_h,
+    };
+    let buf = render_node(&frame);
+    let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
+    StepResult::Accepted(frame, buf, "rootinjected", "center", f64::NAN, int_frac)
 }
 
 /// Log-uniform draw in `[lo, hi]` (rev4 B4 per-step zoom jitter). `lo == hi` ⇒ `lo`.
@@ -1681,6 +1779,7 @@ fn build_html(
     occ_floor: f64,
     ci: &InteriorSummary,
     args: &GuidedDescendArgs,
+    n_walks: usize,
     sigmas: &[f64],
     zoom_lo: f64,
     zoom_hi: f64,
@@ -1704,7 +1803,7 @@ fn build_html(
     let mut nwalks = 0usize;
     let mut ladders = String::new();
     let mut w = 0usize;
-    while w < args.n_walks {
+    while w < n_walks {
         let row: Vec<&Candidate> = cands.iter().filter(|c| c.walk == w).collect();
         if !row.is_empty() {
             nwalks += 1;
@@ -1789,7 +1888,7 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         pr = args.w_random.max(0.0) / (args.w_foci.max(0.0) + args.w_density.max(0.0) + args.w_random.max(0.0)),
         dh = dh,
         died = died_early,
-        total = args.n_walks,
+        total = n_walks,
         ct = cause_counts[0],
         cb = cause_counts[1],
         co = cause_counts[2],
@@ -2089,6 +2188,17 @@ pub struct GuidedDescendArgs {
     /// times, i.e. a distinct, well-mixed sub-seed per walk.
     #[arg(long, default_value_t = false)]
     pub per_walk_rng: bool,
+
+    /// Injected depth-1 seed list (atlas round-1 acceptance harness). A JSONL file
+    /// with one `{"cx":..,"cy":..,"fw":..}` object per line (extra keys ignored). When
+    /// set, the internal 8k/flat root draw is bypassed: walk `w` pins its depth-1 frame
+    /// to row `w`, `--n-walks` is overridden by the list length, and the root step
+    /// consumes NO rng — so multiple runs differing only in their seed list (or vs a
+    /// native run's own seeds re-injected) share one depth>=2 rng stream and are
+    /// directly comparable. Every depth>=2 sampler/screen/gate is unchanged. Pair with
+    /// `--per-walk-rng`. Mandelbrot only (incompatible with `--julia`).
+    #[arg(long)]
+    pub seed_list: Option<String>,
 
     /// Output directory (`pool_sheet.html`, `pool.jsonl`, `pool_grid.png`,
     /// `tiles/`). Outside `out/` — durable. Use a distinct dir per run.
