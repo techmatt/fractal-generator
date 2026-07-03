@@ -105,6 +105,11 @@ __pycache__/
 /data/queries/sampler_eval/*/*
 !/data/queries/sampler_eval/*/records.json
 
+# Mandelbrot seed atlas (tools/atlas/build_atlas.py): the fitted theta_hat/conf
+# artifact is a tiny (~12KB) load-bearing object the proposer reloads (atlas.py) --
+# commit it like the calibration artifacts. Its round0 viz PNGs stay in out/.
+!/data/atlas/
+
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*
 !/data_large/README.md

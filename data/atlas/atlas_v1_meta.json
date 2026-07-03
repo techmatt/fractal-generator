@@ -1,0 +1,40 @@
+{
+  "source_table": "data/atlas_probe/step0_reanalysis/walks_table_bestwalk.jsonl",
+  "n_seeds": 600,
+  "reward": "reward_k3 (best-over-walk, v5 CORN)",
+  "estimator": "distance-weighted kNN over (cx,cy)",
+  "k_star": 10,
+  "h_star_nw": 0.03,
+  "conf": "clip(r_ref / dist_to_kth_neighbor, 0, 1); r_ref=median LOO k-th-nn distance",
+  "r_ref": 0.07975667307328735,
+  "domain": "boundary-band raster 120x140 (var-floor 3.000)",
+  "cv_random": {
+    "knn_k*": [
+      0.36258240201110215,
+      0.5773812450406202
+    ],
+    "binned": [
+      0.23984318608670085,
+      0.446016407093295
+    ],
+    "null": [
+      -0.0025040150616715273,
+      -0.06060115849397242
+    ]
+  },
+  "cv_spatial": {
+    "knn_k*": [
+      0.02257520708091898,
+      0.3319435737430413
+    ],
+    "binned": [
+      -0.10027696606217185,
+      0.08875248940235993
+    ],
+    "null": [
+      -0.030908533818739148,
+      -0.37530187305191065
+    ]
+  },
+  "finer_than_bin": true
+}
