@@ -576,45 +576,13 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         return Err("no candidates produced (every walk died on the first step?)".into());
     }
 
-    // --- preview renders (parallel; the per-candidate frame is independent) ---
-    eprintln!("rendering {} previews at {}x{} ...", cands.len(), prev_w, prev_h);
-    let tp = std::time::Instant::now();
-    let imgs: Vec<RgbImage> = cands
-        .par_iter()
-        .map(|c| {
-            let frame = Frame {
-                center: Complex::new(c.cx, c.cy),
-                frame_width: c.fw,
-                out_width: prev_w,
-                out_height: prev_h,
-            };
-            let (samples, spacing) = match julia_c {
-                Some(jc) => {
-                    let backend = JuliaBackend::new(jc, args.maxiter, args.bailout, trap);
-                    let buf = render::iterate_samples(&backend, &frame, 1);
-                    (buf.samples, frame.pixel_size())
-                }
-                None => {
-                    let prec = hp::prec_bits(prev_w, c.fw);
-                    let cre = BigFloat::from_f64(c.cx, prec);
-                    let cim = BigFloat::from_f64(c.cy, prec);
-                    let panel = probe::render_mandel_panel(
-                        &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
-                        prec, trap, BackendChoice::F64,
-                    );
-                    (panel.buf.samples, panel.spacing)
-                }
-            };
-            render::shade_and_downsample(&samples, prev_w, prev_h, 1, &palette, &params, spacing)
-        })
-        .collect();
-    for (c, img) in cands.iter_mut().zip(imgs.iter()) {
-        let fname = format!("tile_{:04}.png", c.idx);
-        img.save(tiles_dir.join(&fname))
-            .map_err(|e| format!("save preview {}: {e}", c.idx))?;
-        c.png = format!("tiles/{fname}");
+    // Preview filenames are purely idx-derived, so set them up front. This lets the
+    // durable pool.jsonl/walks.jsonl be written BEFORE the best-effort preview render
+    // — a kill or OOM in the cosmetic preview/grid stage (which collects every
+    // preview in memory, ~4 GB at 600 walks) can no longer discard the run's data.
+    for c in cands.iter_mut() {
+        c.png = format!("tiles/tile_{:04}.png", c.idx);
     }
-    eprintln!("  previews in {:.2}s", tp.elapsed().as_secs_f64());
 
     // --- pool.jsonl (one row per candidate) ---
     let mut jsonl = String::new();
@@ -666,9 +634,48 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     std::fs::write(out_dir.join("walks.jsonl"), walks_jsonl)
         .map_err(|e| format!("write walks.jsonl: {e}"))?;
 
+    // --- preview renders (parallel; the per-candidate frame is independent) ---
+    // Each worker renders a full preview, SAVES it to tiles/, and returns only the
+    // small 240x135 thumbnail. Peak memory is thus ~thumbnails (~0.5 GB at 600 walks)
+    // rather than every full 640x360 preview at once (~4 GB) — which OOMed the
+    // cosmetic stage. Runs AFTER pool.jsonl/walks.jsonl, so data is already durable.
+    eprintln!("rendering {} previews at {}x{} ...", cands.len(), prev_w, prev_h);
+    let tp = std::time::Instant::now();
+    let mut grid_thumbs: Vec<RgbImage> = cands
+        .par_iter()
+        .map(|c| -> Result<RgbImage, String> {
+            let frame = Frame {
+                center: Complex::new(c.cx, c.cy),
+                frame_width: c.fw,
+                out_width: prev_w,
+                out_height: prev_h,
+            };
+            let (samples, spacing) = match julia_c {
+                Some(jc) => {
+                    let backend = JuliaBackend::new(jc, args.maxiter, args.bailout, trap);
+                    let buf = render::iterate_samples(&backend, &frame, 1);
+                    (buf.samples, frame.pixel_size())
+                }
+                None => {
+                    let prec = hp::prec_bits(prev_w, c.fw);
+                    let cre = BigFloat::from_f64(c.cx, prec);
+                    let cim = BigFloat::from_f64(c.cy, prec);
+                    let panel = probe::render_mandel_panel(
+                        &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
+                        prec, trap, BackendChoice::F64,
+                    );
+                    (panel.buf.samples, panel.spacing)
+                }
+            };
+            let img = render::shade_and_downsample(&samples, prev_w, prev_h, 1, &palette, &params, spacing);
+            img.save(tiles_dir.join(format!("tile_{:04}.png", c.idx)))
+                .map_err(|e| format!("save preview {}: {e}", c.idx))?;
+            Ok(image::imageops::resize(&img, 240, 135, image::imageops::FilterType::Triangle))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    eprintln!("  previews in {:.2}s", tp.elapsed().as_secs_f64());
+
     // --- a quick flat PNG contact grid (sibling to the HTML) ---
-    let mut grid_thumbs: Vec<RgbImage> =
-        imgs.iter().map(|i| image::imageops::resize(i, 240, 135, image::imageops::FilterType::Triangle)).collect();
     for (c, th) in cands.iter().zip(grid_thumbs.iter_mut()) {
         annotate(th, c);
     }
