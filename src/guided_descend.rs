@@ -449,7 +449,16 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // Per-step chosen interior fraction (the drift check — does min-interior pull toward empty?).
     let mut chosen_interiors: Vec<f64> = Vec::new();
 
+    // Per-walk deterministic sub-seed source (only consulted when --per-walk-rng).
+    // Derive well-mixed, walk-independent sub-seeds by running a SplitMix64 keyed on
+    // the global seed and taking one output per walk index.
+    let mut walk_seed_src = SplitMix64(args.seed);
     for w in 0..args.n_walks {
+        // Paired-study mode: reseed this walk's stream from (seed, walk_index) so its
+        // depth-1 seed does not depend on prior walks' (config-dependent) draw counts.
+        if args.per_walk_rng {
+            rng = SplitMix64(walk_seed_src.next_u64());
+        }
         let target = args.depth_min + (rng.below((args.depth_max - args.depth_min + 1) as usize) as u32);
         let mut parent = root;
         // `None` until the depth-1 root step renders the first node.
@@ -2063,6 +2072,23 @@ pub struct GuidedDescendArgs {
     /// SplitMix64 seed (deterministic).
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
+
+    /// Reseed each walk's RNG deterministically from `(seed, walk_index)` at the top
+    /// of the walk (instead of drawing every walk from one shared global stream).
+    /// This makes each walk's depth-1 seed a function of ONLY `(seed, walk_index)` —
+    /// independent of how many RNG draws prior walks consumed. That is required for
+    /// paired cross-configuration studies (e.g. the descent-resolution efficiency
+    /// study): the per-step focus-finder consumes a *resolution-dependent* number of
+    /// draws (a Foci step draws 2 when foci are found, 1 when none — `sample_focus`
+    /// returns early without drawing on an empty list), so under the shared stream
+    /// only walk 0 keeps an identical depth-1 seed across resolutions; every later
+    /// walk desyncs. With this flag the depth-1 seeds are bit-identical across
+    /// configurations and the walks then legitimately diverge at depth≥2 (the thing
+    /// under test). **Default off** — a shared-stream run is byte-identical to prior
+    /// runs. The per-walk seed = `SplitMix64(seed).next` advanced `walk_index+1`
+    /// times, i.e. a distinct, well-mixed sub-seed per walk.
+    #[arg(long, default_value_t = false)]
+    pub per_walk_rng: bool,
 
     /// Output directory (`pool_sheet.html`, `pool.jsonl`, `pool_grid.png`,
     /// `tiles/`). Outside `out/` — durable. Use a distinct dir per run.
