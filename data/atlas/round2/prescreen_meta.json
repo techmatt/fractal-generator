@@ -1,0 +1,23 @@
+{
+  "cloud": 2500,
+  "survivors": 1422,
+  "pass_rate": 0.5688,
+  "probe_causes": {
+    "degenerate": 739,
+    "black_cap": 339,
+    "terminal": 1422
+  },
+  "frontier_descendability": {
+    "conf_median": 0.9068640256815125,
+    "lowconf_pass_rate": 0.388,
+    "highconf_pass_rate": 0.7496,
+    "lowconf_n": 1250,
+    "highconf_n": 1250
+  },
+  "exploit_acq_thr": 0.45801497045743744,
+  "explore_conf_thr": 0.9932189302972485,
+  "exploit_hi_pool": 285,
+  "explore_lo_pool": 711,
+  "rmin": 0.07066038250923157,
+  "rmax": 1.987842321395874
+}

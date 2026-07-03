@@ -1,0 +1,96 @@
+{
+  "config": {
+    "good": 1.0,
+    "strong": 1.4,
+    "TAU": 0.01
+  },
+  "prescreen": {
+    "cloud": 2500,
+    "survivors": 1422,
+    "pass_rate": 0.5688,
+    "probe_causes": {
+      "degenerate": 739,
+      "black_cap": 339,
+      "terminal": 1422
+    },
+    "frontier_descendability": {
+      "conf_median": 0.9068640256815125,
+      "lowconf_pass_rate": 0.388,
+      "highconf_pass_rate": 0.7496,
+      "lowconf_n": 1250,
+      "highconf_n": 1250
+    },
+    "exploit_acq_thr": 0.45801497045743744,
+    "explore_conf_thr": 0.9932189302972485,
+    "exploit_hi_pool": 285,
+    "explore_lo_pool": 711,
+    "rmin": 0.07066038250923157,
+    "rmax": 1.987842321395874
+  },
+  "productivity": {
+    "arm1": {
+      "n": 250,
+      "prod": 0.956,
+      "mean_reached": 8.172
+    },
+    "arm2": {
+      "n": 250,
+      "prod": 0.904,
+      "mean_reached": 8.028
+    },
+    "arm3": {
+      "n": 250,
+      "prod": 0.888,
+      "mean_reached": 7.604
+    }
+  },
+  "yield": {
+    "arm1": {
+      "n": 250,
+      "mean": 0.7924899891316891,
+      "med": 0.6893692314624786,
+      "p90": 1.3877930402755736,
+      "f10": 0.236,
+      "f14": 0.1,
+      "ngood": 59
+    },
+    "arm2": {
+      "n": 250,
+      "mean": 1.120335144996643,
+      "med": 0.9786211848258972,
+      "p90": 1.7325520277023314,
+      "f10": 0.476,
+      "f14": 0.3,
+      "ngood": 119
+    },
+    "arm3": {
+      "n": 250,
+      "mean": 0.7905632069706917,
+      "med": 0.667247086763382,
+      "p90": 1.3499799966812134,
+      "f10": 0.192,
+      "f14": 0.092,
+      "ngood": 48
+    }
+  },
+  "novel_vs_arm1": {
+    "arm2": {
+      "ngood": 119,
+      "novel_good": 35,
+      "novel_regions": 26,
+      "med_mindist": 0.005851247147800942
+    },
+    "arm3": {
+      "ngood": 48,
+      "novel_good": 9,
+      "novel_regions": 8,
+      "med_mindist": 0.0045959850980488715
+    }
+  },
+  "coverage_expansion": {
+    "current": 25,
+    "current_U_exploit": 59,
+    "current_U_explore": 44,
+    "current_U_atlas": 70
+  }
+}
