@@ -1,0 +1,25 @@
+{
+  "ts": "20260703_152810",
+  "finalized_from_ledger": true,
+  "totals": {
+    "walked": 181,
+    "harvested_distinct": 81,
+    "near_dup": 100,
+    "realized": {
+      "native": 11,
+      "exploit": 141,
+      "explore": 29
+    }
+  },
+  "cells_saturated": 2,
+  "cells_launch_capped": 2,
+  "cumulative": {
+    "cells_tracked": 57
+  },
+  "config": {
+    "seed_launch_cap": 20,
+    "outcome_distinct_cap": 10,
+    "dedup_k": 1.5,
+    "scorer": "data/classifier/v5/model_best.pt"
+  }
+}

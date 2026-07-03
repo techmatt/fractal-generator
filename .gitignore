@@ -110,6 +110,12 @@ __pycache__/
 # commit it like the calibration artifacts. Its round0 viz PNGs stay in out/.
 !/data/atlas/
 
+# Production discovery seeder ledgers (tools/atlas/production_seeder.py): the durable
+# cross-run outcome/cell ledgers + per-outcome features + per-run summaries/contact
+# sheets are load-bearing (the harvested-outcome store everything downstream consumes),
+# committed like the atlas. Render scratch lives under out/ (disposable), not here.
+!/data/discovery/
+
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*
 !/data_large/README.md
