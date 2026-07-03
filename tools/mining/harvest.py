@@ -19,6 +19,11 @@ Stages (yield funnel reported at each):
                 batch.json} with the full selection-bias provenance, biased=True.
 
   uv run python tools/mining/harvest.py --descent data/mining/run1/descent/pool.jsonl
+
+MANUAL-ONLY: the descend.py/run.py mining orchestrator was removed. This finalizer
+(and its pHash dep dedup.py) has no automated driver now — run it by hand against
+an existing descent pool. It scores with v3 (DEFAULT_V3), by design for the
+v3-guided biased mining batch.
 """
 from __future__ import annotations
 
@@ -33,7 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
-from score_lib import Scorer, run_enrich_score, BIN  # noqa: E402
+from score_lib import Scorer, run_enrich_score, BIN, DEFAULT_V3  # noqa: E402
 from dedup import phash, DedupIndex  # noqa: E402
 import corpus_common as cc  # noqa: E402
 
@@ -326,7 +331,7 @@ def main():
     out = cc.batch_dir(batch_id)
     descent = a.descent if os.path.isabs(a.descent) else str(ROOT / a.descent)
     t0 = time.time()
-    scorer = Scorer()
+    scorer = Scorer(DEFAULT_V3)
     finalize(scorer, descent, batch_id=batch_id, out_batch_dir=out,
              cap_locations=a.cap_locations, budget=a.budget,
              spread_width=a.spread_width, spread_height=a.spread_height,

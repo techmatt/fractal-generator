@@ -5,6 +5,9 @@ failure of aggressive location mining. We hash each crop's GRAYSCALE structure
 (64-bit DCT pHash), so the hash is palette-robust: the same fractal structure
 under a different palette still collides. We dedup mined crops against each other
 AND against the already-labeled corpus, so Matt never re-judges a known location.
+
+MANUAL-ONLY: imported by harvest.py (phash, DedupIndex); no standalone entry point.
+Kept as harvest.py's pHash dependency now that the mining orchestrator is gone.
 """
 from __future__ import annotations
 

@@ -38,6 +38,10 @@ from classifier.data import Transform  # noqa: E402
 from classifier.model import build_model  # noqa: E402
 
 HDR = struct.Struct("<IIII")  # idx, ki, w, h  (little-endian u32 x4)
+# The model the biased mining harness was calibrated against. NOT a default:
+# `Scorer(model_path=...)` is required so no path can *silently* score with v3.
+# The v5-intended callers (reframe/atlas/step0) always pass v5 explicitly via
+# `make_scorer`; the two mining tools (harvest.py, calibrate_t2.py) pass this.
 DEFAULT_V3 = "data/classifier/v3/model_best.pt"
 BIN = "target/release/fractal-generator.exe"
 
@@ -52,7 +56,7 @@ def pick_device(device: str | None = None) -> str:
 class Scorer:
     """v3 model + deploy transform, exposing the full CORN triple per frame."""
 
-    def __init__(self, model_path: str = DEFAULT_V3, device: str | None = None):
+    def __init__(self, model_path: str, device: str | None = None):
         self.device = pick_device(device)
         path = model_path if os.path.isabs(model_path) else str(ROOT / model_path)
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
