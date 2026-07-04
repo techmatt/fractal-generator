@@ -19,8 +19,7 @@ cargo run --release -- --center-re -0.743643887 --center-im 0.131825904 \
   --frame-width 1e-6 --maxiter 2000 --width 1920 --output out.png
 
 # Contact sheet: one location, many palettes, iterated once:
-cargo run --release -- sheet --builtins "default cubehelix viridis" \
-  --palettes assets/palettes/sample.ugr --output sheet.png
+cargo run --release -- sheet --builtins "default cubehelix viridis" --output sheet.png
 ```
 
 Long renders / descents should be backgrounded; release builds put deep production-res renders in seconds.
