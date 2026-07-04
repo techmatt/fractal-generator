@@ -9,10 +9,14 @@ all inherit:
     flat gate:      field_std     <  FIELD_STD_FLOOR -> fail (flat gate)
 
 Both measures are MODEL-FREE and come from the crop's *field* (never RGB luminance):
-`render-one --dump-field` emits the raw smooth scalar field with NaN at interior /
-non-escaped subpixels, exactly the seam the calibration diagnostic measured. So the
-in-scorer field path measures identically to `diag_outcome_guards.py` and the Part-2
-control reproduces the manifest.
+`render-one --dump-field --dump-field-source f64` emits the smooth scalar field with
+NaN at interior / non-escaped subpixels, exactly the seam the calibration diagnostic
+measured. The field is sourced from the fast escape-time F64Backend smooth channel
+(NOT the slow beautiful kernel the diagnostic dumped) — its value differs by the
+constant `ln(ln B)/ln d` bailout-normalization offset, to which interior_frac (an
+escape-mask fraction) and field_std (a std) are both invariant. So the in-scorer
+field path's VERDICTS match `diag_outcome_guards.py` and the Part-2 control
+reproduces the drop manifest exactly (field values are NOT byte-identical, by design).
 
 `field_measures` is the byte-for-byte reproduction of `diag_outcome_guards.measures`
 (the interior_frac / field_std half); `guard_fail` applies the pinned thresholds;
@@ -125,6 +129,12 @@ def render_field(cx, cy, fw, out_bin: Path, *, family: str = "mandelbrot",
         str(BIN), "render-one", "--cx", str(cx), "--cy", str(cy), "--fw", repr(float(fw)),
         "--width", str(GUARD_W), "--height", str(GUARD_H), "--supersample", str(GUARD_SS),
         "--maxiter", str(mi), "--dump-field", str(out_bin),
+        # Guard reads only interior_frac (escape mask) + field_std (a std) — both
+        # invariant to the bailout-normalization offset between the beautiful and
+        # escape-time smooth kernels. Source the field from the fast F64Backend
+        # smooth channel (deletes the redundant slow beautiful-kernel render); the
+        # calibration control (control_guard_manifest.py) proves verdict parity.
+        "--dump-field-source", "f64",
     ] + loc_mod.render_one_flags(loc)
     r = subprocess.run(cmd, capture_output=True, text=True)
     ok = r.returncode == 0 and out_bin.exists()
