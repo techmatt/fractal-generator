@@ -8,7 +8,7 @@ q3 outcomes (there is no atlas, no coverage grid, no per-cell cap). Per batch:
   draw native depth-1 seed  (engine root draw, ~96% descendability pre-gated)
     -> REJECT if >= Q3_DENSITY_CAP distinct q3 outcomes lie within REJECT_RADIUS
        of the seed's (cx, cy); else accept  (test is FREE next to one descent)
-    -> depth-2 descendability probe  (reuse propose.prescreen, verbatim engine step-1)
+    -> depth-2 descendability probe  (reuse prescreen.prescreen, verbatim engine step-1)
     -> full guided-descend walks      (--seed-list --per-walk-rng, production config)
     -> k3 best-frame reward + outcome center + 1280-D v5 penultimate feature
     -> CORN-decode the k3-winning frame; a guard-passing class-3 outcome that is not a
@@ -32,13 +32,13 @@ This is v1 production wiring: NO harvest->refit loop, NO atlas refit. The Mandel
 (cx,cy,fw) distance is the ONLY harvest gate — the 1280-D feature is logged, never gates.
 
 Reuse (located, not reinvented):
-  * guided-descend engine (Rust) w/ --seed-list --per-walk-rng      (propose.BIN)
-  * depth-2 descendability pre-screen                  propose.prescreen (verbatim)
+  * guided-descend engine (Rust) w/ --seed-list --per-walk-rng      (prescreen.BIN)
+  * depth-2 descendability pre-screen                  prescreen.prescreen (verbatim)
   * reframe path                                       tools/reframe/reframe.py
   * v5 scorer bridge (explicit model_path)             probe.make_scorer / score_lib.Scorer
   * canonical v5 CORN hard-class decode                score_lib.corn_decode
-  * k3 reward primitives                               step0_reanalysis (via round1_harvest)
-  * v5 1280-D penultimate hook                         round1_embed.embed_paths / _render
+  * k3 reward primitives                               step0_reanalysis
+  * v5 1280-D penultimate hook                         prescreen.embed_paths / _render
   * degenerate-outcome guard                           tools/atlas/guard.py
   * canonical location layer                           tools/corpus/location.py
 
@@ -60,8 +60,8 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-# reuse roots (same layering round1_harvest uses)
-sys.path.insert(0, str(HERE))                                   # propose.py, round1_*.py
+# reuse roots (sibling tool packages)
+sys.path.insert(0, str(HERE))                                   # prescreen.py, guard.py
 sys.path.insert(0, str(ROOT / "tools" / "atlas_probe"))        # step0_reanalysis primitives
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))            # reframe_location
 sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))     # probe.make_scorer
@@ -74,14 +74,13 @@ try:
 except Exception:
     pass
 
-import propose  # noqa: E402  (BIN, prescreen, write_seed_list, SCREEN_*)
+import prescreen  # noqa: E402  (BIN, prescreen, write_seed_list, SCREEN_*, _render, embed_paths, RENDER_*)
 import step0_reanalysis as sr  # noqa: E402  (KRAW, raw_screen_walk, _mand_location, load_frames_by_walk)
 from step0_reanalysis import (  # noqa: E402
     KRAW, raw_screen_walk, _mand_location, load_frames_by_walk,
 )
 import reframe  # noqa: E402  (reframe_location + the DUMP_GUARD_FIELD hook)
 from reframe import reframe_location  # noqa: E402
-import round1_embed as r1e  # noqa: E402  (_render, embed_paths, RENDER_*)
 import guard  # noqa: E402  (degenerate-outcome guard: make_guarded_scorer + the field gate)
 from score_lib import corn_decode  # noqa: E402  (canonical v5 CORN hard-class decode)
 
@@ -272,7 +271,7 @@ def cloud_diagnostic(rows: list[dict], cloud: list[dict]) -> dict:
 def generate_native_seeds(n_walks: int, seed: int, workdir: Path) -> list[dict]:
     workdir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        str(propose.BIN), "guided-descend",
+        str(prescreen.BIN), "guided-descend",
         "--n-walks", str(n_walks), "--seed", str(seed), "--per-walk-rng",
         "--depth-min", "1", "--depth-max", "1",
         "--node-width", str(NODE_WIDTH), "--sigma-band", SIGMA_BAND,
@@ -347,7 +346,7 @@ class NativeSeeder:
 
 
 # =========================================================================== #
-# Depth-2 descendability probe (reuse propose.prescreen VERBATIM; read the walks it
+# Depth-2 descendability probe (reuse prescreen.prescreen VERBATIM; read the walks it
 # writes for per-seed reached + cause). reached>=2 -> survivor; else probe-reject.
 # =========================================================================== #
 def depth2_probe(props: list[dict], workdir: Path, seed: int):
@@ -355,7 +354,7 @@ def depth2_probe(props: list[dict], workdir: Path, seed: int):
     reached, reject rows carry seed_cx/cy/reached/cause/child_occ."""
     cloud = np.array([[p["seed_cx"], p["seed_cy"]] for p in props], float)
     fw = np.array([p["fw"] for p in props], float)
-    scr = propose.prescreen(cloud, fw, workdir, NODE_WIDTH, OCC_FLOOR, BLACK_CAP, seed)
+    scr = prescreen.prescreen(cloud, fw, workdir, NODE_WIDTH, OCC_FLOOR, BLACK_CAP, seed)
     reached = scr["reached"]
     # per-seed cause + chosen-child occupancy from the probe's own walks.jsonl (row
     # order == proposal order). child_occ is the engine's OWN depth-2 admission-point
@@ -387,18 +386,18 @@ def depth2_probe(props: list[dict], workdir: Path, seed: int):
 
 
 # =========================================================================== #
-# Full walks + k3 best-frame reward (reuse step0_reanalysis primitives, exactly as
-# round1_harvest.harvest_walk does) + outcome center + 1280-D penultimate feature.
+# Full walks + k3 best-frame reward (reuse step0_reanalysis primitives) + outcome
+# center + 1280-D penultimate feature.
 # =========================================================================== #
 def run_full_walks(survivors: list[dict], workdir: Path, seed: int):
     """One --seed-list --per-walk-rng production walk run over the survivors."""
     workdir.mkdir(parents=True, exist_ok=True)
     seed_in = workdir / "survivor_seeds.jsonl"
-    propose.write_seed_list(seed_in, [s["seed_cx"] for s in survivors],
+    prescreen.write_seed_list(seed_in, [s["seed_cx"] for s in survivors],
                             [s["seed_cy"] for s in survivors], [s["fw"] for s in survivors])
     pool = workdir / "pool"
     cmd = [
-        str(propose.BIN), "guided-descend",
+        str(prescreen.BIN), "guided-descend",
         "--seed-list", str(seed_in), "--per-walk-rng", "--seed", str(seed),
         "--depth-min", str(DEPTH_MIN), "--depth-max", str(DEPTH_MAX),
         "--node-width", str(NODE_WIDTH), "--sigma-band", SIGMA_BAND,
@@ -424,8 +423,8 @@ def _chosen_probs(res) -> tuple[float, float]:
 
 
 def harvest_walk_reward(scorer, wid, frames, workers, scratch):
-    """k3 best-frame reward for one walk, composing the SAME step0_reanalysis primitives
-    round1_harvest uses (raw_screen_walk / reframe_location / _mand_location / KRAW),
+    """k3 best-frame reward for one walk, composing the step0_reanalysis primitives
+    (raw_screen_walk / reframe_location / _mand_location / KRAW),
     plus the raw-top3 list, the k3-winner's reframed outcome geometry, and the winner's
     CORN (p_notbad, p_good) for the hard-class decode."""
     sr.SCRATCH = scratch
@@ -469,10 +468,10 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch):
 def outcome_feature(scorer, cx, cy, fw, tile: Path) -> np.ndarray:
     """Render the k3 winner's reframed crop once at deploy search fidelity (640x360 ss2,
     twilight_shifted) and forward it through the v5 penultimate hook -> 1280-D."""
-    ok, err = r1e._render(cx, cy, fw, tile)
+    ok, err = prescreen._render(cx, cy, fw, tile)
     if not ok:
         raise SystemExit(f"outcome tile render failed [{tile.name}]: {err}")
-    return r1e.embed_paths(scorer, [tile])[0]
+    return prescreen.embed_paths(scorer, [tile])[0]
 
 
 # =========================================================================== #

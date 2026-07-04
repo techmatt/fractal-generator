@@ -11,7 +11,7 @@ the normal guarded reward pipeline:
     guided-descend  ->  raw-score (v5)  ->  reframe top-3 (v5)  ->  guard  ->  k3
 
 Reuse (located, not reinvented):
-  * guided-descend engine (Rust) w/ --family / --julia --c        propose.BIN
+  * guided-descend engine (Rust) w/ --family / --julia --c        prescreen.BIN
   * per-walk frame loader                                         step0_reanalysis.load_frames_by_walk
   * guarded raw-screen (family passthrough: loc_of)               step0_reanalysis.raw_screen_walk
   * reframe path (family-agnostic via render_one_flags)           reframe.reframe_location
@@ -21,7 +21,7 @@ Reuse (located, not reinvented):
 The ONLY code change in scope is the `loc_of` passthrough added to
 `raw_screen_walk` (default `_mand_location`, byte-identical for every existing
 Mandelbrot caller); reframe was already family-agnostic. This driver owns its own
-family-aware k3 reward loop so it needs no change to production_seeder/round1_harvest.
+family-aware k3 reward loop so it needs no change to production_seeder.
 
   uv run python tools/atlas/cross_family_shakeout.py            # full shakeout (BACKGROUND)
   uv run python tools/atlas/cross_family_shakeout.py --walks 2  # quicker smoke
@@ -52,7 +52,7 @@ try:
 except Exception:
     pass
 
-import propose  # noqa: E402  (BIN)
+import prescreen  # noqa: E402  (BIN)
 import reframe  # noqa: E402  (reframe_location + DUMP_GUARD_FIELD hook + Location + _tile_name)
 from reframe import reframe_location, Location, _tile_name, RENDER_W, RENDER_H, RENDER_SS  # noqa: E402
 import step0_reanalysis as sr  # noqa: E402  (module-global SCRATCH holds the raw tiles)
@@ -104,7 +104,7 @@ def run_descent(key: str, flags: list, seed: int, pool_dir: Path, n_walks: int):
     the wall seconds for the descent subprocess."""
     pool_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        str(propose.BIN), "guided-descend",
+        str(prescreen.BIN), "guided-descend",
         "--n-walks", str(n_walks), "--seed", str(seed), "--per-walk-rng",
         "--depth-min", str(DEPTH_MIN), "--depth-max", str(DEPTH_MAX),
         "--node-width", str(NODE_WIDTH), "--sigma-band", SIGMA_BAND,
@@ -173,11 +173,11 @@ def guard_field_microbench(loc_of, cx, cy, fw) -> dict:
     jpg = scratch / "bench.jpg"
     fld = scratch / "bench.field.bin"
 
-    jpg_cmd = [str(propose.BIN), "render-one", "--cx", str(cx), "--cy", str(cy),
+    jpg_cmd = [str(prescreen.BIN), "render-one", "--cx", str(cx), "--cy", str(cy),
                "--fw", repr(float(fw)), "--width", str(RENDER_W), "--height", str(RENDER_H),
                "--supersample", str(RENDER_SS), "--maxiter", str(mi),
                "--palette", PALETTE, "--jpg-quality", str(JPG_Q), "--out", str(jpg)] + flags
-    fld_cmd = [str(propose.BIN), "render-one", "--cx", str(cx), "--cy", str(cy),
+    fld_cmd = [str(prescreen.BIN), "render-one", "--cx", str(cx), "--cy", str(cy),
                "--fw", repr(float(fw)), "--width", str(RENDER_W), "--height", str(RENDER_H),
                "--supersample", str(RENDER_SS), "--maxiter", str(mi),
                "--dump-field", str(fld), "--dump-field-source", fsrc] + flags
