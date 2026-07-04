@@ -107,17 +107,24 @@ def _raw_tile_name(idx: int) -> str:
     return f"raw_{idx:05d}.jpg"
 
 
-def raw_screen_walk(scorer, wid: int, frames: list[dict], workers: int) -> list[float]:
+def raw_screen_walk(scorer, wid: int, frames: list[dict], workers: int,
+                    loc_of=_mand_location) -> list[float]:
     """Render the reframe center tile (fw x1.0 rung, 640x360 ss2) for every frame and
     score it -- this is exactly reframe_location's `original_score` for that frame, so
-    the later reframe of a top-k frame satisfies reframed >= this raw."""
+    the later reframe of a top-k frame satisfies reframed >= this raw.
+
+    `loc_of(cx, cy, fw) -> reframe.Location` is the per-family location factory
+    (default `_mand_location`, byte-identical for every existing Mandelbrot caller).
+    Pass a Julia/multibrot factory to route those families' frames through the SAME
+    raw-screen render path -- `_render` reads the family off the Location via
+    `render_one_flags`, so nothing else changes."""
     tiles = SCRATCH / f"walk_{wid:04d}" / "raw"
     tiles.mkdir(parents=True, exist_ok=True)
     to_render = []
     for fr in frames:
         out = tiles / _raw_tile_name(fr["idx"])
         if not out.exists():
-            loc = _mand_location(fr["cx"], fr["cy"], fr["fw"])
+            loc = loc_of(fr["cx"], fr["cy"], fr["fw"])
             c = _candidate(loc, 1.0, 0.0, 0.0)   # the x1.0 center rung
             to_render.append((loc, c, out))
     if to_render:
