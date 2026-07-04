@@ -218,8 +218,10 @@ struct StepCand {
 /// Outcome of one best-of-N step.
 enum StepResult {
     /// Winning node: frame, its 768 buffer (reused — no re-render), provenance,
-    /// and its interior fraction (the selection key, logged for the drift check).
-    Accepted(Frame, render::SampleBuffer, &'static str, &'static str, f64, f64),
+    /// its interior fraction (the selection key, logged for the drift check), and
+    /// the **chosen child's occupancy** (the value the occ floor 0.321 gates
+    /// against; `NaN` for the depth-1 root steps, which are not descent children).
+    Accepted(Frame, render::SampleBuffer, &'static str, &'static str, f64, f64, f64),
     /// No survivor across the N draws; the binding constraint.
     Died(EndCause),
 }
@@ -239,6 +241,10 @@ struct Candidate {
     cx: f64,
     cy: f64,
     fw: f64,
+    /// Chosen-child occupancy at this node's admission point (the value the occ
+    /// floor 0.321 gates against, from [`energy::occupancy`]). `NaN` → null for the
+    /// depth-1 root nodes (occupancy is a descent-child concept, not a root one).
+    occ: f64,
     /// Preview PNG filename (relative to the run dir).
     png: String,
 }
@@ -595,7 +601,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             };
 
             match result {
-                StepResult::Accepted(child, buf, branch, placement, fscore, interior) => {
+                StepResult::Accepted(child, buf, branch, placement, fscore, interior, occ) => {
                     match branch {
                         "foci" => branch_counts[0] += 1,
                         "density" => branch_counts[1] += 1,
@@ -616,6 +622,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         cx: child.center.re,
                         cy: child.center.im,
                         fw: child.frame_width,
+                        occ,
                         png: String::new(), // filled after the parallel preview pass
                     });
                     reached = d;
@@ -672,9 +679,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             jsonl,
             "{{ \"idx\": {}, \"walk\": {}, \"depth\": {}, \"target_depth\": {}, \
              \"root_src\": \"{}\", \"branch\": \"{}\", \"placement\": \"{}\", \"focus_score\": {}, \
-             \"cx\": {}, \"cy\": {}, \"fw\": {}, \"png\": \"{}\" }}",
+             \"cx\": {}, \"cy\": {}, \"fw\": {}, \"occ\": {}, \"png\": \"{}\" }}",
             c.idx, c.walk, c.depth, c.target_depth, c.root_src, c.branch, c.placement,
-            jnum(c.focus_score), jnum(c.cx), jnum(c.cy), jnum(c.fw), c.png,
+            jnum(c.focus_score), jnum(c.cx), jnum(c.cy), jnum(c.fw), jnum(c.occ), c.png,
         );
     }
     std::fs::write(out_dir.join("pool.jsonl"), jsonl)
@@ -687,9 +694,16 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     //     died at the root step). band_energy + finer center features are computed
     //     post-hoc in Python from (cx,cy,fw) — recorded here, not baked in. ---
     let mut root_of_walk: std::collections::HashMap<usize, &Candidate> = std::collections::HashMap::new();
+    // Depth-2 node per walk: its occupancy is the seed's chosen-child occupancy at
+    // the admission point the seed-admission occ floor (0.321) is calibrated for —
+    // exactly what the depth-2 descendability probe interrogates. null if the walk
+    // died before reaching depth 2.
+    let mut child2_of_walk: std::collections::HashMap<usize, &Candidate> = std::collections::HashMap::new();
     for c in &cands {
         if c.depth == 1 {
             root_of_walk.insert(c.walk, c);
+        } else if c.depth == 2 {
+            child2_of_walk.insert(c.walk, c);
         }
     }
     let mut walks_jsonl = String::new();
@@ -705,11 +719,16 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             Some(c) => (jnum(c.cx), jnum(c.cy), jnum(c.fw)),
             None => ("null".into(), "null".into(), "null".into()),
         };
+        let child_occ = match child2_of_walk.get(&w) {
+            Some(c) => jnum(c.occ),
+            None => "null".to_string(),
+        };
         let _ = writeln!(
             walks_jsonl,
             "{{ \"walk\": {}, \"root_src\": \"{}\", \"target_depth\": {}, \"reached_depth\": {}, \
-             \"cause\": \"{}\", \"death_depth\": {}, \"root_cx\": {}, \"root_cy\": {}, \"root_fw\": {} }}",
-            w, walk_root_src[w], target, reached, cause.name(), death_depth, rcx, rcy, rfw,
+             \"cause\": \"{}\", \"death_depth\": {}, \"root_cx\": {}, \"root_cy\": {}, \"root_fw\": {}, \
+             \"child_occ\": {} }}",
+            w, walk_root_src[w], target, reached, cause.name(), death_depth, rcx, rcy, rfw, child_occ,
         );
     }
     std::fs::write(out_dir.join("walks.jsonl"), walks_jsonl)
@@ -965,7 +984,23 @@ fn best_of_n_step(
     }
 
     match best {
-        Some((f, b, br, pl, fs, ifr)) => StepResult::Accepted(f, b, br, pl, fs, ifr),
+        Some((f, b, br, pl, fs, ifr)) => {
+            // Emit the chosen child's occupancy — the value the occ floor (0.321)
+            // gates against. Computed ONCE, on the winner's already-rendered buffer,
+            // via the shared `energy::occupancy` primitive (reused, never
+            // reimplemented). This makes the floor *observable* even at steps where
+            // it is not gating (e.g. the d1→d2 descendability probe, where `occ_on`
+            // is false), and is byte-identical to the gate's value when `occ_on`. It
+            // consumes no RNG and does not affect selection, so walk generation is
+            // unperturbed.
+            let occ = {
+                let img = render::shade_and_downsample(
+                    &b.samples, cfg.node_w, cfg.node_h, 1, cfg.gate_palette, cfg.params, f.pixel_size(),
+                );
+                energy::occupancy(&img, OCC_GX, OCC_GY, OCC_FLOOR)
+            };
+            StepResult::Accepted(f, b, br, pl, fs, ifr, occ)
+        }
         None if saw_occ => StepResult::Died(EndCause::OccFloorExhausted),
         None if saw_black => StepResult::Died(EndCause::BlackCapExhausted),
         None if saw_degen => StepResult::Died(EndCause::DegenerateExhausted),
@@ -1030,7 +1065,7 @@ fn root_step_8k(
         let buf = render_node(&frame);
         if render::black_fraction(&buf.samples) as f64 <= black_max {
             let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
-            return StepResult::Accepted(frame, buf, "root8k", "center", f64::NAN, int_frac);
+            return StepResult::Accepted(frame, buf, "root8k", "center", f64::NAN, int_frac, f64::NAN);
         }
     }
     StepResult::Died(EndCause::BlackCapExhausted)
@@ -1082,7 +1117,7 @@ fn root_step_flat(
         let frame = Frame { center, frame_width: node_fw, out_width: node_w, out_height: node_h };
         let buf = render_node(&frame);
         let (node_int, _esc) = generate::screen_stats(&buf.samples, maxiter);
-        return StepResult::Accepted(frame, buf, "rootflat", "center", f64::NAN, node_int);
+        return StepResult::Accepted(frame, buf, "rootflat", "center", f64::NAN, node_int, f64::NAN);
     }
     StepResult::Died(EndCause::DegenerateExhausted)
 }
@@ -1107,7 +1142,7 @@ fn root_step_julia(
     };
     let buf = render_node(&frame);
     let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
-    StepResult::Accepted(frame, buf, "rootjulia", "center", f64::NAN, int_frac)
+    StepResult::Accepted(frame, buf, "rootjulia", "center", f64::NAN, int_frac, f64::NAN)
 }
 
 /// Injected root: pin the depth-1 node to an externally proposed `(cx, cy, fw)`
@@ -1133,7 +1168,7 @@ fn root_step_injected(
     };
     let buf = render_node(&frame);
     let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
-    StepResult::Accepted(frame, buf, "rootinjected", "center", f64::NAN, int_frac)
+    StepResult::Accepted(frame, buf, "rootinjected", "center", f64::NAN, int_frac, f64::NAN)
 }
 
 /// Log-uniform draw in `[lo, hi]` (rev4 B4 per-step zoom jitter). `lo == hi` ⇒ `lo`.
@@ -2297,5 +2332,86 @@ impl GuidedDescendArgs {
             return Err("--sigma-band is empty".into());
         }
         Ok(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The chosen-child occupancy emitted by `best_of_n_step` (the value that lands
+    /// in `walks.jsonl`'s `child_occ` and `pool.jsonl`'s `occ`) must equal the
+    /// admission-time occupancy — i.e. the `energy::occupancy` of the winner's node,
+    /// shaded with the same gate palette/params. This exercises the **occ-off** path
+    /// (the d1→d2 descendability probe, previously logged null), so it proves the
+    /// emit is not a reimplementation but the primitive's own value on the winner's
+    /// already-rendered buffer.
+    #[test]
+    fn chosen_child_occ_equals_admission_occupancy() {
+        let node_w = 256u32;
+        let node_h = (node_w as f64 * 9.0 / 16.0).round() as u32;
+        let maxiter = 300u32;
+        let bailout = 4.0f64;
+        let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
+        // Shallow, deterministic Julia render (no RNG, no perturbation) so the node
+        // is reproducible and its occupancy well-defined.
+        let julia_c = Complex::new(-0.8, 0.156);
+        let render_node = |frame: &Frame| -> render::SampleBuffer {
+            let backend = JuliaBackend::new(julia_c, maxiter, bailout, trap);
+            render::iterate_samples(&backend, frame, 1)
+        };
+
+        let gate_palette = crate::palette::builtin("default", false).expect("default palette");
+        let params = color_params();
+        // Descent band: interior clause off (as in the real run), keep the degenerate culls.
+        let band = crate::generate::AcceptBand { interior_max: 1.0, ..Default::default() };
+        // Probe-like screen: occ floor OFF (the d1→d2 case), black cap OFF.
+        let cfg = StepScreen {
+            n_cand: 1,
+            node_w,
+            node_h,
+            maxiter,
+            band: &band,
+            black_cap: 0.0,
+            black_cap_on: false,
+            occ_floor: 0.321,
+            occ_on: false,
+            gate_palette: &gate_palette,
+            params: &params,
+        };
+
+        let new_fw = 3.0f64;
+        let mut gen = || -> Option<StepCand> {
+            Some(StepCand {
+                center: Complex::new(0.0, 0.0),
+                branch: "random",
+                placement: "center",
+                fscore: f64::NAN,
+            })
+        };
+        let mut black_rejects = 0usize;
+        let mut occ_rejects = 0usize;
+        let result = best_of_n_step(
+            &cfg, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects,
+        );
+
+        let (frame, emitted_occ) = match result {
+            StepResult::Accepted(f, _b, _br, _pl, _fs, _ifr, occ) => (f, occ),
+            StepResult::Died(cause) => panic!("known-good Julia node was rejected: {}", cause.name()),
+        };
+        assert!(emitted_occ.is_finite(), "emitted occ must be finite, got {emitted_occ}");
+        assert!(emitted_occ > 0.0, "structured Julia node should have nonzero occupancy");
+
+        // Independently recompute the admission-time occupancy on a fresh render of
+        // the winner frame — must match the emitted value bit-for-bit (same primitive).
+        let buf = render_node(&frame);
+        let img = render::shade_and_downsample(
+            &buf.samples, node_w, node_h, 1, &gate_palette, &params, frame.pixel_size(),
+        );
+        let recomputed = energy::occupancy(&img, OCC_GX, OCC_GY, OCC_FLOOR);
+        assert_eq!(
+            emitted_occ, recomputed,
+            "emitted child occupancy ({emitted_occ}) must equal admission-time energy::occupancy ({recomputed})"
+        );
     }
 }

@@ -485,18 +485,24 @@ def depth2_probe(props: list[dict], workdir: Path, seed: int):
     fw = np.array([p["fw"] for p in props], float)
     scr = propose.prescreen(cloud, fw, workdir, NODE_WIDTH, OCC_FLOOR, BLACK_CAP, seed)
     reached = scr["reached"]
-    # per-seed cause from the probe's own walks.jsonl (row order == proposal order).
-    causes = {}
+    # per-seed cause + chosen-child occupancy from the probe's own walks.jsonl (row
+    # order == proposal order). child_occ is the engine's OWN depth-2 admission-point
+    # occupancy (energy::occupancy, emitted per walk) — the value the 0.321 floor
+    # gates against, reused verbatim (never reimplemented in Python). null iff the
+    # walk died before reaching depth 2.
+    causes, child_occ = {}, {}
     wpath = workdir / "probe_pool" / "walks.jsonl"
     for line in open(wpath, encoding="utf-8"):
         line = line.strip()
         if line:
             w = json.loads(line)
             causes[int(w["walk"])] = w.get("cause", "")
+            child_occ[int(w["walk"])] = w.get("child_occ")
 
     survivors, rejects = [], []
     for i, p in enumerate(props):
         p2 = dict(p); p2["probe_reached"] = int(reached[i]); p2["probe_cause"] = causes.get(i, "")
+        p2["probe_child_occ"] = child_occ.get(i)
         if scr["pass"][i]:
             survivors.append(p2)
         else:
@@ -504,9 +510,9 @@ def depth2_probe(props: list[dict], workdir: Path, seed: int):
                 "seed_cx": p["seed_cx"], "seed_cy": p["seed_cy"], "seed_cell": p["seed_cell"],
                 "mix_source": p["mix_source"], "reached": int(reached[i]),
                 "cause": causes.get(i, ""),
-                # child occupancy is engine-internal (best-of-N gate) and not emitted
-                # per-walk; recorded null so the occupancy-floor piggyback stays honest.
-                "child_occ": None,
+                # engine-emitted depth-2 chosen-child occupancy (null if the walk died
+                # before depth 2 — no child was admitted, so the floor has nothing to gate).
+                "child_occ": child_occ.get(i),
             })
     return survivors, rejects, scr["causes"]
 
@@ -753,7 +759,7 @@ def _run(args):
                 "seed_cx": sv["seed_cx"], "seed_cy": sv["seed_cy"], "seed_cell": sv["seed_cell"],
                 "outcome_cx": rew["outcome_cx"], "outcome_cy": rew["outcome_cy"],
                 "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"], "raw_top3": rew["raw_top3"],
-                "probe_child_occ": None, "probe_reached": sv.get("probe_reached"),
+                "probe_child_occ": sv.get("probe_child_occ"), "probe_reached": sv.get("probe_reached"),
                 "probe_cause": sv.get("probe_cause"), "reached_depth": rew["reached_depth"],
                 "distinct": harvest_distinct, "dup_of": dup_of,
                 # guard_pass gates the harvested set; guard_fail 'sentinel' = the k3
