@@ -84,6 +84,19 @@ OUT_DIR = ROOT / "out" / "reframe"
 SPEED_DIR = ROOT / "out" / "reframe_speed"    # source of the V1 reference picks
 DEFAULT_MODEL = "data/classifier/v5/model_best.pt"
 
+# --- degenerate-outcome guard hook (opt-in; OFF => byte-identical to today) ---
+# When DUMP_GUARD_FIELD is set, `_render` ALSO dumps the raw smooth field co-located
+# with each tile (`<tile>.field.bin` + sidecar) via a second `render-one --dump-field`
+# at the SAME geometry/fidelity as the scored JPG. A guarded scorer
+# (tools/atlas/guard.py) reads that field and gates the tile — so reframe's own
+# candidate scoring inherits the guard (it won't climb toward a black/flat crop when
+# a passing framing exists, and if every framing fails the reframe score collapses to
+# the guard sentinel). The scored JPG is untouched, so a passing crop scores exactly
+# as before. Every existing caller leaves this OFF and is unaffected. The suffix must
+# equal guard.FIELD_SIDECAR_SUFFIX (asserted at wire time in production_seeder).
+DUMP_GUARD_FIELD = False
+GUARD_FIELD_SUFFIX = ".field.bin"
+
 # ---- module constants (VALIDATED, provisional -- see module docstring) ----
 FW_FACS = (0.5, 2.0 ** -0.5, 1.0, 2.0 ** 0.5)   # geometric sqrt2 ladder, x0.5 .. x1.41
 RECENTER = (-0.25, 0.0, 0.25)                    # dx,dy in fractions of fw, per axis (3x3=9)
@@ -139,6 +152,30 @@ def _render(loc: Location, c: dict, out: Path, w: int, h: int, ss: int) -> tuple
     cmd += loc_mod.render_one_flags(loc)   # --family (+ --julia/--c, --p) via the one builder
     r = subprocess.run(cmd, capture_output=True, text=True)
     ok = r.returncode == 0 and out.exists()
+    if not ok:
+        return ok, r.stderr[-300:]
+    if DUMP_GUARD_FIELD:
+        fok, ferr = _dump_guard_field(loc, c, out, w, h, ss)
+        if not fok:
+            return False, f"guard field: {ferr}"
+    return True, ""
+
+
+def _dump_guard_field(loc: Location, c: dict, out: Path, w: int, h: int, ss: int) -> tuple[bool, str]:
+    """Dump the raw smooth field co-located with a tile (`<out>.field.bin`) at the SAME
+    geometry/fidelity, so a guarded scorer can gate the tile. `render-one --dump-field`
+    exits before coloring, so this touches no colored output. Only called when
+    DUMP_GUARD_FIELD is set (the guard hook)."""
+    fbin = Path(str(out) + GUARD_FIELD_SUFFIX)
+    cmd = [
+        str(BIN), "render-one",
+        "--cx", c["cx"], "--cy", c["cy"], "--fw", repr(c["fw"]),
+        "--width", str(w), "--height", str(h),
+        "--supersample", str(ss), "--maxiter", str(c["maxiter"]),
+        "--dump-field", str(fbin),
+    ] + loc_mod.render_one_flags(loc)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    ok = r.returncode == 0 and fbin.exists()
     return ok, ("" if ok else r.stderr[-300:])
 
 

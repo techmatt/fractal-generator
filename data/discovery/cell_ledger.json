@@ -1,7 +1,7 @@
 {
   "103": {
     "launches": 12,
-    "distinct": 2,
+    "distinct": 0,
     "saturated": false
   },
   "104": {
@@ -16,7 +16,7 @@
   },
   "62": {
     "launches": 11,
-    "distinct": 3,
+    "distinct": 2,
     "saturated": false
   },
   "37": {
@@ -26,17 +26,17 @@
   },
   "90": {
     "launches": 18,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "54": {
     "launches": 20,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": true
   },
   "119": {
     "launches": 9,
-    "distinct": 6,
+    "distinct": 5,
     "saturated": false
   },
   "68": {
@@ -71,17 +71,17 @@
   },
   "101": {
     "launches": 3,
-    "distinct": 3,
+    "distinct": 2,
     "saturated": false
   },
   "84": {
     "launches": 3,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "139": {
     "launches": 3,
-    "distinct": 2,
+    "distinct": 1,
     "saturated": false
   },
   "41": {
@@ -91,7 +91,7 @@
   },
   "71": {
     "launches": 1,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "36": {
@@ -116,7 +116,7 @@
   },
   "137": {
     "launches": 8,
-    "distinct": 4,
+    "distinct": 3,
     "saturated": false
   },
   "75": {
@@ -151,7 +151,7 @@
   },
   "60": {
     "launches": 5,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "150": {
@@ -166,7 +166,7 @@
   },
   "111": {
     "launches": 3,
-    "distinct": 3,
+    "distinct": 2,
     "saturated": false
   },
   "23": {
@@ -176,17 +176,17 @@
   },
   "48": {
     "launches": 3,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "163": {
     "launches": 6,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "35": {
     "launches": 3,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "74": {
@@ -201,22 +201,22 @@
   },
   "82": {
     "launches": 3,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "87": {
     "launches": 1,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "39": {
     "launches": 3,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "124": {
     "launches": 9,
-    "distinct": 1,
+    "distinct": 0,
     "saturated": false
   },
   "123": {

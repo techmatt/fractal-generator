@@ -70,16 +70,17 @@ except Exception:
     pass
 
 import propose  # noqa: E402  (Atlas, domain_cloud, fps, load_fw_pool, prescreen, write_seed_list, BIN, SCREEN_*)
-from atlas import Atlas  # noqa: E402
+from atlas import Atlas, ARTIFACT_PATH  # noqa: E402
 from round1_analyze import COVER_NCOLS, COVER_NROWS  # noqa: E402  (the coverage-region bin)
 import step0_reanalysis as sr  # noqa: E402  (KRAW, raw_screen_walk, _mand_location, load_frames_by_walk, _seed_rows)
 from step0_reanalysis import (  # noqa: E402
     KRAW, raw_screen_walk, _mand_location, load_frames_by_walk, _seed_rows,
 )
+import reframe  # noqa: E402  (reframe_location + the DUMP_GUARD_FIELD hook)
 from reframe import reframe_location  # noqa: E402
-from probe import make_scorer  # noqa: E402
 import round1_embed as r1e  # noqa: E402  (_render, embed_paths, RENDER_*)
 import location as loc_mod  # noqa: E402
+import guard  # noqa: E402  (degenerate-outcome guard: make_guarded_scorer + the field gate)
 import subprocess  # noqa: E402
 
 # =========================================================================== #
@@ -118,6 +119,12 @@ WALLCLOCK_BUDGET_MIN = 30
 BATCH_SEEDS = 24             # proposals per batch (amortizes engine startup)
 NATIVE_POOL_WALKS = 400      # native depth-1 walks generated once (seed source + fw pool)
 WORKERS = 6
+
+# Coverage-cell bounds when NO atlas is present (native-only mode). Frozen to the
+# atlas_v1 mask_bounds so cell IDs stay identical to the cross-run cell_ledger built
+# while the atlas existed (the ledger is cumulative; the bin must not shift under it).
+DEFAULT_COVER_BOUNDS = (-1.818157959004375, 0.527935791035625,
+                        -1.141661376973125, 1.116453857441875)
 
 # --- durable store (committed via .gitignore negation, like the atlas) ---
 DISCOVERY_DIR = ROOT / "data" / "discovery"
@@ -213,7 +220,10 @@ class Ledgers:
                     continue
                 r = json.loads(line)
                 self.n_outcomes_logged += 1
-                if r.get("distinct"):
+                # Harvested/dedup pool = distinct AND guard_pass rows only. Pre-guard
+                # rows carry no guard_pass key -> treated as pass (True), so historical
+                # state reloads unchanged until the Part-3 re-gate marks the failures.
+                if r.get("distinct") and r.get("guard_pass", True):
                     self.harvested.append(r)
         if OUTCOME_FEATS.exists():
             z = np.load(OUTCOME_FEATS, allow_pickle=False)
@@ -242,7 +252,7 @@ class Ledgers:
         with open(OUTCOME_LEDGER, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
         self.n_outcomes_logged += 1
-        if row.get("distinct"):
+        if row.get("distinct") and row.get("guard_pass", True):
             self.harvested.append(row)
         if feat is not None:
             self.feats[row["id"]] = np.asarray(feat, np.float32)
@@ -309,12 +319,28 @@ class Proposer:
     """Holds the run-fixed candidate pools. `draw_batch` returns proposals honoring
     the mix, the seed-launch cap, and the exploit->explore backfill rule."""
 
-    def __init__(self, atlas: Atlas, fw_pool: np.ndarray, native_seeds: list[dict],
-                 rng: np.random.Generator):
+    def __init__(self, atlas, fw_pool: np.ndarray, native_seeds: list[dict],
+                 rng: np.random.Generator, bounds=None):
         self.atlas = atlas
-        self.bounds = atlas.mask_bounds
+        self.bounds = bounds if bounds is not None else (
+            atlas.mask_bounds if atlas is not None else DEFAULT_COVER_BOUNDS)
         self.rng = rng
         self.native_seeds = native_seeds
+        self.native_q = list(range(len(native_seeds)))
+        rng.shuffle(self.native_q)
+
+        # No atlas -> native-only: no value/uncertainty cloud, no exploit/explore pools.
+        # The guarded scorer, the seed-launch cap, and the location distinct-cap all
+        # stay active (they live in the harvest loop + _next_native, not the atlas).
+        if atlas is None:
+            self.cloud = np.empty((0, 2))
+            self.fw = np.empty(0)
+            self.theta = self.conf = self.theta_norm = self.acq = np.empty(0)
+            self.exploit_q = []
+            self.explore_q = []
+            self.meta = dict(atlas=False, exploit_pool=0, explore_pool=0,
+                             acq_thr=None, conf_thr=None, rmin=None, rmax=None)
+            return
 
         cloud = propose.domain_cloud(atlas, N_CLOUD, rng)
         theta, conf, _ = atlas.query(cloud[:, 0], cloud[:, 1])
@@ -334,9 +360,7 @@ class Proposer:
         self.theta_norm, self.acq = theta_norm, acq
         self.exploit_q = list(exploit_idx)             # consumable queues
         self.explore_q = list(explore_idx)
-        self.native_q = list(range(len(native_seeds)))
-        rng.shuffle(self.native_q)
-        self.meta = dict(acq_thr=acq_thr, conf_thr=conf_thr,
+        self.meta = dict(atlas=True, acq_thr=acq_thr, conf_thr=conf_thr,
                          exploit_pool=len(exploit_idx), explore_pool=len(explore_idx),
                          rmin=rmin, rmax=rmax)
 
@@ -376,7 +400,23 @@ class Proposer:
     def draw_batch(self, cells: Ledgers, n_batch: int):
         """Return (proposals, mix_report). Each proposal carries seed_cell. Applies the
         seed-launch cap pre-probe; exploit rejected on a launch-capped OR saturated cell
-        -> backfilled to explore (fallback native), and every backfill is logged."""
+        -> backfilled to explore (fallback native), and every backfill is logged.
+
+        No atlas -> native-only: the whole batch is drawn from the native root pool,
+        honoring the seed-launch cap (no exploit/explore, no value/uncertainty steer)."""
+        if self.atlas is None:
+            props = []
+            realized = {"native": 0, "exploit": 0, "explore": 0}
+            for _ in range(n_batch):
+                p, cid = self._next_native(cells)
+                if p is None:
+                    break                               # native pool exhausted (or all capped)
+                p["seed_cell"] = cid
+                props.append(p); realized["native"] += 1; cells.bump_launch(cid)
+            mix = {"target": {"native": n_batch, "exploit": 0, "explore": 0},
+                   "realized": realized, "backfills": 0}
+            return props, mix
+
         n_native = round(n_batch * NATIVE_FRAC)
         n_rest = n_batch - n_native
         n_exploit = round(n_rest * EXPLOIT_FRAC)
@@ -603,9 +643,27 @@ def _run(args):
     print(f"walk cfg: node={NODE_WIDTH} sigma={SIGMA_BAND} depth[{DEPTH_MIN},{DEPTH_MAX}] "
           f"occ={OCC_FLOOR} black={BLACK_CAP} per_walk_rng={PER_WALK_RNG}")
 
-    atlas = Atlas.load()
-    scorer = make_scorer(SCORER_PATH)
-    print(f"scorer: v5 CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}")
+    # Atlas is OPTIONAL. Present -> the round-2 exploit/explore proposer steers the
+    # batch; absent -> native-only mode (seed purely from guided-descend's root draw),
+    # with the guarded scorer, seed-launch cap, and location distinct-cap all still active.
+    atlas = Atlas.load() if ARTIFACT_PATH.exists() else None
+    if atlas is None:
+        print(f"atlas: NONE ({ARTIFACT_PATH.name} absent) -> NATIVE-ONLY mode "
+              f"(guided-descend root draw; exploit/explore disabled)")
+    else:
+        print(f"atlas: {ARTIFACT_PATH.name}")
+    # Guarded v5 scorer: raw-frame scoring, reframe candidate scoring, and the k3
+    # reward all inherit the model-free field guard (degenerate crops -> GUARD_SENTINEL).
+    # The reframe/raw render paths dump a co-located field per tile (the reframe hook)
+    # that the guard reads; enable it and pin the suffix contract.
+    assert reframe.GUARD_FIELD_SUFFIX == guard.FIELD_SIDECAR_SUFFIX, (
+        f"guard field suffix drift: reframe {reframe.GUARD_FIELD_SUFFIX!r} != "
+        f"guard {guard.FIELD_SIDECAR_SUFFIX!r}")
+    reframe.DUMP_GUARD_FIELD = True
+    scorer = guard.make_guarded_scorer(SCORER_PATH)
+    print(f"scorer: GUARDED v5 CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}  "
+          f"guard: interior_frac>={guard.INTERIOR_CAP} | field_std<{guard.FIELD_STD_FLOOR} "
+          f"@ {guard.GUARD_STAT_RES}")
     ledgers = Ledgers()
     print(f"ledgers: {len(ledgers.harvested)} harvested outcomes, "
           f"{len(ledgers.cells)} cells, {ledgers.n_outcomes_logged} scored rows (cross-run)")
@@ -618,12 +676,16 @@ def _run(args):
           f"median {np.median(fw_pool):.4f}")
 
     proposer = Proposer(atlas, fw_pool, native, rng)
-    print(f"  cloud: {N_CLOUD} in-domain  exploit_pool={proposer.meta['exploit_pool']} "
-          f"(acq>={proposer.meta['acq_thr']:.3f})  explore_pool={proposer.meta['explore_pool']} "
-          f"(conf<={proposer.meta['conf_thr']:.3f})")
+    if atlas is not None:
+        print(f"  cloud: {N_CLOUD} in-domain  exploit_pool={proposer.meta['exploit_pool']} "
+              f"(acq>={proposer.meta['acq_thr']:.3f})  explore_pool={proposer.meta['explore_pool']} "
+              f"(conf<={proposer.meta['conf_thr']:.3f})")
+    else:
+        print(f"  native-only: {len(native)} native seeds drive the batch "
+              f"(no proposal cloud; seed-launch + distinct caps active)")
 
     totals = {"proposed": 0, "seed_capped": 0, "probe_rejected": 0, "walked": 0,
-              "harvested_distinct": 0, "near_dup": 0, "backfills": 0,
+              "harvested_distinct": 0, "near_dup": 0, "guarded": 0, "backfills": 0,
               "realized": {"native": 0, "exploit": 0, "explore": 0}}
     distinct_tiles, dup_tiles = [], []
     batch_timings = []
@@ -667,14 +729,21 @@ def _run(args):
         totals["walked"] += len(by_walk)
 
         # 4. per-walk k3 reward + outcome center + 1280-D feature; 5. dedup + harvest.
-        b_distinct = b_dup = 0
+        b_distinct = b_dup = b_guarded = 0
         for wid in sorted(by_walk):
             frames = by_walk[wid]
             rew = harvest_walk_reward(scorer, wid, frames, WORKERS, scratch / f"reward_b{batch_i:03d}")
             # the survivor that produced this walk (row order: walk w <- survivor w)
             sv = survivors[wid] if wid < len(survivors) else survivors[-1]
+            # Guard verdict for the harvested outcome: the k3 winner is the best
+            # reframed crop, and a failing crop scores GUARD_SENTINEL, so k3 collapses
+            # to the sentinel iff EVERY framing of the top-3 failed the guard. A guarded
+            # outcome is not counted toward the cell distinct-tally nor the dedup pool
+            # (harvested set = guard_pass rows only; matches the re-gated ledger).
+            guard_pass = rew["reward_k3"] > guard.GUARD_SENTINEL + 1e-6
             distinct, dup_of = is_distinct(rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"],
                                            ledgers.harvested, DEDUP_K)
+            harvest_distinct = bool(distinct) and guard_pass
             oid = f"m_{run_ts}_{seq:06d}"; seq += 1
             tile = tiles_dir / f"{oid}.jpg"
             feat = outcome_feature(scorer, rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"], tile)
@@ -686,13 +755,21 @@ def _run(args):
                 "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"], "raw_top3": rew["raw_top3"],
                 "probe_child_occ": None, "probe_reached": sv.get("probe_reached"),
                 "probe_cause": sv.get("probe_cause"), "reached_depth": rew["reached_depth"],
-                "distinct": bool(distinct), "dup_of": dup_of,
+                "distinct": harvest_distinct, "dup_of": dup_of,
+                # guard_pass gates the harvested set; guard_fail 'sentinel' = the k3
+                # collapse (every top-3 framing degenerate). Precise interior/flat/both
+                # attribution is a re-gate concern (Part 3), not a live-harvest one.
+                "guard_pass": guard_pass, "guard_fail": None if guard_pass else "sentinel",
             }
             ledgers.append_outcome(row, feat)
-            if distinct:
+            if harvest_distinct:
                 ledgers.bump_distinct(sv["seed_cell"])
                 b_distinct += 1
                 distinct_tiles.append((tile, f"{oid[-6:]} k3={rew['reward_k3']:.2f} {sv['mix_source'][:3]}"))
+            elif not guard_pass:
+                b_guarded += 1
+                if len(dup_tiles) < NCOL_DUP:
+                    dup_tiles.append((tile, f"k3={rew['reward_k3']:.2f} GUARDED"))
             else:
                 b_dup += 1
                 if len(dup_tiles) < NCOL_DUP:
@@ -700,13 +777,14 @@ def _run(args):
         ledgers.save_cells(); ledgers.save_feats()
         totals["harvested_distinct"] += b_distinct
         totals["near_dup"] += b_dup
+        totals["guarded"] += b_guarded
 
         dt = time.time() - tb
         batch_timings.append(dt)
         el_min = (time.time() - t0) / 60
         n_sat = sum(1 for s in ledgers.cells.values() if s.get("saturated"))
         print(f"  batch {batch_i}: props={len(props)} surv={len(survivors)} walked={len(by_walk)} "
-              f"| distinct+{b_distinct} dup+{b_dup} | backfills={mix['backfills']} "
+              f"| distinct+{b_distinct} dup+{b_dup} guarded+{b_guarded} | backfills={mix['backfills']} "
               f"realized={mix['realized']} | cells_sat={n_sat} | {dt:.0f}s (elapsed {el_min:.1f}m)")
 
         if budget_min and el_min >= budget_min:
@@ -744,7 +822,8 @@ def _run(args):
     print("\n=== RUN SUMMARY ===")
     print(f"  proposed={totals['proposed']} probe_rejected={totals['probe_rejected']} "
           f"walked={totals['walked']} harvested_distinct={totals['harvested_distinct']} "
-          f"near_dup={totals['near_dup']} backfills={totals['backfills']}")
+          f"near_dup={totals['near_dup']} guard_failed={totals['guarded']} "
+          f"backfills={totals['backfills']}")
     print(f"  realized mix: {totals['realized']}")
     print(f"  cells: {n_launch_capped} launch-capped, {n_sat} saturated "
           f"(cumulative {len(ledgers.cells)} tracked)")
