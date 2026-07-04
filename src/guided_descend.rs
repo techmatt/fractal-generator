@@ -426,9 +426,16 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         if occ_on { format!("occ>={occ_floor}") } else { "OFF".into() }, node_w,
     );
     if degree != 2 {
+        let tuned = matches!(args.family, WalkFamily::Multibrot3);
         eprintln!(
             "  FAMILY multibrot{degree}: c-plane recurrence z^{degree}+c, origin-square root box; \
-             ALL pre-gate/seed-bias thresholds left at Mandelbrot values (expected to mis-fire — tune later)"
+             8k band mean[{},{}] var>={}, flat spread>={} — {}",
+            score_cfg.mean_lo, score_cfg.mean_hi, score_cfg.var_floor, band.spread_min,
+            if tuned {
+                "per-family DEFAULTS tuned by eye for this degree"
+            } else {
+                "pre-gate/seed-bias thresholds left at Mandelbrot values (expected to mis-fire — tune later)"
+            }
         );
     }
 
@@ -1999,6 +2006,45 @@ impl WalkFamily {
             WalkFamily::Multibrot5 => 5,
         }
     }
+
+    /// Per-family 8k-root window band `(mean_lo, mean_hi, var_floor)` — the
+    /// smooth-iteration criterion applied by [`crate::root_field::RootField::score`].
+    /// `z^d` (d≥3) escapes faster than `z²`, so the escaped smooth-iter statistics
+    /// drift with degree and the Mandelbrot values mis-fire (a d3 seed passing the
+    /// Mandelbrot band lands on set-thicket / dead-exterior windows that can't
+    /// descend). Values are the *default* for each family, still flag-overridable.
+    ///
+    /// - **d2 (Mandelbrot):** the exact historical values — byte-identical to every
+    ///   prior run.
+    /// - **d3 (multibrot3):** tuned by eye against the d3 8k field
+    ///   (`prompts/cc-d3-band-tuning`). `mean_lo` drops 8→6 (`z³`'s escaped mean is
+    ///   ~25% lower); `var_floor` rises 6→20 (`z³`'s boundary escape is sharper, so
+    ///   window variance runs *higher* — the floor climbs to hold the same ~9%
+    ///   window-pass selectivity the Mandelbrot band had). `mean_hi` stays 120 (an
+    ///   inactive upper backstop; the d3 mean never reaches it).
+    /// - **d4 / d5:** still inherit d2's values (untuned — a later pass owns them;
+    ///   `z⁴`/`z⁵` escape faster still, so expect an equal-or-larger shift).
+    pub fn root8k_band_defaults(self) -> (f64, f64, f64) {
+        match self {
+            WalkFamily::Multibrot3 => (6.0, 120.0, 20.0),
+            // d2 (byte-identical) + d4/d5 (untuned, inherit d2).
+            _ => (8.0, 120.0, 6.0),
+        }
+    }
+
+    /// Per-family flat-sampler / descent spread floor (the `AcceptBand::spread_min`
+    /// clause, middle-90% smooth-iter spread `p95−p5`). This gate is read twice: the
+    /// flat-sampler depth-1 root screen, and — via `descent_band` — the degenerate
+    /// "flat" cull at every descent step. `z³`'s compressed smooth-iter range yields
+    /// a ~0.8× smaller frame spread, so the Mandelbrot floor of 20 over-rejects d3
+    /// (structured d3 frames read as "flat") and starves descents. d3 → 15; d2 (and
+    /// untuned d4/d5) stay at the historical 20.
+    pub fn flat_spread_min_default(self) -> f64 {
+        match self {
+            WalkFamily::Multibrot3 => 15.0,
+            _ => 20.0,
+        }
+    }
 }
 
 /// `guided-descend` subcommand: see `guided_descend::run_guided_descend`.
@@ -2064,18 +2110,24 @@ pub struct GuidedDescendArgs {
     pub root8k_black_max: f64,
 
     /// 8k-root window criterion: escaped smooth-iter mean lower bound (rejects empty
-    /// far-exterior). Stats over escaped pixels only.
-    #[arg(long, default_value_t = 8.0)]
-    pub root8k_mean_lo: f64,
+    /// far-exterior). Stats over escaped pixels only. Unset ⇒ the per-family default
+    /// (`WalkFamily::root8k_band_defaults`): d2=8.0, d3=6.0 (`z³` escapes faster, so
+    /// the escaped smooth-iter mean drifts down); d4/d5 still inherit d2.
+    #[arg(long)]
+    pub root8k_mean_lo: Option<f64>,
 
     /// 8k-root window criterion: escaped smooth-iter mean upper bound (rejects
-    /// set-dominated thickets).
-    #[arg(long, default_value_t = 120.0)]
-    pub root8k_mean_hi: f64,
+    /// set-dominated thickets). Unset ⇒ per-family default (all families = 120.0, an
+    /// inactive upper backstop).
+    #[arg(long)]
+    pub root8k_mean_hi: Option<f64>,
 
-    /// 8k-root window criterion: escaped smooth-iter variance floor (not-flat).
-    #[arg(long, default_value_t = 6.0)]
-    pub root8k_var_floor: f64,
+    /// 8k-root window criterion: escaped smooth-iter variance floor (not-flat). Unset
+    /// ⇒ per-family default: d2=6.0, d3=20.0 (`z³`'s boundary escape is sharper, so
+    /// window variance runs higher — the floor rises to hold selectivity); d4/d5
+    /// inherit d2.
+    #[arg(long)]
+    pub root8k_var_floor: Option<f64>,
 
     // --- rev4 Part A2: flat-sampler root (the prior `generate` method) ---------
     /// Flat-root center box `re_lo,re_hi,im_lo,im_hi` (rev4 A2 — reuses `generate`'s
@@ -2302,7 +2354,10 @@ impl GuidedDescendArgs {
     pub fn band(&self) -> crate::generate::AcceptBand {
         let d = crate::generate::AcceptBand::default();
         crate::generate::AcceptBand {
-            spread_min: self.spread_min.unwrap_or(d.spread_min),
+            // spread_min drifts with degree (`z^d` compresses the smooth-iter range);
+            // resolve against the per-family default. d2 default == d.spread_min, so
+            // Mandelbrot stays byte-identical.
+            spread_min: self.spread_min.unwrap_or(self.family.flat_spread_min_default()),
             interior_max: self.interior_max.unwrap_or(d.interior_max),
             esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
         }
@@ -2355,11 +2410,13 @@ impl GuidedDescendArgs {
 
     /// The 8k-root window score config (the hand criterion's tunables).
     pub fn root8k_score_cfg(&self) -> crate::root_field::ScoreCfg {
+        // Per-family band defaults (d2 byte-identical), each clause flag-overridable.
+        let (mean_lo, mean_hi, var_floor) = self.family.root8k_band_defaults();
         crate::root_field::ScoreCfg {
             black_max: self.root8k_black_max,
-            mean_lo: self.root8k_mean_lo,
-            mean_hi: self.root8k_mean_hi,
-            var_floor: self.root8k_var_floor,
+            mean_lo: self.root8k_mean_lo.unwrap_or(mean_lo),
+            mean_hi: self.root8k_mean_hi.unwrap_or(mean_hi),
+            var_floor: self.root8k_var_floor.unwrap_or(var_floor),
         }
     }
 
