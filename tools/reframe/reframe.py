@@ -174,14 +174,15 @@ def _dump_guard_field(loc: Location, c: dict, out: Path, w: int, h: int, ss: int
     (proven by out/atlas/gate_f64_field.py — union-of-20 reproduced exactly). This
     deletes the redundant beautiful second-render that dominated each tile's wall."""
     fbin = Path(str(out) + GUARD_FIELD_SUFFIX)
-    # The fast f64 escape-time smooth-channel source only exists for mandelbrot/julia
-    # (`smooth_field_f64_supersampled` rejects z^d backends). Multibrot has no f64
-    # smooth channel, so fall back to the generic `beautiful` smooth kernel there —
-    # the guard reads only interior_frac (escape mask) + field_std, and `beautiful` is
-    # the very source the guard thresholds were originally calibrated on, so the
-    # verdict basis is unchanged (only slower). mandelbrot/julia stay on f64,
-    # byte-identical to every prior guarded run.
-    src = "f64" if loc_mod.family_of(loc) in ("mandelbrot", "julia") else "beautiful"
+    # The fast f64 escape-time smooth-channel source exists for every escape-time
+    # family — mandelbrot/julia (degree 2) and multibrot (degree >= 3, dispatched
+    # through the trait `sample` -> `sample_multibrot`). Only Phoenix (no escape-time
+    # backend) would still reject; no descendable phoenix path dumps a guard field.
+    # The guard reads only interior_frac (escape mask) + field_std, both invariant to
+    # the bailout-normalization offset between the f64 and beautiful kernels, so
+    # verdicts are unchanged (same offset-invariant reasoning that validated the
+    # mandelbrot/julia f64 source).
+    src = "f64"
     cmd = [
         str(BIN), "render-one",
         "--cx", c["cx"], "--cy", c["cy"], "--fw", repr(c["fw"]),

@@ -164,9 +164,10 @@ def guard_field_microbench(loc_of, cx, cy, fw) -> dict:
     loc = loc_of(cx, cy, fw)
     mi = auto_maxiter(float(fw))
     flags = loc_mod.render_one_flags(loc)
-    # Same family-aware guard-field source reframe uses: f64 for mandelbrot/julia,
-    # beautiful for multibrot (no f64 smooth channel there).
-    fsrc = "f64" if loc_mod.family_of(loc) in ("mandelbrot", "julia") else "beautiful"
+    # Same guard-field source reframe uses: f64 for every escape-time family
+    # (mandelbrot/julia + multibrot, now that the fast f64 smooth channel is
+    # degree-parametric).
+    fsrc = "f64"
     scratch = OUT_ROOT / "_microbench"
     scratch.mkdir(parents=True, exist_ok=True)
     jpg = scratch / "bench.jpg"
@@ -338,7 +339,7 @@ def _timing_table(summary: list[dict]):
     print("================================================")
     print("note: reward/walk = raw-score every frame + reframe top-3 (all guarded); "
           "fld%tile = guard-field render as % of one tile's two-render wall (was ~85-93%).")
-    print("      fld_src=beautiful for multibrot (no f64 smooth channel); f64 for mandelbrot/julia.")
+    print("      fld_src=f64 for every escape-time family (mandelbrot/julia + multibrot).")
 
 
 if __name__ == "__main__":

@@ -1668,10 +1668,114 @@ pub fn render_beautiful(
     if params.field == Field::DirectTrap {
         return render_direct_trap(frame, ss, maxiter, family, params, palette, filter);
     }
+    // Fast smooth path: a Multibrot smooth render sources its scalar from the fast
+    // escape-time F64Backend smooth channel instead of the slow degree-parametric
+    // beautiful kernel (~20-45x faster, and it doesn't blow up with depth). Correct
+    // for smooth mode only — colour is palette-over-smooth-scalar, so the
+    // f64↔beautiful constant offset is absorbed by the percentile-stretch / histeq
+    // normalization and the crop is visually equivalent. Gated to Multibrot so the
+    // degree-2 beautiful path stays byte-identical; any knob this path can't honor
+    // (texture composite, normal_map emboss, biomorph escape) falls through to the
+    // beautiful kernel below.
+    if matches!(family, Family::Multibrot { .. })
+        && params.field == Field::Smooth
+        && params.texture_field.is_none()
+        && params.shade != Shade::NormalMap
+        && params.biomorph == Biomorph::Off
+    {
+        return render_smooth_f64_fast(frame, ss, maxiter, family, params, palette, filter);
+    }
     if params.texture_field.is_some() {
         return render_beautiful_composite(frame, ss, maxiter, family, params, palette, filter);
     }
     render_beautiful_single(frame, ss, maxiter, family, params, palette, filter)
+}
+
+/// Fast smooth-mode colored render sourced from the escape-time
+/// [`F64Backend`]/[`JuliaBackend`] smooth channel
+/// ([`smooth_field_f64_supersampled`]) rather than the slow beautiful
+/// [`iterate_orbit`] kernel. Reproduces [`render_beautiful_single`]'s smooth-mode
+/// tail — same grid geometry, same percentile-stretch / histeq normalization, same
+/// transform / gamma / palette-cycle shade — over the fast field. **Not**
+/// byte-identical to the beautiful render: the backend smooth value is un-normalized
+/// (differs from beautiful by the constant `ln(ln B)/ln d`), but at the shared
+/// `bailout_b` the escape mask is identical and the constant shift is removed by the
+/// normalization, so the colored crop is visually equivalent (see the fast-field doc
+/// on [`smooth_field_f64_supersampled`]). Callers gate this to the smooth/no-texture/
+/// no-normal_map/no-biomorph case in [`render_beautiful`]; the `normal_map` emboss and
+/// biomorph escape have no fast-field analogue and stay on the beautiful path.
+#[allow(clippy::too_many_arguments)]
+fn render_smooth_f64_fast(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    family: Family,
+    params: &ColoringParams,
+    palette: &Palette,
+    filter: DownsampleFilter,
+) -> image::RgbImage {
+    let s = ss.max(1);
+    // Fast escape-time smooth field at the render's bailout (matches the beautiful
+    // kernel's escape mask; the un-normalized value offset washes out under stretch).
+    let (field, _sub_w, _sub_h) =
+        smooth_field_f64_supersampled(frame, s, maxiter, family, params.bailout_b)
+            .expect("render_smooth_f64_fast gated to families with an escape-time backend");
+
+    // --- global normalization over valid (escaped, finite) values ---
+    // NaN encodes interior / non-escaped, exactly as `render_beautiful_single`.
+    let mut valids: Vec<f64> =
+        field.iter().filter(|v| v.is_finite()).map(|&v| v as f64).collect();
+
+    // Smooth is never an iteration Color-By field, so no `direct_map` branch — this is
+    // strictly `render_beautiful_single`'s histeq-or-stretch reduction.
+    let histeq = params.transform == Transform::Histeq;
+    let (lo, span, sorted) = if histeq {
+        valids.sort_unstable_by(f64::total_cmp);
+        (0.0, 1.0, Some(valids))
+    } else {
+        let lo = percentile(&mut valids, PCT_LO);
+        let hi = percentile(&mut valids, PCT_HI);
+        let span = if hi > lo { hi - lo } else { 1.0 };
+        (lo, span, None)
+    };
+
+    let cycles = params.palette_cycles;
+    let offset = params.palette_offset;
+    let transform = params.transform;
+    let gamma = params.gamma;
+
+    // --- shade each subpixel to linear RGB (no emboss — gated out) ---
+    let linear: Vec<[f64; 3]> = field
+        .par_iter()
+        .map(|&v| {
+            if !v.is_finite() {
+                return [0.0, 0.0, 0.0];
+            }
+            let value = v as f64;
+            let x = match &sorted {
+                Some(tab) => {
+                    if tab.len() <= 1 {
+                        0.0
+                    } else {
+                        let rank = tab.partition_point(|&t| t < value);
+                        rank as f64 / (tab.len() - 1) as f64
+                    }
+                }
+                None => ((value - lo) / span).clamp(0.0, 1.0),
+            };
+            let gray = apply_transform(x, transform, gamma);
+            let tt = (gray * cycles + offset).rem_euclid(1.0);
+            palette.lookup_linear(tt)
+        })
+        .collect();
+
+    crate::render::downsample_linear_filtered(
+        &linear,
+        frame.out_width,
+        frame.out_height,
+        s,
+        filter,
+    )
 }
 
 /// Compute the **raw smooth scalar field** over the supersampled grid — the most
@@ -1729,8 +1833,10 @@ pub fn smooth_field_supersampled(
 }
 
 /// Fast smooth-field twin of [`smooth_field_supersampled`], sourced from the
-/// **escape-time [`F64Backend`]** (Mandelbrot) / [`JuliaBackend`] (Julia) rather
-/// than the generic beautiful [`iterate_orbit`] kernel. Same grid geometry, same
+/// **escape-time [`F64Backend`]** (Mandelbrot degree 2 + Multibrot degree ≥ 3) /
+/// [`JuliaBackend`] (Julia) rather than the generic beautiful [`iterate_orbit`]
+/// kernel. Multibrot dispatches through the trait `sample` (→ `sample_multibrot`);
+/// the degree-2 Mandelbrot path is textually untouched. Same grid geometry, same
 /// row-major layout, same `NaN`-encodes-interior convention — the field array is a
 /// drop-in for the beautiful one for **mask/statistic** consumers (the degenerate-
 /// outcome guard reads only `interior_frac` = NaN fraction and `field_std` = std
@@ -1745,10 +1851,10 @@ pub fn smooth_field_supersampled(
 /// control). Do **not** feed this to the field⊗colormap reproduction path, which
 /// requires the byte-identical beautiful field.
 ///
-/// Only the two degree-2 families have an escape-time backend; `Multibrot`/`Phoenix`
-/// return an error (the guard is Mandelbrot/Julia only). `bailout` is the backend's
-/// escape radius (render-one passes its `1e6` production constant). Returns
-/// `(field, sub_w, sub_h)`.
+/// Mandelbrot/Julia/Multibrot have escape-time backends; `Phoenix` still returns an
+/// error (no escape-time f64 backend). `bailout` is the backend's escape radius
+/// (render-one passes its `1e6` production constant). Returns `(field, sub_w,
+/// sub_h)`.
 pub fn smooth_field_f64_supersampled(
     frame: &Frame,
     ss: u32,
@@ -1761,15 +1867,23 @@ pub fn smooth_field_f64_supersampled(
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
     enum Fast {
         Mandel(F64Backend),
+        // Degree ≥ 3 parameter-plane multibrot; dispatched through the trait
+        // `sample` (→ `sample_multibrot`), not the const-generic degree-2 kernel.
+        Multi(F64Backend),
         Julia(JuliaBackend),
     }
     let fast = match family {
         Family::Mandelbrot => Fast::Mandel(F64Backend::new(maxiter, bailout, trap)),
+        Family::Multibrot { degree } => {
+            Fast::Multi(F64Backend::new_degree(maxiter, bailout, trap, degree))
+        }
         Family::Julia { c } => Fast::Julia(JuliaBackend::new(c, maxiter, bailout, trap)),
+        // Phoenix has no escape-time f64 backend; the guard is Mandelbrot/Julia/
+        // Multibrot only.
         other => {
             return Err(format!(
-                "smooth_field_f64_supersampled supports mandelbrot/julia only (escape-time \
-                 backends); got {}",
+                "smooth_field_f64_supersampled supports mandelbrot/julia/multibrot only \
+                 (escape-time backends); got {}",
                 other.kind_str()
             ));
         }
@@ -1801,6 +1915,8 @@ pub fn smooth_field_f64_supersampled(
                 // f64 backends.
                 let smp = match &fast {
                     Fast::Mandel(b) => b.sample_flags::<false, false, false, PHASE_DEFER>(pixel),
+                    // Trait `sample` routes degree ≥ 3 through `sample_multibrot`.
+                    Fast::Multi(b) => b.sample(pixel, Complex::new(0.0, 0.0)),
                     Fast::Julia(b) => b.sample(pixel, Complex::new(0.0, 0.0)),
                 };
                 // NaN encodes interior / non-escaped (smooth is exterior-only), the
