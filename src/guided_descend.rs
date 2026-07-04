@@ -59,11 +59,13 @@ use crate::render::{self, Frame};
 use crate::root_field::{PassWindow, RootField};
 use crate::{hp, sheet};
 
-/// Conservative safe-f64 zoom floor on the descended frame width. At the finest
-/// sampling any location ever sees (wallpaper 2560×1440 ss4, ~1e4 samples/axis),
-/// `fw = 1e-9` still leaves ~100–1000 ULPs per sample even near the worst-case
-/// `|c|≈2` — comfortably clear of the f64 precision wall (~5e-12) with no guard
-/// required. No real deep-zoom handling (perturbation is the search's job).
+/// Conservative safe-f64 zoom floor on the depth-1 **root start** frame width. At
+/// the finest sampling any location ever sees (wallpaper 2560×1440 ss4, ~1e4
+/// samples/axis), `fw = 1e-9` still leaves ~100–1000 ULPs per sample even near the
+/// worst-case `|c|≈2` — comfortably clear of the f64 precision wall (~5e-12) with no
+/// guard required. No real deep-zoom handling (perturbation is the search's job).
+/// The **descent** floor (depth ≥ 2 step truncation) is the tunable `--min-fw` arg,
+/// not this constant.
 const FW_FLOOR: f64 = 1e-9;
 
 /// Per-scale local-maxima percentile floor (over the exterior smoothed field):
@@ -163,6 +165,11 @@ enum EndCause {
     OccFloorExhausted,
     /// No candidate cleared the band screen (flat / instant-escape).
     DegenerateExhausted,
+    /// The next step's frame width would fall below the `--min-fw` f64-reliable
+    /// floor; the walk is truncated here and its accumulated candidates harvested
+    /// (bring-up insurance against precision-degraded forced-F64 frames at extreme
+    /// zoom — expected to fire near-zero times at current walk depths).
+    MinFwFloor,
 }
 impl EndCause {
     fn name(self) -> &'static str {
@@ -171,6 +178,7 @@ impl EndCause {
             EndCause::BlackCapExhausted => "black_cap",
             EndCause::OccFloorExhausted => "occ_floor",
             EndCause::DegenerateExhausted => "degenerate",
+            EndCause::MinFwFloor => "min_fw_floor",
         }
     }
 }
@@ -259,6 +267,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             "need 1 <= depth_min <= depth_max (got {}, {})",
             args.depth_min, args.depth_max
         ));
+    }
+    if !(args.min_fw > 0.0) {
+        return Err(format!("--min-fw must be > 0 (got {})", args.min_fw));
     }
     let w_foci = args.w_foci.max(0.0);
     let w_density = args.w_density.max(0.0);
@@ -412,7 +423,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
          weights foci/density/random = {:.2}/{:.2}/{:.2}, placement {:.2}/{:.2}/{:.2}, sigma {:?}, \
          foci-diversity {:.0}px, random-boundary {}\n  \
          node {}x{} ss1, preview {}x{} ({}), maxiter {}\n  \
-         descent culls (depth>=2): flat spread>={} + instant-escape esc_med>={}\n  \
+         descent culls (depth>=2): flat spread>={} + instant-escape esc_med>={} + min-fw floor {:e}\n  \
          best-of-{}: Stage-1 interior-cap {} (probe {}px), Stage-2 occ-floor {} (@{}px), select min-interior",
         n_walks, args.depth_min, args.depth_max, zoom_lo, zoom_hi, args.seed,
         root_desc,
@@ -420,7 +431,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         pl_center / plsum, pl_horizon / plsum, pl_random / plsum, sigmas,
         foci_div_px, random_boundary,
         node_w, node_h, prev_w, prev_h, args.preview_palette, args.maxiter,
-        band.spread_min, band.esc_median_min,
+        band.spread_min, band.esc_median_min, args.min_fw,
         args.descent_candidates.max(1),
         if black_cap_on { format!("black_frac<{black_cap}") } else { "OFF".into() }, PROBE_W,
         if occ_on { format!("occ>={occ_floor}") } else { "OFF".into() }, node_w,
@@ -544,8 +555,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     // Per-walk root sampler ("8k" | "flat" | "" if the root died) for attribution.
     let mut walk_root_src: Vec<&'static str> = Vec::with_capacity(n_walks);
     let mut died_early = 0usize;
-    // End-of-walk cause: [ReachedTerminalDepth, BlackCapExhausted, OccFloorExhausted, DegenerateExhausted].
-    let mut cause_counts = [0usize; 4];
+    // End-of-walk cause: [ReachedTerminalDepth, BlackCapExhausted, OccFloorExhausted, DegenerateExhausted, MinFwFloor].
+    let mut cause_counts = [0usize; 5];
     let mut black_rejects = 0usize; // total best-of-N candidates killed by the Stage-1 black cap
     let mut occ_rejects = 0usize; // total best-of-N candidates killed by the Stage-2 occupancy floor
     // Per-step chosen interior fraction (the drift check — does min-interior pull toward empty?).
@@ -605,8 +616,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 // --- NORMAL STEP (depth ≥ 2): per-node finder + placement, unchanged
                 //     rev3 best-of-N set-avoidance; rev4 B4 jitters the zoom. ---
                 let new_fw = parent.frame_width * sample_log_uniform(zoom_lo, zoom_hi, &mut rng);
-                if new_fw < FW_FLOOR {
-                    StepResult::Died(EndCause::DegenerateExhausted)
+                if new_fw < args.min_fw {
+                    // f64-reliable descent floor: stop before crossing below it and
+                    // harvest what the walk already collected (all visited frames are
+                    // already emitted candidates). Distinct cause so it is counted.
+                    StepResult::Died(EndCause::MinFwFloor)
                 } else {
                     let new_fh = new_fw * parent.out_height as f64 / parent.out_width as f64;
                     // parent_buf is always Some here (depth-1 root step set it).
@@ -672,6 +686,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
             EndCause::BlackCapExhausted => 1,
             EndCause::OccFloorExhausted => 2,
             EndCause::DegenerateExhausted => 3,
+            EndCause::MinFwFloor => 4,
         }] += 1;
 
         if reached < target {
@@ -763,6 +778,23 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     }
     std::fs::write(out_dir.join("walks.jsonl"), walks_jsonl)
         .map_err(|e| format!("write walks.jsonl: {e}"))?;
+
+    // --- summary.json: run-level roll-up. Surfaces the --min-fw floor fire count
+    //     (min_fw_truncations) as bring-up telemetry — expected ~0 at current walk
+    //     depths. Durable, written before the cosmetic preview stage. Hand-rolled to
+    //     match the repo's serde-free JSON convention. ---
+    let mut summary = String::new();
+    let _ = write!(
+        summary,
+        "{{ \"seed\": {}, \"n_walks\": {}, \"candidates\": {}, \"died_early\": {}, \
+         \"min_fw\": {}, \"min_fw_truncations\": {}, \
+         \"cause_counts\": {{ \"terminal\": {}, \"black_cap\": {}, \"occ_floor\": {}, \"degenerate\": {}, \"min_fw_floor\": {} }} }}\n",
+        args.seed, n_walks, cands.len(), died_early,
+        jnum(args.min_fw), cause_counts[4],
+        cause_counts[0], cause_counts[1], cause_counts[2], cause_counts[3], cause_counts[4],
+    );
+    std::fs::write(out_dir.join("summary.json"), summary)
+        .map_err(|e| format!("write summary.json: {e}"))?;
 
     // --- preview renders (parallel; the per-candidate frame is independent) ---
     // Each worker renders a full preview, SAVES it to tiles/, and returns only the
@@ -907,8 +939,12 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         died_early, n_walks
     );
     println!(
-        "end-of-walk cause: terminal={} black_cap_exhausted={} occ_floor_exhausted={} degenerate_exhausted={}",
-        cause_counts[0], cause_counts[1], cause_counts[2], cause_counts[3],
+        "end-of-walk cause: terminal={} black_cap_exhausted={} occ_floor_exhausted={} degenerate_exhausted={} min_fw_floor={}",
+        cause_counts[0], cause_counts[1], cause_counts[2], cause_counts[3], cause_counts[4],
+    );
+    println!(
+        "min-fw floor (--min-fw {:e}): {} walk(s) truncated below the f64-reliable depth (expected ~0)",
+        args.min_fw, cause_counts[4],
     );
     println!(
         "best-of-N rejects: black-cap {} ({}), occ-floor {} ({}) — total candidates screened out",
@@ -1835,7 +1871,7 @@ fn build_html(
     root8k_count: usize,
     rootflat_count: usize,
     died_early: usize,
-    cause_counts: &[usize; 4],
+    cause_counts: &[usize; 5],
     black_rejects: usize,
     black_cap_on: bool,
     black_cap: f64,
@@ -1927,7 +1963,7 @@ figcaption{{padding:2px 5px;font-size:10px;color:#9aa;background:#12141a}}\
 root-mix target {rmix:.2}: 8k {n8k}/{total} vs flat {nflat}/{total} walks · \
 branch root8k={r8} rootflat={rf} foci={bf} density={bd} random={br} (target {pf:.2}/{pd:.2}/{pr:.2}) · \
 depth: {dh}· walks died early {died}/{total} · \
-end-cause: terminal={ct} black-cap={cb} occ-floor={co} degenerate={cd} · \
+end-cause: terminal={ct} black-cap={cb} occ-floor={co} degenerate={cd} min-fw-floor={cmf} · \
 best-of-N rejects: black-cap {blk} ×{brk}, occ-floor {olk} ×{ork} · \
 chosen interior (drift check): med={cimed:.3} [{cimin:.3}..{cimax:.3}] p25/p75 {cip25:.3}/{cip75:.3} · \
 preview {pal} · 8k root-zoom {rz8} · zoom/step jitter [{zlo},{zhi}] · \
@@ -1958,6 +1994,7 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
         cb = cause_counts[1],
         co = cause_counts[2],
         cd = cause_counts[3],
+        cmf = cause_counts[4],
         brk = black_rejects,
         blk = if black_cap_on { format!("<{black_cap}") } else { "OFF".into() },
         ork = occ_rejects,
@@ -2093,11 +2130,23 @@ pub struct GuidedDescendArgs {
     pub depth_min: u32,
 
     /// Maximum terminal walk depth (inclusive). Raised 10→17 so the deepest-
-    /// starting roots can reach the loosened `FW_FLOOR` (1e-9): walks step ~0.4×/
-    /// step, so from a ~0.003 root depth 10 only reaches ~5e-7 and the depth cap
-    /// bound before the floor ever did.
+    /// starting roots can descend meaningfully deep: walks step ~0.4×/step, so from a
+    /// ~0.003 root depth 10 only reaches ~5e-7 and the depth cap bound the walk long
+    /// before the `--min-fw` f64 floor (1e-9) ever would.
     #[arg(long, default_value_t = 17)]
     pub depth_max: u32,
+
+    /// f64-reliable descent floor on the frame width (bring-up insurance). A walk is
+    /// truncated — and its already-collected candidates harvested — before any step
+    /// whose frame width would fall below this, keeping walks clear of the untested
+    /// forced-F64/perturbation regime at extreme zoom. Default `1e-9` matches the
+    /// `FW_FLOOR` root-start floor, so descent and root floors sit at the same
+    /// known-good f64 cutoff — well above the ~1e-13 f64 cliff and far below anything
+    /// current walks reach, so it should fire near-zero times (the count is surfaced in
+    /// `summary.json` / `min_fw_floor`). Tunable/liftable later. (The separate
+    /// `FW_FLOOR` constant still guards the depth-1 root start widths.)
+    #[arg(long, default_value_t = 1e-9)]
+    pub min_fw: f64,
 
     /// LEGACY fixed per-step zoom (rev1–3). rev4 B4 samples the per-step zoom from
     /// a log-uniform band `[--zoom-lo, --zoom-hi]` instead; this value is reported
