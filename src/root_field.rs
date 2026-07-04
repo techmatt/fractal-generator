@@ -200,7 +200,7 @@ impl RootField {
 /// Multibrot sets (`d ≥ 3`) are origin-symmetric, so use an origin-centered square
 /// of half-width `2^(1/(d−1))·MARGIN` — `2^(1/(d−1))` is the `|c|` escape bound (the
 /// radius that contains the connected set), and `MARGIN` adds an exterior frame.
-fn degree_bbox(degree: u32) -> (f64, f64, f64, f64) {
+pub fn degree_bbox(degree: u32) -> (f64, f64, f64, f64) {
     if degree == 2 {
         (RE_LO, RE_HI, IM_LO, IM_HI)
     } else {

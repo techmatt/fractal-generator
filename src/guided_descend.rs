@@ -426,7 +426,12 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         if occ_on { format!("occ>={occ_floor}") } else { "OFF".into() }, node_w,
     );
     if degree != 2 {
-        let tuned = matches!(args.family, WalkFamily::Multibrot3);
+        // d3/d4/d5 all carry per-family band defaults now; only a future untuned
+        // degree would fall back to the Mandelbrot values.
+        let tuned = matches!(
+            args.family,
+            WalkFamily::Multibrot3 | WalkFamily::Multibrot4 | WalkFamily::Multibrot5
+        );
         eprintln!(
             "  FAMILY multibrot{degree}: c-plane recurrence z^{degree}+c, origin-square root box; \
              8k band mean[{},{}] var>={}, flat spread>={} — {}",
@@ -2022,13 +2027,21 @@ impl WalkFamily {
     ///   window variance runs *higher* — the floor climbs to hold the same ~9%
     ///   window-pass selectivity the Mandelbrot band had). `mean_hi` stays 120 (an
     ///   inactive upper backstop; the d3 mean never reaches it).
-    /// - **d4 / d5:** still inherit d2's values (untuned — a later pass owns them;
-    ///   `z⁴`/`z⁵` escape faster still, so expect an equal-or-larger shift).
+    /// - **d4 (multibrot4):** `mean_lo` 8→7.2, `var_floor` 6→209 — the projected
+    ///   `z⁴` shift confirmed by eye against the d4 8k field. `var_floor` explodes
+    ///   with degree (`z⁴`'s boundary escape is sharper still than `z³`, so window
+    ///   variance runs an order of magnitude higher); `mean_lo` barely moves.
+    /// - **d5 (multibrot5):** `mean_lo` 8→8.4, `var_floor` 6→502 — same picture, an
+    ///   even steeper `var_floor`. (For d5 the escaped mean drifts slightly *up*, so
+    ///   `mean_lo` rises rather than falls.)
+    /// - **mean_hi** stays 120 for every family (inactive upper backstop).
     pub fn root8k_band_defaults(self) -> (f64, f64, f64) {
         match self {
             WalkFamily::Multibrot3 => (6.0, 120.0, 20.0),
-            // d2 (byte-identical) + d4/d5 (untuned, inherit d2).
-            _ => (8.0, 120.0, 6.0),
+            WalkFamily::Multibrot4 => (7.2, 120.0, 209.0),
+            WalkFamily::Multibrot5 => (8.4, 120.0, 502.0),
+            // d2 (byte-identical Mandelbrot).
+            WalkFamily::Mandelbrot => (8.0, 120.0, 6.0),
         }
     }
 
@@ -2037,12 +2050,29 @@ impl WalkFamily {
     /// flat-sampler depth-1 root screen, and — via `descent_band` — the degenerate
     /// "flat" cull at every descent step. `z³`'s compressed smooth-iter range yields
     /// a ~0.8× smaller frame spread, so the Mandelbrot floor of 20 over-rejects d3
-    /// (structured d3 frames read as "flat") and starves descents. d3 → 15; d2 (and
-    /// untuned d4/d5) stay at the historical 20.
+    /// (structured d3 frames read as "flat") and starves descents. d3 → 15. d4/d5
+    /// recover toward the historical floor (d4 → 16, d5 → 17); d2 stays at 20.
     pub fn flat_spread_min_default(self) -> f64 {
         match self {
             WalkFamily::Multibrot3 => 15.0,
-            _ => 20.0,
+            WalkFamily::Multibrot4 => 16.0,
+            WalkFamily::Multibrot5 => 17.0,
+            WalkFamily::Mandelbrot => 20.0,
+        }
+    }
+
+    /// Per-family flat-sampler root box `(re_lo, re_hi, im_lo, im_hi)`. The flat
+    /// sampler draws uniform centers in this box; the Mandelbrot default is the
+    /// historical asymmetric cardioid frame, but multibrot sets (`d ≥ 3`) are
+    /// origin-symmetric, so an asymmetric cardioid box wastes half its draws on dead
+    /// exterior. For `d ≥ 3` use the same origin-centered square the 8k root field
+    /// uses — half-width `2^(1/(d−1))·1.2` (see [`crate::root_field::degree_bbox`]),
+    /// so the flat arm and 8k arm frame the identical region. d2 keeps its exact
+    /// historical box (byte-identical).
+    pub fn flat_box_default(self) -> (f64, f64, f64, f64) {
+        match self {
+            WalkFamily::Mandelbrot => (-2.0, 0.7, -1.2, 1.2),
+            _ => crate::root_field::degree_bbox(self.degree()),
         }
     }
 }
@@ -2111,8 +2141,8 @@ pub struct GuidedDescendArgs {
 
     /// 8k-root window criterion: escaped smooth-iter mean lower bound (rejects empty
     /// far-exterior). Stats over escaped pixels only. Unset ⇒ the per-family default
-    /// (`WalkFamily::root8k_band_defaults`): d2=8.0, d3=6.0 (`z³` escapes faster, so
-    /// the escaped smooth-iter mean drifts down); d4/d5 still inherit d2.
+    /// (`WalkFamily::root8k_band_defaults`): d2=8.0, d3=6.0, d4=7.2, d5=8.4 (`z^d`
+    /// escape drifts the mean; the shift is small — `var_floor` is the live knob).
     #[arg(long)]
     pub root8k_mean_lo: Option<f64>,
 
@@ -2123,17 +2153,20 @@ pub struct GuidedDescendArgs {
     pub root8k_mean_hi: Option<f64>,
 
     /// 8k-root window criterion: escaped smooth-iter variance floor (not-flat). Unset
-    /// ⇒ per-family default: d2=6.0, d3=20.0 (`z³`'s boundary escape is sharper, so
-    /// window variance runs higher — the floor rises to hold selectivity); d4/d5
-    /// inherit d2.
+    /// ⇒ per-family default: d2=6.0, d3=20.0, d4=209.0, d5=502.0. The dominant
+    /// per-degree knob — `z^d`'s boundary escape sharpens with degree, so window
+    /// variance explodes and the floor rises steeply to hold selectivity.
     #[arg(long)]
     pub root8k_var_floor: Option<f64>,
 
     // --- rev4 Part A2: flat-sampler root (the prior `generate` method) ---------
     /// Flat-root center box `re_lo,re_hi,im_lo,im_hi` (rev4 A2 — reuses `generate`'s
-    /// uniform-in-plane box verbatim).
-    #[arg(long = "flat-box", default_value = "-2.0,0.7,-1.2,1.2", allow_hyphen_values = true)]
-    pub flat_box: String,
+    /// uniform-in-plane box verbatim). Unset ⇒ the per-family default
+    /// (`WalkFamily::flat_box_default`): d2 = the historical cardioid frame
+    /// `-2.0,0.7,-1.2,1.2`; d≥3 = the origin-square root box (half-width
+    /// `2^(1/(d−1))·1.2`), so a multibrot walk needs no explicit `--flat-box`.
+    #[arg(long = "flat-box", allow_hyphen_values = true)]
+    pub flat_box: Option<String>,
 
     /// Flat-root log-uniform fw range, low edge (reuses `generate`'s shallow range).
     #[arg(long, default_value_t = 0.003)]
@@ -2280,9 +2313,10 @@ pub struct GuidedDescendArgs {
     /// Parameter-plane escape family: `mandelbrot` (default, `z²+c`) or
     /// `multibrot3|multibrot4|multibrot5` (`z^d+c`). Multibrot descends on the
     /// same geometric policy / screen / best-of-N machinery with the recurrence and
-    /// per-degree root box swapped in; **every pre-gate / seed-bias threshold stays
-    /// at its Mandelbrot value** (`z^d` escapes faster so they mis-fire — a later
-    /// eyeball-and-tune pass owns that). Incompatible with `--julia`.
+    /// per-degree root box swapped in. Each degree carries **per-family band / box
+    /// defaults** tuned by eye (`z^d` escapes faster, so a shared Mandelbrot band
+    /// mis-fires): see `WalkFamily::root8k_band_defaults` / `flat_spread_min_default`
+    /// / `flat_box_default`. Incompatible with `--julia`.
     #[arg(long, value_enum, default_value_t = WalkFamily::Mandelbrot)]
     pub family: WalkFamily,
 
@@ -2392,18 +2426,23 @@ impl GuidedDescendArgs {
     }
 
     /// Parse `--flat-box` (`re_lo,re_hi,im_lo,im_hi`) for the flat-sampler root.
+    /// Unset ⇒ the per-family default box ([`WalkFamily::flat_box_default`]).
     pub fn resolved_flat_box(&self) -> Result<(f64, f64, f64, f64), String> {
-        let p: Vec<&str> = self.flat_box.split(',').collect();
+        let spec = match &self.flat_box {
+            Some(s) => s,
+            None => return Ok(self.family.flat_box_default()),
+        };
+        let p: Vec<&str> = spec.split(',').collect();
         if p.len() != 4 {
-            return Err(format!("invalid --flat-box '{}', expected re_lo,re_hi,im_lo,im_hi", self.flat_box));
+            return Err(format!("invalid --flat-box '{spec}', expected re_lo,re_hi,im_lo,im_hi"));
         }
         let parse = |s: &str, what: &str| -> Result<f64, String> {
-            s.trim().parse().map_err(|_| format!("invalid --flat-box {what} in '{}'", self.flat_box))
+            s.trim().parse().map_err(|_| format!("invalid --flat-box {what} in '{spec}'"))
         };
         let (re_lo, re_hi, im_lo, im_hi) =
             (parse(p[0], "re_lo")?, parse(p[1], "re_hi")?, parse(p[2], "im_lo")?, parse(p[3], "im_hi")?);
         if re_hi <= re_lo || im_hi <= im_lo {
-            return Err(format!("--flat-box bounds must be lo < hi in '{}'", self.flat_box));
+            return Err(format!("--flat-box bounds must be lo < hi in '{spec}'"));
         }
         Ok((re_lo, re_hi, im_lo, im_hi))
     }
