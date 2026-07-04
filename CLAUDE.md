@@ -164,6 +164,7 @@ The tree is `out/{renders,strips,demos}/`. Use `crate::ensure_parent_dir(path)?`
 > default values/flag names stable (batch reproducibility depends on them).
 
 - Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png only), astro-float. The JSON logs (guided-descend pool, generate manifest, calibration artifact) are hand-rolled rather than pulling in serde.
+- **Max 4 workers for multiprocessing.** Any parallel/multiprocessing worker pool (Python `ThreadPoolExecutor`/`ProcessPoolExecutor` `max_workers`, subprocess fan-out, `WORKERS` constants, etc.) MUST cap at 4. Do not exceed 4 concurrent workers.
 - Matt is expert (graphics + ML PhD) — be terse and precise; skip basics.
 - Module docs (`//!`) carry the real design rationale; read them before changing a module.
 

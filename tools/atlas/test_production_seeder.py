@@ -1,7 +1,6 @@
 #!/usr/bin/env python
-"""Cap-logic unit tests for the atlas production seeder (the control on the cap logic;
-the smoke eyeball is the visual gate). Pure predicates + a small ledger round-trip +
-one atlas-backed backfill integration.
+"""Unit tests for the atlas production seeder (control on the pure predicates + the
+q3-density rejection rule + a ledger round-trip). The smoke eyeball is the visual gate.
 
   uv run pytest tools/atlas/test_production_seeder.py
 """
@@ -11,7 +10,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -21,7 +19,7 @@ import production_seeder as ps  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
-# fw-relative dedup predicate
+# fw-relative dedup predicate (cloud hygiene)
 # --------------------------------------------------------------------------- #
 def test_near_dup_within_and_outside():
     # B at origin, fw=1.0 -> dedup radius = 1.5*max(fw).
@@ -39,49 +37,77 @@ def test_near_dup_distant_pair_distinct():
     assert ps.near_dup(5.0, 5.0, 1e-3, 0.0, 0.0, 1e-3, k=1.5) is False
 
 
-def test_is_distinct_against_harvested():
-    harvested = [
+def test_is_distinct_against_cloud():
+    cloud = [
         {"id": "a", "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 1.0},
         {"id": "b", "outcome_cx": 10.0, "outcome_cy": 0.0, "outcome_fw": 1e-3},
     ]
-    d, dup = ps.is_distinct(0.5, 0.0, 1.0, harvested, k=1.5)   # within a's radius
+    d, dup = ps.is_distinct(0.5, 0.0, 1.0, cloud, k=1.5)   # within a's radius
     assert d is False and dup == "a"
-    d, dup = ps.is_distinct(3.0, 3.0, 1e-3, harvested, k=1.5)  # far from both
+    d, dup = ps.is_distinct(3.0, 3.0, 1e-3, cloud, k=1.5)  # far from both
     assert d is True and dup is None
 
 
 # --------------------------------------------------------------------------- #
-# cell-saturation predicate (distinct >= 10 OR launches >= 20, not before)
+# q3-density rejection rule (the coverage-control mechanism)
 # --------------------------------------------------------------------------- #
-def test_cell_saturation_thresholds():
-    assert ps.cell_saturated({"launches": 19, "distinct": 9}) is False
-    assert ps.cell_saturated({"launches": 20, "distinct": 0}) is True      # launch cap
-    assert ps.cell_saturated({"launches": 0, "distinct": 10}) is True      # distinct cap
-    assert ps.cell_saturated({"launches": 5, "distinct": 5}) is False
+def _cloud(pts):
+    """Build a cloud of point members at (cx, cy) with tiny fw (points, not zoom)."""
+    return [{"id": f"m{i}", "outcome_cx": x, "outcome_cy": y, "outcome_fw": 1e-9}
+            for i, (x, y) in enumerate(pts)]
 
 
-def test_cell_launch_capped_thresholds():
-    assert ps.cell_launch_capped({"launches": 19}) is False
-    assert ps.cell_launch_capped({"launches": 20}) is True
-    # distinct alone never launch-caps (that only affects EXPLOIT via saturation).
-    assert ps.cell_launch_capped({"launches": 0, "distinct": 999}) is False
+def test_count_within_radius():
+    cloud = _cloud([(0.0, 0.0), (0.05, 0.0), (0.10, 0.0), (0.5, 0.5)])
+    # radius 0.20 around the origin catches the first three, not the far corner.
+    assert ps.count_within(cloud, 0.0, 0.0, radius=0.20) == 3
+    assert ps.count_within(cloud, 0.0, 0.0, radius=0.08) == 2   # only (0,0) + (0.05,0)
+    assert ps.count_within([], 0.0, 0.0, radius=0.20) == 0
 
 
-def test_cell_saturation_custom_caps():
-    assert ps.cell_saturated({"launches": 3, "distinct": 0}, seed_cap=3, distinct_cap=2) is True
-    assert ps.cell_saturated({"launches": 0, "distinct": 2}, seed_cap=3, distinct_cap=2) is True
-    assert ps.cell_saturated({"launches": 2, "distinct": 1}, seed_cap=3, distinct_cap=2) is False
+def test_rejection_rule_dense_vs_open(monkeypatch):
+    monkeypatch.setattr(ps, "REJECT_RADIUS", 0.20)
+    monkeypatch.setattr(ps, "Q3_DENSITY_CAP", 5)
+    # 5 distinct members clustered at the origin -> a seed there hits the cap -> reject.
+    dense = _cloud([(0.0, 0.0), (0.03, 0.0), (0.0, 0.03), (-0.03, 0.0), (0.0, -0.03)])
+    assert ps.count_within(dense, 0.0, 0.0, ps.REJECT_RADIUS) >= ps.Q3_DENSITY_CAP
+    # a seed in open space (far from every member) is under the cap -> accept.
+    assert ps.count_within(dense, 5.0, 5.0, ps.REJECT_RADIUS) < ps.Q3_DENSITY_CAP
+
+
+def test_near_dup_does_not_double_count_a_region():
+    """A near-dup outcome does not enter the cloud, so it can't push a region over the
+    density cap by being counted twice. build_cloud dedups by 1.5*max(fw)."""
+    rows = [
+        {"id": "a", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 0.01},
+        # near-dup of a (within 1.5*max(fw)=0.015): must NOT create a second member.
+        {"id": "a2", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.005, "outcome_cy": 0.0, "outcome_fw": 0.01},
+        # genuinely distinct q3 place.
+        {"id": "b", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.10, "outcome_cy": 0.0, "outcome_fw": 0.01},
+        # class-2 and guard-failed rows never enter the q3 cloud.
+        {"id": "c2", "guard_pass": True, "decoded_class": 2,
+         "outcome_cx": 0.11, "outcome_cy": 0.0, "outcome_fw": 0.01},
+        {"id": "gf", "guard_pass": False, "decoded_class": None,
+         "outcome_cx": 0.12, "outcome_cy": 0.0, "outcome_fw": 0.01},
+    ]
+    cloud = ps.build_cloud(rows)
+    ids = {m["id"] for m in cloud}
+    assert ids == {"a", "b"}                       # a2 deduped; c2/gf excluded
+    # the region around a holds exactly ONE counted member, not two.
+    assert ps.count_within(cloud, 0.0, 0.0, radius=0.02) == 1
 
 
 # --------------------------------------------------------------------------- #
-# ledger round-trip (write -> reload -> state preserved; cross-run cumulative)
+# ledger round-trip (write -> reload -> rows + feats preserved; cross-run cumulative)
 # --------------------------------------------------------------------------- #
 def _isolate_ledgers(tmp_path, monkeypatch):
     d = tmp_path / "discovery"
     monkeypatch.setattr(ps, "DISCOVERY_DIR", d)
     monkeypatch.setattr(ps, "OUTCOME_LEDGER", d / "outcome_ledger.jsonl")
     monkeypatch.setattr(ps, "OUTCOME_FEATS", d / "outcome_feats.npz")
-    monkeypatch.setattr(ps, "CELL_LEDGER", d / "cell_ledger.json")
     monkeypatch.setattr(ps, "PROBE_REJECTS", d / "probe_rejects.jsonl")
     return d
 
@@ -89,61 +115,39 @@ def _isolate_ledgers(tmp_path, monkeypatch):
 def test_ledger_round_trip(tmp_path, monkeypatch):
     _isolate_ledgers(tmp_path, monkeypatch)
     led = ps.Ledgers()
-    led.bump_launch(7)
-    led.bump_launch(7)
-    led.bump_distinct(7)
-    row_d = {"id": "m_x_000001", "distinct": True, "outcome_cx": 0.1, "outcome_cy": 0.2,
-             "outcome_fw": 0.01, "seed_cell": 7, "k3": 1.3}
-    row_u = {"id": "m_x_000002", "distinct": False, "dup_of": "m_x_000001",
-             "outcome_cx": 0.1, "outcome_cy": 0.2, "outcome_fw": 0.01, "k3": 1.1}
-    led.append_outcome(row_d, np.arange(1280, dtype=np.float32))
-    led.append_outcome(row_u, np.ones(1280, dtype=np.float32))
-    led.save_cells(); led.save_feats()
+    row_q3 = {"id": "m_x_000001", "distinct": True, "guard_pass": True, "decoded_class": 3,
+              "outcome_cx": 0.1, "outcome_cy": 0.2, "outcome_fw": 0.01, "k3": 1.9}
+    row_dup = {"id": "m_x_000002", "distinct": False, "dup_of": "m_x_000001",
+               "guard_pass": True, "decoded_class": 3,
+               "outcome_cx": 0.1, "outcome_cy": 0.2, "outcome_fw": 0.01, "k3": 1.8}
+    led.append_outcome(row_q3, np.arange(1280, dtype=np.float32))
+    led.append_outcome(row_dup, np.ones(1280, dtype=np.float32))
+    led.save_feats()
 
     led2 = ps.Ledgers()   # fresh reload
-    assert led2.cell_state(7)["launches"] == 2
-    assert led2.cell_state(7)["distinct"] == 1
-    assert led2.n_outcomes_logged == 2                     # both rows counted
-    assert len(led2.harvested) == 1                        # only the distinct one
-    assert led2.harvested[0]["id"] == "m_x_000001"
+    assert led2.n_outcomes_logged == 2
+    assert len(led2.harvested) == 2                        # both guard_pass
+    cloud = ps.build_cloud(led2.rows)
+    assert [m["id"] for m in cloud] == ["m_x_000001"]      # dup collapses to one place
     assert "m_x_000001" in led2.feats and led2.feats["m_x_000001"].shape == (1280,)
     assert float(led2.feats["m_x_000001"][5]) == 5.0       # feature preserved
 
     # cross-run cumulative: a second run appends and reloads with combined state.
-    led2.bump_launch(7)
-    led2.save_cells()
-    assert ps.Ledgers().cell_state(7)["launches"] == 3
+    led2.append_outcome({"id": "m_x_000003", "distinct": True, "guard_pass": True,
+                         "decoded_class": 3, "outcome_cx": 9.0, "outcome_cy": 9.0,
+                         "outcome_fw": 0.01, "k3": 2.0}, None)
+    assert ps.Ledgers().n_outcomes_logged == 3
 
 
-# --------------------------------------------------------------------------- #
-# backfill: a saturated EXPLOIT cell yields an EXPLORE draw
-# --------------------------------------------------------------------------- #
-@pytest.mark.skipif(not (ROOT / "data" / "atlas" / "atlas_v1.npz").exists(),
-                    reason="atlas_v1.npz required for the backfill integration")
-def test_backfill_saturated_exploit_to_explore(tmp_path, monkeypatch):
-    _isolate_ledgers(tmp_path, monkeypatch)
-    from atlas import Atlas
-    atlas = Atlas.load()
-    rng = np.random.default_rng(0)
-    # small cloud keeps it fast; no native seeds so the fallback is pure explore.
-    monkeypatch.setattr(ps, "N_CLOUD", 3000)
-    fw_pool = np.array([0.01, 0.02, 0.05], float)
-    prop = ps.Proposer(atlas, fw_pool, native_seeds=[], rng=rng)
-
-    led = ps.Ledgers()
-    # Saturate (distinct-cap) EVERY cell the exploit queue would land in — leave
-    # launches at 0 so explore cells (which ignore saturation) stay drawable.
-    for i in prop.exploit_q:
-        cid = ps.seed_cell(prop.cloud[i, 0], prop.cloud[i, 1], atlas.mask_bounds)
-        led.cells[str(cid)] = {"launches": 0, "distinct": ps.OUTCOME_DISTINCT_CAP, "saturated": True}
-
-    props, mix = prop.draw_batch(led, n_batch=10)
-    # n_native = round(0.05*10) = 0 ; n_exploit = 8 ; n_explore = 2.
-    assert mix["realized"]["exploit"] == 0          # every exploit cell was saturated
-    assert mix["backfills"] >= 8                     # each rejected exploit backfilled
-    assert mix["realized"]["explore"] >= 1          # forced exploration happened
-    # no placed proposal sits in a saturated exploit cell
-    for p in props:
-        st = led.cell_state(p["seed_cell"])
-        if p["mix_source"] == "exploit":
-            assert not ps.cell_saturated(st)
+def test_build_cloud_excludes_pre_decode_rows():
+    """No historical backfill: rows predating the decoded_class field (no key) never enter
+    the q3 cloud — only rows the new pipeline logged with decoded_class == 3 do."""
+    rows = [
+        # historical row: guard_pass but no decoded_class key -> excluded.
+        {"id": "old", "guard_pass": True,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 0.01},
+        # new-pipeline q3 row -> included.
+        {"id": "new", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 5.0, "outcome_cy": 0.0, "outcome_fw": 0.01},
+    ]
+    assert [m["id"] for m in ps.build_cloud(rows)] == ["new"]

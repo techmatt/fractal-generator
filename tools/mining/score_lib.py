@@ -53,6 +53,19 @@ def pick_device(device: str | None = None) -> str:
         "mps" if torch.backends.mps.is_available() else "cpu")
 
 
+def corn_decode(p_notbad: float, p_good: float) -> int:
+    """Canonical v5 CORN hard-class decode -> {1, 2, 3} (bad / okay / good).
+
+    The two ordinal sigmoids are the cumulative rank probabilities
+    ``p_notbad = sigma(l0) = P(class >= 2)`` and ``p_good = sigma(l1) = P(class >= 3)``.
+    Rank-consistent hard class = ``1 + #{cumulative probs >= 0.5}``. This is NOT
+    recoverable from the summed ``E[ord] = p_notbad + p_good`` scalar (two frames with
+    equal E[ord] can decode to different classes), so callers pass the two
+    probabilities and MUST NOT threshold the score. Single source of truth for the
+    decode; reuse it, don't reimplement the >= 0.5 counting inline."""
+    return 1 + int(p_notbad >= 0.5) + int(p_good >= 0.5)
+
+
 class Scorer:
     """v3 model + deploy transform, exposing the full CORN triple per frame."""
 
