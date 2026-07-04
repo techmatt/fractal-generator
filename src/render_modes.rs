@@ -49,7 +49,7 @@
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::Trap;
+use crate::backend::{F64Backend, FractalBackend, JuliaBackend, Trap, TrapShape, PHASE_DEFER};
 use crate::jsonl;
 use crate::palette::Palette;
 use crate::render::{DownsampleFilter, Frame};
@@ -1726,6 +1726,94 @@ pub fn smooth_field_supersampled(
 
     let flat: Vec<f32> = rows.into_iter().flatten().collect();
     (flat, sub_w as u32, sub_h as u32)
+}
+
+/// Fast smooth-field twin of [`smooth_field_supersampled`], sourced from the
+/// **escape-time [`F64Backend`]** (Mandelbrot) / [`JuliaBackend`] (Julia) rather
+/// than the generic beautiful [`iterate_orbit`] kernel. Same grid geometry, same
+/// row-major layout, same `NaN`-encodes-interior convention — the field array is a
+/// drop-in for the beautiful one for **mask/statistic** consumers (the degenerate-
+/// outcome guard reads only `interior_frac` = NaN fraction and `field_std` = std
+/// over the escaped pixels).
+///
+/// It is **not** byte-identical to [`smooth_field_supersampled`]: the backend's
+/// smooth value is un-normalized (`(n+1) − ln(ln|z|)/ln d`) while the beautiful
+/// one carries the bailout normalization (`… − ln(ln|z|/ln B)/ln d`), so the two
+/// fields differ by the constant `ln(ln B)/ln d`. A standard deviation is invariant
+/// to that constant shift, and the escape mask is bailout-driven, not magnitude-
+/// driven — so both guard statistics carry over (proven by the guard's calibration
+/// control). Do **not** feed this to the field⊗colormap reproduction path, which
+/// requires the byte-identical beautiful field.
+///
+/// Only the two degree-2 families have an escape-time backend; `Multibrot`/`Phoenix`
+/// return an error (the guard is Mandelbrot/Julia only). `bailout` is the backend's
+/// escape radius (render-one passes its `1e6` production constant). Returns
+/// `(field, sub_w, sub_h)`.
+pub fn smooth_field_f64_supersampled(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    family: Family,
+    bailout: f64,
+) -> Result<(Vec<f32>, u32, u32), String> {
+    // The trap is unused (the smooth-only fast path computes no trap channel), but
+    // the backend constructors require one.
+    let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
+    enum Fast {
+        Mandel(F64Backend),
+        Julia(JuliaBackend),
+    }
+    let fast = match family {
+        Family::Mandelbrot => Fast::Mandel(F64Backend::new(maxiter, bailout, trap)),
+        Family::Julia { c } => Fast::Julia(JuliaBackend::new(c, maxiter, bailout, trap)),
+        other => {
+            return Err(format!(
+                "smooth_field_f64_supersampled supports mandelbrot/julia only (escape-time \
+                 backends); got {}",
+                other.kind_str()
+            ));
+        }
+    };
+
+    let s = ss.max(1);
+    let sub_w = (frame.out_width * s) as usize;
+    let sub_h = (frame.out_height * s) as usize;
+    let fw = frame.frame_width;
+    let fh = frame.frame_height();
+    let sub_w_f = sub_w as f64;
+    let sub_h_f = sub_h as f64;
+    let center = frame.center;
+
+    // Grid geometry identical to `smooth_field_supersampled` (grid-centered SS).
+    let rows: Vec<Vec<f32>> = (0..sub_h)
+        .into_par_iter()
+        .map(|srow| {
+            let py = srow as f64 + 0.5;
+            let dc_im = (0.5 - py / sub_h_f) * fh;
+            let mut row = Vec::with_capacity(sub_w);
+            for scol in 0..sub_w {
+                let px = scol as f64 + 0.5;
+                let dc_re = (px / sub_w_f - 0.5) * fw;
+                let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
+                // Both backends take the pixel as `c`; each applies its own z₀
+                // (Mandelbrot 0, Julia = pixel). The smooth-only kernel skips
+                // trap/atom/DE (all const-false). `dc` is unused by these shallow
+                // f64 backends.
+                let smp = match &fast {
+                    Fast::Mandel(b) => b.sample_flags::<false, false, false, PHASE_DEFER>(pixel),
+                    Fast::Julia(b) => b.sample(pixel, Complex::new(0.0, 0.0)),
+                };
+                // NaN encodes interior / non-escaped (smooth is exterior-only), the
+                // same seam `smooth_field_supersampled` writes.
+                let v = if smp.escaped { smp.smooth_iter as f32 } else { f32::NAN };
+                row.push(v);
+            }
+            row
+        })
+        .collect();
+
+    let flat: Vec<f32> = rows.into_iter().flatten().collect();
+    Ok((flat, sub_w as u32, sub_h as u32))
 }
 
 /// **Direct Orbit Traps** — the one colour-valued path (doc §"Direct Orbit Traps").

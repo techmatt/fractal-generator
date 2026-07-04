@@ -165,14 +165,21 @@ def _dump_guard_field(loc: Location, c: dict, out: Path, w: int, h: int, ss: int
     """Dump the raw smooth field co-located with a tile (`<out>.field.bin`) at the SAME
     geometry/fidelity, so a guarded scorer can gate the tile. `render-one --dump-field`
     exits before coloring, so this touches no colored output. Only called when
-    DUMP_GUARD_FIELD is set (the guard hook)."""
+    DUMP_GUARD_FIELD is set (the guard hook).
+
+    Sourced from the fast escape-time F64Backend smooth channel
+    (`--dump-field-source f64`), not the slow beautiful kernel: the guard reads only
+    interior_frac (escape mask) + field_std (a std), both invariant to the
+    bailout-normalization offset between the two kernels, so verdicts are unchanged
+    (proven by out/atlas/gate_f64_field.py — union-of-20 reproduced exactly). This
+    deletes the redundant beautiful second-render that dominated each tile's wall."""
     fbin = Path(str(out) + GUARD_FIELD_SUFFIX)
     cmd = [
         str(BIN), "render-one",
         "--cx", c["cx"], "--cy", c["cy"], "--fw", repr(c["fw"]),
         "--width", str(w), "--height", str(h),
         "--supersample", str(ss), "--maxiter", str(c["maxiter"]),
-        "--dump-field", str(fbin),
+        "--dump-field", str(fbin), "--dump-field-source", "f64",
     ] + loc_mod.render_one_flags(loc)
     r = subprocess.run(cmd, capture_output=True, text=True)
     ok = r.returncode == 0 and fbin.exists()

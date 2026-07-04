@@ -207,10 +207,10 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
 
     // --- field dump branch (serialize the raw smooth field, exit before coloring) ---
     if let Some(dump_path) = &args.dump_field {
-        // The dumped field is the beautiful *smooth* field. Its only iterate-stage
-        // input is the bailout: take it from an explicit `--coloring` smooth spec,
-        // else the beautiful-smooth default (2^16). A non-smooth `--coloring` is a
-        // loud error rather than a silently-ignored field.
+        // The dumped field is the *smooth* field. Its only iterate-stage input is the
+        // bailout: take it from an explicit `--coloring` smooth spec, else the
+        // beautiful-smooth default (2^16). A non-smooth `--coloring` is a loud error
+        // rather than a silently-ignored field.
         let field_params = match &coloring_params {
             Some(cp) if cp.field == render_modes::Field::Smooth => *cp,
             Some(cp) => {
@@ -222,14 +222,34 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
             }
             None => ColoringParams::beautiful(render_modes::Field::Smooth),
         };
+        // `beautiful` runs the generic smooth kernel (byte-identical, colormap-split
+        // source). `f64` sources from the fast escape-time backend's smooth channel —
+        // same geometry / NaN seam, un-normalized value at the render path's `1e6`
+        // escape radius; for the mask/std-only guard. `report_bailout` records the
+        // escape radius actually used, so the sidecar's `bailout_b` matches the field.
         let t0 = Instant::now();
-        let (field, sub_w, sub_h) = render_modes::smooth_field_supersampled(
-            &frame,
-            ss,
-            args.maxiter,
-            family,
-            &field_params,
-        );
+        let ((field, sub_w, sub_h), report_bailout) = match args.dump_field_source {
+            FieldSourceChoice::Beautiful => (
+                render_modes::smooth_field_supersampled(
+                    &frame,
+                    ss,
+                    args.maxiter,
+                    family,
+                    &field_params,
+                ),
+                field_params.bailout_b,
+            ),
+            FieldSourceChoice::F64 => (
+                render_modes::smooth_field_f64_supersampled(
+                    &frame,
+                    ss,
+                    args.maxiter,
+                    family,
+                    BAILOUT,
+                )?,
+                BAILOUT,
+            ),
+        };
         let secs = t0.elapsed().as_secs_f64();
 
         // Raw binary: little-endian f32, row-major.
@@ -261,7 +281,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
              \"bailout_b\":{bailout},\
              \"location\":{{\"kind\":\"{kind}\",\"cx\":\"{cx}\",\"cy\":\"{cy}\",\
              \"fw\":\"{fw}\",\"maxiter\":{maxiter}{c_fields}}}}}",
-            bailout = field_params.bailout_b,
+            bailout = report_bailout,
             cx = args.center_re,
             cy = args.center_im,
             fw = args.frame_width,
@@ -449,6 +469,23 @@ pub enum FamilyChoice {
     Phoenix,
 }
 
+/// Field source for `render-one --dump-field`. `Beautiful` (default) runs the
+/// generic beautiful smooth kernel ([`render_modes::smooth_field_supersampled`]) —
+/// the **byte-identical** field the field⊗colormap reproduction path requires.
+/// `F64` sources the field from the fast escape-time [`crate::backend::F64Backend`]
+/// (Mandelbrot) / [`crate::backend::JuliaBackend`] (Julia) instead: same geometry
+/// and NaN-interior seam, but the un-normalized smooth value (differs from
+/// `Beautiful` by the constant `ln(ln B)/ln d`). Intended for **mask/statistic**
+/// consumers that read only the escape mask and a std (the degenerate-outcome
+/// guard) — not for byte-faithful recoloring.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum FieldSourceChoice {
+    /// Generic beautiful smooth kernel (byte-identical field; colormap-split source).
+    Beautiful,
+    /// Fast escape-time backend smooth channel (mask/std-faithful, offset field).
+    F64,
+}
+
 /// Sub-pixel sample placement for `render-one` (maps to [`crate::render::SubsamplePattern`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum PatternChoice {
@@ -630,6 +667,18 @@ pub struct RenderOneArgs {
     /// (`2^16`). This is the serialization half of the field⊗Python-coloring split.
     #[arg(long)]
     pub dump_field: Option<String>,
+
+    /// Source kernel for `--dump-field`. `beautiful` (default) dumps the
+    /// byte-identical beautiful smooth field (the field⊗colormap reproduction path
+    /// depends on this). `f64` dumps the fast escape-time backend's smooth channel
+    /// (Mandelbrot/Julia only) — same geometry and NaN-interior seam, but an
+    /// un-normalized smooth value (a constant offset from `beautiful`). Use `f64`
+    /// for the degenerate-outcome guard, which reads only the escape mask
+    /// (`interior_frac`) and a std (`field_std`), both invariant to that offset; the
+    /// `f64` bailout is fixed to the render path's `1e6` escape radius, ignoring any
+    /// `--coloring` bailout. No effect without `--dump-field`.
+    #[arg(long, value_enum, default_value_t = FieldSourceChoice::Beautiful)]
+    pub dump_field_source: FieldSourceChoice,
 
     /// Beautiful coloring params as a JSON object (inline, or `@path` to read from
     /// a file). Omitted — or any spec that resolves to the default (e.g. `{}`) —
