@@ -449,8 +449,14 @@ impl FractalBackend for F64Backend {
 }
 
 /// Plain `f64` Julia escape-time backend: `z₀ = pixel`, a **fixed** parameter
-/// `c`, iterating `z_{n+1} = z² + c`. Used only at base scale (whole-set view,
+/// `c`, iterating `z_{n+1} = z^d + c`. Used only at base scale (whole-set view,
 /// center `0`, width ~3.5), so f64 is always accurate — no perturbation tier.
+///
+/// `degree` is the dynamical-plane exponent `d` in `z ← z^d + c`. `degree == 2`
+/// is the classic quadratic Julia and takes the byte-identical [`sample_deg2`](Self::sample_deg2)
+/// kernel; `degree ≥ 3` (the **Julia-multibrot** dynamical families) takes
+/// [`sample_multibrot`](Self::sample_multibrot). The trait
+/// [`sample`](FractalBackend::sample) dispatches on `degree`.
 ///
 /// Smooth value and orbit trap are computed exactly as the Mandelbrot backends
 /// (full value `z`, trap skips `z₀`), so the same coloring stage applies. The
@@ -464,22 +470,36 @@ pub struct JuliaBackend {
     maxiter: u32,
     bailout2: f64,
     trap: Trap,
+    /// Dynamical-plane degree `d` (`z ← z^d + c`), clamped `≥ 2`.
+    degree: u32,
 }
 
 impl JuliaBackend {
+    /// Quadratic (degree-2) Julia. Bit-for-bit the prior behaviour — `new` is
+    /// exactly `new_degree(.., 2)`, and degree 2 routes through `sample_deg2`.
     pub fn new(param: Complex<f64>, maxiter: u32, bailout: f64, trap: Trap) -> Self {
+        JuliaBackend::new_degree(param, maxiter, bailout, trap, 2)
+    }
+
+    /// Degree-parametric constructor for the dynamical `z^d + c` Julia-multibrot
+    /// (`d ≥ 2`). `degree` is clamped to `≥ 2`; the trait
+    /// [`sample`](FractalBackend::sample) routes `d == 2` through the byte-identical
+    /// [`sample_deg2`](Self::sample_deg2) path and `d ≥ 3` through
+    /// [`sample_multibrot`](Self::sample_multibrot).
+    pub fn new_degree(param: Complex<f64>, maxiter: u32, bailout: f64, trap: Trap, degree: u32) -> Self {
         JuliaBackend {
             param,
             maxiter,
             bailout2: bailout * bailout,
             trap,
+            degree: degree.max(2),
         }
     }
-}
 
-impl FractalBackend for JuliaBackend {
+    /// Quadratic Julia kernel (`z ← z² + c`) — textually the prior `sample`, kept
+    /// intact so the degree-2 Julia bytes are unchanged.
     #[inline]
-    fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
+    fn sample_deg2(&self, c: Complex<f64>) -> PixelSample {
         // z₀ is the pixel; the parameter is fixed. (Mandelbrot uses z₀ = 0 and
         // the pixel as the parameter — that's the only structural difference.)
         let mut zr = c.re;
@@ -529,6 +549,187 @@ impl FractalBackend for JuliaBackend {
             trap_phase,
             glitched: false,
             atom_period: 0, // navigation channel unused for Julia
+            atom_min: f64::INFINITY,
+        }
+    }
+
+    /// Julia-multibrot kernel: `z ← z^d + c`, `z₀ = pixel`, fixed parameter `c`,
+    /// for `d = self.degree ≥ 3`. The dynamical-plane twin of
+    /// [`F64Backend::sample_multibrot`] — same `z^{d-1}` power primitive
+    /// ([`cpow_f64`]) and the same degree-`d` smooth base ([`smooth_deg`]) — but
+    /// `z₀ = pixel` and no parameter-plane `+1` (there is no `dz` recurrence at all,
+    /// as Julia carries `de = 0`). Gated trap phase, atom channel unused.
+    #[inline]
+    fn sample_multibrot(&self, c: Complex<f64>) -> PixelSample {
+        let d = self.degree;
+        let mut zr = c.re; // z_0 = pixel
+        let mut zi = c.im;
+        let cr = self.param.re;
+        let ci = self.param.im;
+        let mut n = 0u32;
+        let mut trap_min = f64::INFINITY;
+        let mut trap_phase = 0.0f64;
+
+        let escaped;
+        let smooth_iter;
+        loop {
+            // z = z^d + c = z·z^{d-1} + c.
+            let (pr, pi) = cpow_f64(zr, zi, d - 1);
+            let nzr = zr * pr - zi * pi + cr;
+            let nzi = zr * pi + zi * pr + ci;
+            zr = nzr;
+            zi = nzi;
+            n += 1;
+
+            let zmag2 = zr * zr + zi * zi;
+            let dist = self.trap.eval_dist(zr, zi);
+            if dist < trap_min {
+                trap_min = dist;
+                trap_phase = self.trap.phase_at(zr, zi);
+            }
+
+            if n >= self.maxiter {
+                escaped = false;
+                smooth_iter = 0.0;
+                break;
+            }
+            if zmag2 > self.bailout2 {
+                escaped = true;
+                smooth_iter = smooth_deg(n, zmag2, d);
+                break;
+            }
+        }
+
+        PixelSample {
+            escaped,
+            smooth_iter,
+            de: 0.0, // Julia DE intentionally skipped.
+            trap_min,
+            trap_phase,
+            glitched: false,
+            atom_period: 0,
+            atom_min: f64::INFINITY,
+        }
+    }
+}
+
+impl FractalBackend for JuliaBackend {
+    #[inline]
+    fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
+        // Degree 2 → the byte-identical quadratic Julia kernel; degree ≥ 3 → the
+        // Julia-multibrot kernel. Per-backend constant, perfectly predicted.
+        if self.degree == 2 {
+            self.sample_deg2(c)
+        } else {
+            self.sample_multibrot(c)
+        }
+    }
+}
+
+/// Plain `f64` **Phoenix** escape-time backend: the Ushiki two-state dynamical
+/// recurrence `z_{n+1} = z_n² + c + p·z_{n-1}`, `z₀ = pixel`, `z_{-1} = 0`, fixed
+/// constants `c` (additive) and `p` (the `z_{n-1}` coefficient). Base-scale only
+/// (f64 accurate; no perturbation tier).
+///
+/// **Escape / smooth normalization (derivation).** Near escape the quadratic term
+/// dominates: once `|z_n|` is large, `|z_n²| = |z_n|²` swamps the linear memory term
+/// `|p·z_{n-1}|` (which is `O(|z|)`), so `|z_{n+1}| ≈ |z_n|²` — the escape is
+/// **degree-2**, and the standard `nu = (n+1) − log2(ln|z|)` smooth count applies
+/// unchanged ([`smooth`], base `ln 2`). The memory term does not enter the outer-log
+/// base. This is why a fast escape-time smooth field is clean here — the two-state
+/// coupling reshapes the *set* but not the escape order.
+///
+/// DE is intentionally **not** carried (`de = 0`, as [`JuliaBackend`]). The Phoenix
+/// derivative recurrence gains a `p·dz_{n-1}` term (`dz_{n+1} = 2·z_n·dz_n +
+/// p·dz_{n-1}`) — carried by the slow beautiful kernel for the `de` field — but the
+/// fast smooth field the guard/score path reads needs only the smooth channel, so
+/// this backend skips it (no banding risk).
+pub struct PhoenixBackend {
+    /// Additive constant `c`.
+    param_c: Complex<f64>,
+    /// `z_{n-1}` coefficient `p` (Ushiki's `q`).
+    param_p: Complex<f64>,
+    maxiter: u32,
+    bailout2: f64,
+    trap: Trap,
+}
+
+impl PhoenixBackend {
+    pub fn new(
+        param_c: Complex<f64>,
+        param_p: Complex<f64>,
+        maxiter: u32,
+        bailout: f64,
+        trap: Trap,
+    ) -> Self {
+        PhoenixBackend {
+            param_c,
+            param_p,
+            maxiter,
+            bailout2: bailout * bailout,
+            trap,
+        }
+    }
+}
+
+impl FractalBackend for PhoenixBackend {
+    #[inline]
+    fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
+        // z₀ = pixel, z_{-1} = 0. Constants fixed.
+        let mut zr = c.re;
+        let mut zi = c.im;
+        let mut zpr = 0.0f64; // z_{n-1}
+        let mut zpi = 0.0f64;
+        let cr = self.param_c.re;
+        let ci = self.param_c.im;
+        let pr = self.param_p.re;
+        let pi = self.param_p.im;
+        let mut n = 0u32;
+        let mut trap_min = f64::INFINITY;
+        let mut trap_phase = 0.0f64;
+
+        let escaped;
+        let smooth_iter;
+        loop {
+            // z_{n+1} = z_n² + c + p·z_{n-1}. Compute p·z_{n-1} (complex) then shift.
+            let pzr = pr * zpr - pi * zpi;
+            let pzi = pr * zpi + pi * zpr;
+            let nzr = zr * zr - zi * zi + cr + pzr;
+            let nzi = 2.0 * zr * zi + ci + pzi;
+            zpr = zr; // z_{n-1} := z_n
+            zpi = zi;
+            zr = nzr;
+            zi = nzi;
+            n += 1;
+
+            let zmag2 = zr * zr + zi * zi;
+            let dist = self.trap.eval_dist(zr, zi);
+            if dist < trap_min {
+                trap_min = dist;
+                trap_phase = self.trap.phase_at(zr, zi);
+            }
+
+            if n >= self.maxiter {
+                escaped = false;
+                smooth_iter = 0.0;
+                break;
+            }
+            if zmag2 > self.bailout2 {
+                escaped = true;
+                // Quadratic-dominated escape → the standard degree-2 smooth count.
+                smooth_iter = smooth(n, zmag2);
+                break;
+            }
+        }
+
+        PixelSample {
+            escaped,
+            smooth_iter,
+            de: 0.0, // Phoenix DE intentionally skipped (fast smooth field only).
+            trap_min,
+            trap_phase,
+            glitched: false,
+            atom_period: 0,
             atom_min: f64::INFINITY,
         }
     }
@@ -868,6 +1069,80 @@ mod tests {
             }
             assert!(esc > 0 && bounded > 0, "degree {d}: esc={esc} bounded={bounded}");
         }
+    }
+
+    /// Julia-multibrot degrees must iterate `z^d + c` dynamically (`z₀ = pixel`,
+    /// fixed param) and produce a non-trivial set, and the degree-2 arm must stay
+    /// byte-identical to `new` (`new_degree(.., 2)` == `new`, trivially, but assert
+    /// the dispatch produces the same bits). Smooth values finite on escape.
+    #[test]
+    fn julia_multibrot_degrees_are_live() {
+        let trap = traps()[0];
+        let param = Complex::new(-0.8, 0.156);
+        // degree-2 dispatch equals `new` bit-for-bit.
+        let base = JuliaBackend::new(param, 400, 1e6, trap);
+        let deg2 = JuliaBackend::new_degree(param, 400, 1e6, trap, 2);
+        for iy in 0..40 {
+            let zi = -1.5 + 3.0 * (iy as f64 + 0.5) / 40.0;
+            for ix in 0..40 {
+                let zr = -1.5 + 3.0 * (ix as f64 + 0.5) / 40.0;
+                let z = Complex::new(zr, zi);
+                assert!(sample_eq(&base.sample(z, z), &deg2.sample(z, z)), "julia deg-2 dispatch mismatch");
+            }
+        }
+        // degrees 3/4/5 are live (some escape, some bounded, finite smooth). Use
+        // c = 0 (pure z^d): the filled Julia set is the closed unit disk, so a window
+        // spanning it guarantees both classes appear at every degree (a generic c can
+        // have a tiny/empty set at these degrees, which would make the test brittle).
+        for d in [3u32, 4, 5] {
+            let bk = JuliaBackend::new_degree(Complex::new(0.0, 0.0), 400, 1e6, trap, d);
+            let (mut esc, mut bounded) = (0usize, 0usize);
+            for iy in 0..48 {
+                let zi = -1.3 + 2.6 * (iy as f64 + 0.5) / 48.0;
+                for ix in 0..48 {
+                    let zr = -1.3 + 2.6 * (ix as f64 + 0.5) / 48.0;
+                    let s = bk.sample(Complex::new(zr, zi), Complex::new(0.0, 0.0));
+                    if s.escaped {
+                        esc += 1;
+                        assert!(s.smooth_iter.is_finite(), "julia degree {d}: non-finite smooth");
+                    } else {
+                        bounded += 1;
+                    }
+                }
+            }
+            assert!(esc > 0 && bounded > 0, "julia degree {d}: esc={esc} bounded={bounded}");
+        }
+    }
+
+    /// Phoenix must iterate its two-state recurrence and produce a non-trivial set
+    /// with finite smooth values on escape. Ushiki `c=0.5667, p=-0.5` is used, whose
+    /// interior is well-populated at base scale.
+    #[test]
+    fn phoenix_kernel_is_live() {
+        let trap = traps()[0];
+        let bk = PhoenixBackend::new(
+            Complex::new(0.5667, 0.0),
+            Complex::new(-0.5, 0.0),
+            500,
+            1e6,
+            trap,
+        );
+        let (mut esc, mut bounded) = (0usize, 0usize);
+        let n = 64;
+        for iy in 0..n {
+            let zi = -1.8 + 3.6 * (iy as f64 + 0.5) / n as f64;
+            for ix in 0..n {
+                let zr = -1.8 + 3.6 * (ix as f64 + 0.5) / n as f64;
+                let s = bk.sample(Complex::new(zr, zi), Complex::new(0.0, 0.0));
+                if s.escaped {
+                    esc += 1;
+                    assert!(s.smooth_iter.is_finite(), "phoenix: non-finite smooth");
+                } else {
+                    bounded += 1;
+                }
+            }
+        }
+        assert!(esc > 0 && bounded > 0, "phoenix: esc={esc} bounded={bounded}");
     }
 
     /// All three trap-phase strategies — GATED (production), DEFER, and EVERY

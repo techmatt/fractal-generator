@@ -48,6 +48,16 @@ FAMILY_PARAM_KEYS = {
 # Parameter-plane z^d families whose flag is just `--family <name>`.
 _MULTIBROT = ("multibrot3", "multibrot4", "multibrot5")
 
+# Dynamical Julia-multibrot families (`--julia --family multibrot{d}`, fixed c). The
+# degree stays in the family NAME (mirrors _MULTIBROT); each maps to the parameter-
+# plane `--family` value its `--julia` twin reuses. Kept in sync with Rust
+# `Family::kind_str` (`julia_multibrot{d}`).
+_JULIA_MULTIBROT = {
+    "julia_multibrot3": "multibrot3",
+    "julia_multibrot4": "multibrot4",
+    "julia_multibrot5": "multibrot5",
+}
+
 
 def family_param_keys(family: str) -> tuple:
     """Canonical-ordered extra-constant keys for `family` (empty tuple if none)."""
@@ -151,6 +161,12 @@ def render_one_flags(loc) -> list:
         if loc.c_re is None or loc.c_im is None:
             raise ValueError("julia location requires c_re/c_im")
         return ["--family", "mandelbrot", "--julia", "--c", str(loc.c_re), str(loc.c_im)]
+    if fam in _JULIA_MULTIBROT:
+        # Dynamical z^d+c at the fixed parameter c: the multibrot degree in --family,
+        # flipped to its dynamical twin by --julia.
+        if loc.c_re is None or loc.c_im is None:
+            raise ValueError(f"{fam} location requires c_re/c_im")
+        return ["--family", _JULIA_MULTIBROT[fam], "--julia", "--c", str(loc.c_re), str(loc.c_im)]
     if fam in _MULTIBROT:
         return ["--family", fam]
     if fam == "phoenix":

@@ -49,7 +49,9 @@
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{F64Backend, FractalBackend, JuliaBackend, Trap, TrapShape, PHASE_DEFER};
+use crate::backend::{
+    F64Backend, FractalBackend, JuliaBackend, PhoenixBackend, Trap, TrapShape, PHASE_DEFER,
+};
 use crate::jsonl;
 use crate::palette::Palette;
 use crate::render::{DownsampleFilter, Frame};
@@ -81,8 +83,10 @@ pub const BEAUTIFUL_BAILOUT: f64 = 65536.0; // 2^16
 pub enum Family {
     /// `z → z² + c`, `z₀ = 0` (parameter plane).
     Mandelbrot,
-    /// `z → z² + c`, `z₀ = pixel`, `c` fixed (dynamical / seed plane).
-    Julia { c: Complex<f64> },
+    /// `z → z^d + c`, `z₀ = pixel`, `c` fixed (dynamical / seed plane). `degree == 2`
+    /// is the classic quadratic Julia (byte-identical path); `d ∈ {3,4,5}` are the
+    /// **Julia-multibrot** dynamical planes (`--julia --family multibrot{d}`).
+    Julia { c: Complex<f64>, degree: u32 },
     /// `z → z^d + c`, `z₀ = 0` (parameter plane), `d ∈ {3,4,5}`.
     Multibrot { degree: u32 },
     /// `z_{n+1} = z_n² + c + p·z_{n-1}`, `z₀ = pixel`, `z_{-1} = 0` (dynamical).
@@ -94,8 +98,8 @@ impl Family {
     /// smooth-field outer log base is `ln d` (Phoenix's `z²` dominates → 2).
     pub fn degree(self) -> u32 {
         match self {
-            Family::Multibrot { degree } => degree,
-            Family::Mandelbrot | Family::Julia { .. } | Family::Phoenix { .. } => 2,
+            Family::Multibrot { degree } | Family::Julia { degree, .. } => degree,
+            Family::Mandelbrot | Family::Phoenix { .. } => 2,
         }
     }
 
@@ -112,17 +116,23 @@ impl Family {
     /// inline as `match julia_param`.
     pub fn seed(self, pixel: Complex<f64>) -> (Complex<f64>, Complex<f64>) {
         match self {
-            Family::Julia { c } => (pixel, c),
+            Family::Julia { c, .. } => (pixel, c),
             Family::Phoenix { c, .. } => (pixel, c),
             Family::Mandelbrot | Family::Multibrot { .. } => (Complex::new(0.0, 0.0), pixel),
         }
     }
 
     /// Version-invariant `location.kind` string for the `--dump-field` sidecar.
+    /// Julia-multibrot (`d ≥ 3`) reads back as `julia_multibrot{d}` so a sidecar
+    /// round-trips to the same dynamical z^d plane; the quadratic Julia stays `julia`.
     pub fn kind_str(self) -> &'static str {
         match self {
             Family::Mandelbrot => "mandelbrot",
-            Family::Julia { .. } => "julia",
+            Family::Julia { degree: 2, .. } => "julia",
+            Family::Julia { degree: 3, .. } => "julia_multibrot3",
+            Family::Julia { degree: 4, .. } => "julia_multibrot4",
+            Family::Julia { degree: 5, .. } => "julia_multibrot5",
+            Family::Julia { .. } => "julia_multibrot",
             Family::Multibrot { degree: 3 } => "multibrot3",
             Family::Multibrot { degree: 4 } => "multibrot4",
             Family::Multibrot { degree: 5 } => "multibrot5",
@@ -1668,16 +1678,24 @@ pub fn render_beautiful(
     if params.field == Field::DirectTrap {
         return render_direct_trap(frame, ss, maxiter, family, params, palette, filter);
     }
-    // Fast smooth path: a Multibrot smooth render sources its scalar from the fast
-    // escape-time F64Backend smooth channel instead of the slow degree-parametric
+    // Fast smooth path: a smooth render on a **new** family (Multibrot,
+    // Julia-multibrot at degree ≥ 3, or Phoenix) sources its scalar from the fast
+    // escape-time backend smooth channel instead of the slow degree-parametric
     // beautiful kernel (~20-45x faster, and it doesn't blow up with depth). Correct
     // for smooth mode only — colour is palette-over-smooth-scalar, so the
     // f64↔beautiful constant offset is absorbed by the percentile-stretch / histeq
-    // normalization and the crop is visually equivalent. Gated to Multibrot so the
-    // degree-2 beautiful path stays byte-identical; any knob this path can't honor
-    // (texture composite, normal_map emboss, biomorph escape) falls through to the
-    // beautiful kernel below.
-    if matches!(family, Family::Multibrot { .. })
+    // normalization and the crop is visually equivalent. Gated OFF the degree-2
+    // Mandelbrot/Julia families so their beautiful path stays byte-identical; any
+    // knob this path can't honor (texture composite, normal_map emboss, biomorph
+    // escape) falls through to the beautiful kernel below.
+    let fast_smooth_family = match family {
+        Family::Multibrot { .. } | Family::Phoenix { .. } => true,
+        // Julia-multibrot (d ≥ 3) fast-routes; quadratic Julia (d = 2) stays on the
+        // byte-identical beautiful path.
+        Family::Julia { degree, .. } => degree >= 3,
+        Family::Mandelbrot => false,
+    };
+    if fast_smooth_family
         && params.field == Field::Smooth
         && params.texture_field.is_none()
         && params.shade != Shade::NormalMap
@@ -1851,10 +1869,12 @@ pub fn smooth_field_supersampled(
 /// control). Do **not** feed this to the field⊗colormap reproduction path, which
 /// requires the byte-identical beautiful field.
 ///
-/// Mandelbrot/Julia/Multibrot have escape-time backends; `Phoenix` still returns an
-/// error (no escape-time f64 backend). `bailout` is the backend's escape radius
-/// (render-one passes its `1e6` production constant). Returns `(field, sub_w,
-/// sub_h)`.
+/// **Every** family now has an escape-time f64 backend: Mandelbrot (degree 2) +
+/// Multibrot (`F64Backend`), quadratic + Julia-multibrot (`JuliaBackend`), and
+/// Ushiki Phoenix (`PhoenixBackend`, quadratic-dominated escape). The `Result` is
+/// retained for API stability but no longer errors on any family. `bailout` is the
+/// backend's escape radius (render-one passes its `1e6` production constant).
+/// Returns `(field, sub_w, sub_h)`.
 pub fn smooth_field_f64_supersampled(
     frame: &Frame,
     ss: u32,
@@ -1870,23 +1890,21 @@ pub fn smooth_field_f64_supersampled(
         // Degree ≥ 3 parameter-plane multibrot; dispatched through the trait
         // `sample` (→ `sample_multibrot`), not the const-generic degree-2 kernel.
         Multi(F64Backend),
+        // Any-degree dynamical Julia (`z^d + c`): degree 2 → byte-identical quadratic
+        // kernel, degree ≥ 3 → Julia-multibrot, both via the trait `sample`.
         Julia(JuliaBackend),
+        // Ushiki Phoenix two-state (`z² + c + p·z_{n-1}`); quadratic-dominated escape.
+        Phoenix(PhoenixBackend),
     }
     let fast = match family {
         Family::Mandelbrot => Fast::Mandel(F64Backend::new(maxiter, bailout, trap)),
         Family::Multibrot { degree } => {
             Fast::Multi(F64Backend::new_degree(maxiter, bailout, trap, degree))
         }
-        Family::Julia { c } => Fast::Julia(JuliaBackend::new(c, maxiter, bailout, trap)),
-        // Phoenix has no escape-time f64 backend; the guard is Mandelbrot/Julia/
-        // Multibrot only.
-        other => {
-            return Err(format!(
-                "smooth_field_f64_supersampled supports mandelbrot/julia/multibrot only \
-                 (escape-time backends); got {}",
-                other.kind_str()
-            ));
+        Family::Julia { c, degree } => {
+            Fast::Julia(JuliaBackend::new_degree(c, maxiter, bailout, trap, degree))
         }
+        Family::Phoenix { c, p } => Fast::Phoenix(PhoenixBackend::new(c, p, maxiter, bailout, trap)),
     };
 
     let s = ss.max(1);
@@ -1918,6 +1936,7 @@ pub fn smooth_field_f64_supersampled(
                     // Trait `sample` routes degree ≥ 3 through `sample_multibrot`.
                     Fast::Multi(b) => b.sample(pixel, Complex::new(0.0, 0.0)),
                     Fast::Julia(b) => b.sample(pixel, Complex::new(0.0, 0.0)),
+                    Fast::Phoenix(b) => b.sample(pixel, Complex::new(0.0, 0.0)),
                 };
                 // NaN encodes interior / non-escaped (smooth is exterior-only), the
                 // same seam `smooth_field_supersampled` writes.
@@ -2590,7 +2609,7 @@ mod tests {
             Complex::new(-0.8, 0.156),
             500,
             &p,
-            Family::Julia { c: Complex::new(-0.8, 0.156) },
+            Family::Julia { c: Complex::new(-0.8, 0.156), degree: 2 },
         );
         assert!(j.escaped && j.smooth.is_finite());
         assert!(j.ushade().norm() <= 1.0 + 1e-9);
@@ -3144,7 +3163,7 @@ mod tests {
                 &p,
                 Family::Phoenix { c, p: Complex::new(0.0, 0.0) },
             );
-            let ju = iterate_orbit(pixel, c, 500, &p, Family::Julia { c });
+            let ju = iterate_orbit(pixel, c, 500, &p, Family::Julia { c, degree: 2 });
             assert_eq!(ph.escaped, ju.escaped);
             assert_eq!(ph.smooth.to_bits(), ju.smooth.to_bits(), "pixel=({re},{im})");
             assert_eq!(ph.z.re.to_bits(), ju.z.re.to_bits());
@@ -3170,7 +3189,11 @@ mod tests {
         );
         // Dynamical: z0 = pixel, c = fixed const.
         let k = Complex::new(0.5667, 0.0);
-        assert_eq!(Family::Julia { c: k }.seed(pixel), (pixel, k));
+        assert_eq!(Family::Julia { c: k, degree: 2 }.seed(pixel), (pixel, k));
+        // Julia-multibrot threads its degree while staying dynamical (z0 = pixel).
+        assert_eq!(Family::Julia { c: k, degree: 4 }.degree(), 4);
+        assert_eq!(Family::Julia { c: k, degree: 4 }.seed(pixel), (pixel, k));
+        assert!(Family::Julia { c: k, degree: 3 }.is_dynamical());
         assert_eq!(
             Family::Phoenix { c: k, p: Complex::new(-0.5, 0.0) }.seed(pixel),
             (pixel, k)

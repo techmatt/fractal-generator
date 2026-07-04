@@ -62,15 +62,17 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     let ss = args.supersample.max(1);
 
     // Flag-combo validation (string level, before parsing constants):
-    //  - `--julia` only pairs with the (default) mandelbrot family (multibrot /
-    //    phoenix carry their own plane/constants).
+    //  - `--julia` flips a `z^d+c` parameter plane into its dynamical (fixed-c,
+    //    z₀=pixel) twin: valid with `mandelbrot` (quadratic Julia) and
+    //    `multibrot3|4|5` (Julia-multibrot). NOT with `phoenix` (its own dynamical
+    //    two-state plane).
     //  - `--p` (Phoenix's z_{n-1} coefficient) is valid only for `--family phoenix`.
-    if args.julia && args.family != FamilyChoice::Mandelbrot {
-        return Err(format!(
-            "--julia is the z²+c dynamical plane and only applies to --family mandelbrot; \
-             got --family {:?}",
-            args.family
-        ));
+    if args.julia && args.family == FamilyChoice::Phoenix {
+        return Err(
+            "--julia (fixed-c dynamical plane) is incompatible with --family phoenix, which is \
+             already its own dynamical two-state plane"
+                .into(),
+        );
     }
     if args.phoenix_p.is_some() && args.family != FamilyChoice::Phoenix {
         return Err("--p is the Phoenix z_{n-1} coefficient; valid only with --family phoenix".into());
@@ -108,7 +110,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                     .as_ref()
                     .ok_or("--julia requires --c <re> <im> (the Julia parameter)")?;
                 (
-                    Family::Julia { c: parse_const(c, "c")? },
+                    Family::Julia { c: parse_const(c, "c")?, degree: 2 },
                     Some((c[0].clone(), c[1].clone())),
                     None,
                 )
@@ -122,15 +124,30 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
             }
         }
         FamilyChoice::Multibrot3 | FamilyChoice::Multibrot4 | FamilyChoice::Multibrot5 => {
-            if args.julia_c.is_some() {
-                return Err("--c is not valid for multibrot (parameter-plane) families".into());
-            }
             let degree = match args.family {
                 FamilyChoice::Multibrot3 => 3,
                 FamilyChoice::Multibrot4 => 4,
                 _ => 5,
             };
-            (Family::Multibrot { degree }, None, None)
+            if args.julia {
+                // Julia-multibrot: dynamical z^d + c at the fixed parameter `c`.
+                let c = args
+                    .julia_c
+                    .as_ref()
+                    .ok_or("--julia --family multibrot* requires --c <re> <im> (the fixed parameter)")?;
+                (
+                    Family::Julia { c: parse_const(c, "c")?, degree },
+                    Some((c[0].clone(), c[1].clone())),
+                    None,
+                )
+            } else {
+                if args.julia_c.is_some() {
+                    return Err("--c is the (Julia) fixed parameter; pass --julia to render the \
+                                dynamical z^d+c plane, or drop --c for the parameter-plane multibrot"
+                        .into());
+                }
+                (Family::Multibrot { degree }, None, None)
+            }
         }
         FamilyChoice::Phoenix => {
             // Ushiki Phoenix: `--c` (additive const) and `--p` (z_{n-1} coeff) both
@@ -153,8 +170,10 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         }
     };
     // Location-profile (settled byte-identical) backends exist only for the two
-    // degree-2 families; the new families always render through the beautiful path.
-    let has_location_profile = matches!(family, Family::Mandelbrot | Family::Julia { .. });
+    // degree-2 families; the new families (Julia-multibrot d≥3, Multibrot, Phoenix)
+    // always render through the beautiful path.
+    let has_location_profile =
+        matches!(family, Family::Mandelbrot | Family::Julia { degree: 2, .. });
 
     let frame = Frame {
         center,
@@ -315,7 +334,10 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
 
     let mode = match family {
         Family::Mandelbrot => "mandelbrot".to_string(),
-        Family::Julia { c } => format!("julia c=({:.9}, {:.9})", c.re, c.im),
+        Family::Julia { c, degree: 2 } => format!("julia c=({:.9}, {:.9})", c.re, c.im),
+        Family::Julia { c, degree } => {
+            format!("julia-multibrot d={degree} c=({:.9}, {:.9})", c.re, c.im)
+        }
         Family::Multibrot { degree } => format!("multibrot d={degree}"),
         Family::Phoenix { c, p } => {
             format!("phoenix c=({:.4}, {:.4}) p=({:.4}, {:.4})", c.re, c.im, p.re, p.im)
@@ -385,7 +407,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                 args.seed,
             )
         }
-        Family::Julia { c } => {
+        Family::Julia { c, degree: 2 } => {
             let backend = JuliaBackend::new(c, args.maxiter, BAILOUT, trap);
             render::iterate_samples_julia_pattern(
                 &backend,
@@ -572,11 +594,13 @@ pub struct RenderOneArgs {
     #[arg(long, value_enum, default_value_t = FamilyChoice::Mandelbrot)]
     pub family: FamilyChoice,
 
-    /// Render a **Julia** set instead of Mandelbrot. Off ⇒ today's Mandelbrot
-    /// behavior exactly (bit-for-bit). When on, the viewport (`--cx`/`--cy`/`--fw`)
-    /// addresses the **z-plane** and `--c` supplies the fixed Julia parameter.
-    /// Requires `--c`; using `--c` without `--julia` is an error. Only valid with
-    /// `--family mandelbrot`.
+    /// Render a **dynamical** (Julia) plane instead of the parameter plane. Off ⇒
+    /// today's parameter-plane behavior exactly (bit-for-bit). When on, the viewport
+    /// (`--cx`/`--cy`/`--fw`) addresses the **z-plane** (`z₀ = pixel`) and `--c`
+    /// supplies the fixed parameter. Pairs with `--family mandelbrot` (quadratic
+    /// Julia) or `--family multibrot3|4|5` (**Julia-multibrot**, dynamical `z^d+c`).
+    /// Requires `--c`; using `--c` without `--julia` is an error. Incompatible with
+    /// `--family phoenix` (already its own dynamical plane).
     #[arg(long, default_value_t = false)]
     pub julia: bool,
 

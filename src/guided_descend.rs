@@ -48,7 +48,7 @@ use image::{Rgb, RgbImage};
 use num_complex::Complex;
 use rayon::prelude::*;
 
-use crate::backend::{JuliaBackend, Trap, TrapShape};
+use crate::backend::{JuliaBackend, PhoenixBackend, Trap, TrapShape};
 use clap::Args;
 use crate::cli::BackendChoice;
 use crate::energy::{self, OCC_FLOOR, OCC_GX, OCC_GY};
@@ -280,43 +280,69 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     }
     let (p_foci, p_density) = (w_foci / wsum, w_density / wsum); // random = remainder
 
-    // --- Julia descent mode: parse + f64-project `c` (exactly like render-one). ---
+    // Parse a fixed complex constant from two decimal strings. Shallow base-scale →
+    // modest precision is plenty for the f64 projection (exactly like render-one).
+    let parse_c2 = |v: &[String], name: &str| -> Result<Complex<f64>, String> {
+        if v.len() != 2 {
+            return Err(format!("--{name} expects exactly two values <re> <im>, got {}", v.len()));
+        }
+        let re = hp::to_f64(&hp::parse_decimal(&v[0], 64)?);
+        let im = hp::to_f64(&hp::parse_decimal(&v[1], 64)?);
+        Ok(Complex::new(re, im))
+    };
+
+    // --- Dynamical z-plane descent modes: Julia (`z^d+c`) and Phoenix
+    //     (`z²+c+p·z_{n-1}`). Both fix their constant(s) and descend the z-plane
+    //     (z₀ = pixel) on the same fractal-agnostic policy; only the recurrence and
+    //     root step differ from the c-plane Mandelbrot/multibrot walk. ---
+    if args.julia && args.phoenix {
+        return Err("--julia and --phoenix are mutually exclusive dynamical modes".into());
+    }
+    // Degree drives the escape recurrence (`z^d+c`) — for the c-plane multibrot AND,
+    // under `--julia`, the dynamical Julia-multibrot. Phoenix is always degree 2.
+    let degree = args.family.degree();
+
+    // Phoenix mode: `--c` = additive constant (default 0.5667,0), `--p` = z_{n-1}
+    // coefficient (default -0.5,0), both classic Ushiki.
+    let phoenix_cp: Option<(Complex<f64>, Complex<f64>)> = if args.phoenix {
+        if degree != 2 {
+            return Err(
+                "--phoenix is the degree-2 two-state plane; incompatible with --family multibrot*"
+                    .into(),
+            );
+        }
+        let cs = args.julia_c.clone().unwrap_or_else(|| vec!["0.5667".into(), "0".into()]);
+        let ps = args.phoenix_p.clone().unwrap_or_else(|| vec!["-0.5".into(), "0".into()]);
+        Some((parse_c2(&cs, "c")?, parse_c2(&ps, "p")?))
+    } else {
+        if args.phoenix_p.is_some() {
+            return Err("--p is the Phoenix z_{n-1} coefficient; valid only with --phoenix".into());
+        }
+        None
+    };
+
+    // Julia mode: quadratic (`--family mandelbrot`) or Julia-multibrot
+    // (`--family multibrot3|4|5`). `--c` is the fixed parameter.
     let julia_c: Option<Complex<f64>> = match (args.julia, &args.julia_c) {
-        (true, None) => return Err("--julia requires --c <re> <im> (the Julia parameter)".into()),
-        (false, Some(_)) => {
-            return Err("--c given without --julia; --c is the Julia parameter and is \
-                        meaningless without --julia"
+        (true, None) => return Err("--julia requires --c <re> <im> (the fixed parameter)".into()),
+        (true, Some(c)) => Some(parse_c2(c, "c")?),
+        // `--c` without `--julia` is only meaningful in Phoenix mode (consumed above).
+        (false, Some(_)) if !args.phoenix => {
+            return Err("--c given without --julia/--phoenix; it is the fixed dynamical parameter \
+                        and is meaningless on the c-plane"
                 .into())
         }
-        (false, None) => None,
-        (true, Some(c)) => {
-            if c.len() != 2 {
-                return Err(format!("--c expects exactly two values <re> <im>, got {}", c.len()));
-            }
-            // Shallow base-scale Julia → modest precision is plenty for the projection.
-            let pr = hp::to_f64(&hp::parse_decimal(&c[0], 64)?);
-            let pi = hp::to_f64(&hp::parse_decimal(&c[1], 64)?);
-            Some(Complex::new(pr, pi))
-        }
+        _ => None,
     };
-    if julia_c.is_some() && args.julia_root_fw <= 0.0 {
+
+    // Either dynamical mode roots at the base-scale z-plane view.
+    let dynamical = julia_c.is_some() || phoenix_cp.is_some();
+    if dynamical && args.julia_root_fw <= 0.0 {
         return Err(format!("--julia-root-fw must be > 0 (got {})", args.julia_root_fw));
     }
-
-    // --- Parameter-plane family (Mandelbrot / multibrot). Degree drives the c-plane
-    //     recurrence (`z^d+c`) and the root-field box; multibrot is parameter-plane
-    //     only, so it is incompatible with the fixed-c dynamical Julia mode. ---
-    let degree = args.family.degree();
-    if degree != 2 && julia_c.is_some() {
-        return Err(
-            "--family multibrot* is a Mandelbrot parameter-plane axis; incompatible with --julia \
-             (the fixed-c dynamical mode). Drop one."
-                .into(),
-        );
-    }
-    // The boundary band (rev4 B2 random branch) reads DE; Julia carries none, so
-    // gate it off in Julia mode (the branch then draws a DE-free interior point).
-    let random_boundary = args.random_boundary && julia_c.is_none();
+    // The boundary band (rev4 B2 random branch) reads DE; the dynamical kernels carry
+    // none, so gate it off (the branch then draws a DE-free interior point).
+    let random_boundary = args.random_boundary && !dynamical;
 
     // --- Injected-seed mode (`--seed-list`): pin the depth-1 frame from an external
     //     proposer (the atlas round-1 acceptance harness) instead of the internal
@@ -326,8 +352,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     //     by the list length. Mandelbrot only; incompatible with --julia. ---
     let injected_seeds: Option<Vec<(f64, f64, f64)>> = match &args.seed_list {
         Some(p) => {
-            if julia_c.is_some() {
-                return Err("--seed-list is Mandelbrot-only; drop --julia".into());
+            if dynamical {
+                return Err("--seed-list is c-plane-only; drop --julia/--phoenix".into());
             }
             Some(load_seed_list(p)?)
         }
@@ -409,13 +435,24 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         out_width: node_w,
         out_height: node_h,
     };
-    let root_desc = match julia_c {
-        Some(c) => format!("JULIA z-plane descent: c=({:.6},{:.6}), root base-scale fw {} @ symmetry center 0", c.re, c.im, args.julia_root_fw),
+    let root_desc = if let Some((pc, pp)) = phoenix_cp {
+        format!(
+            "PHOENIX z-plane descent: c=({:.4},{:.4}) p=({:.4},{:.4}), root base-scale fw {} @ center 0",
+            pc.re, pc.im, pp.re, pp.im, args.julia_root_fw
+        )
+    } else {
+        match julia_c {
+        Some(c) => format!(
+            "JULIA{} z-plane descent: c=({:.6},{:.6}), root base-scale fw {} @ symmetry center 0",
+            if degree == 2 { String::new() } else { format!("-multibrot{degree}") },
+            c.re, c.im, args.julia_root_fw
+        ),
         None => format!(
             "root-mix {root_mix:.2} (8k vs flat); 8k root-zoom {} + criterion black<={} mean[{},{}] var>={}; flat box {flat_box:?} fw[{},{}] screen {}px",
             args.root_zoom_8k, score_cfg.black_max, score_cfg.mean_lo, score_cfg.mean_hi, score_cfg.var_floor,
             args.flat_fw_lo, args.flat_fw_hi, args.flat_screen_width,
         ),
+        }
     };
     eprintln!(
         "guided-descend (rev4): {} walks, depth [{},{}], zoom/step log-uniform [{},{}], seed {}\n  \
@@ -436,9 +473,10 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         if black_cap_on { format!("black_frac<{black_cap}") } else { "OFF".into() }, PROBE_W,
         if occ_on { format!("occ>={occ_floor}") } else { "OFF".into() }, node_w,
     );
-    if degree != 2 {
+    if degree != 2 && !dynamical {
         // d3/d4/d5 all carry per-family band defaults now; only a future untuned
-        // degree would fall back to the Mandelbrot values.
+        // degree would fall back to the Mandelbrot values. (Julia-multibrot descends
+        // the z-plane and skips the c-plane 8k/flat root apparatus this describes.)
         let tuned = matches!(
             args.family,
             WalkFamily::Multibrot3 | WalkFamily::Multibrot4 | WalkFamily::Multibrot5
@@ -456,23 +494,24 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     }
 
     let render_node = |frame: &Frame| -> render::SampleBuffer {
-        match julia_c {
-            // Julia: fixed parameter, frame addresses the z-plane (z₀ = pixel).
-            // Always shallow base-scale → f64 (same path probe::render_julia_panel uses).
-            Some(c) => {
-                let backend = JuliaBackend::new(c, args.maxiter, args.bailout, trap);
-                render::iterate_samples(&backend, frame, 1)
-            }
-            None => {
-                let prec = hp::prec_bits(frame.out_width, frame.frame_width);
-                let cre = BigFloat::from_f64(frame.center.re, prec);
-                let cim = BigFloat::from_f64(frame.center.im, prec);
-                probe::render_mandel_panel(
-                    &cre, &cim, frame.center, frame.frame_width, frame.out_width, frame.out_height, 1,
-                    args.maxiter, args.bailout, degree, prec, trap, BackendChoice::F64,
-                )
-                .buf
-            }
+        if let Some((pc, pp)) = phoenix_cp {
+            // Phoenix: two-state dynamical, frame addresses the z-plane (z₀ = pixel).
+            let backend = PhoenixBackend::new(pc, pp, args.maxiter, args.bailout, trap);
+            render::iterate_samples(&backend, frame, 1)
+        } else if let Some(c) = julia_c {
+            // Julia / Julia-multibrot: fixed parameter, z-plane (z₀ = pixel), degree
+            // from `--family`. Shallow base-scale → f64.
+            let backend = JuliaBackend::new_degree(c, args.maxiter, args.bailout, trap, degree);
+            render::iterate_samples(&backend, frame, 1)
+        } else {
+            let prec = hp::prec_bits(frame.out_width, frame.frame_width);
+            let cre = BigFloat::from_f64(frame.center.re, prec);
+            let cim = BigFloat::from_f64(frame.center.im, prec);
+            probe::render_mandel_panel(
+                &cre, &cim, frame.center, frame.frame_width, frame.out_width, frame.out_height, 1,
+                args.maxiter, args.bailout, degree, prec, trap, BackendChoice::F64,
+            )
+            .buf
         }
     };
 
@@ -481,8 +520,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     //     field, then scan it once for windows passing the score seam at the 8k
     //     root zoom. Julia mode roots at the deterministic base-scale z-plane view,
     //     so it skips the c-plane field entirely. ---
-    let windows: Vec<PassWindow> = if julia_c.is_some() {
-        eprintln!("  Julia mode: skipping c-plane 8k field (root is the base-scale z-plane view)");
+    let windows: Vec<PassWindow> = if dynamical {
+        eprintln!("  dynamical mode: skipping c-plane 8k field (root is the base-scale z-plane view)");
         Vec::new()
     } else if injected_seeds.is_some() {
         eprintln!(
@@ -590,10 +629,11 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     //     loops), so depth>=2 shares one rng stream across arms. ---
                     cur_root_src = "injected";
                     root_step_injected(seeds[w], node_w, node_h, args.maxiter, &render_node)
-                } else if julia_c.is_some() {
-                    // --- JULIA ROOT STEP: deterministic base-scale z-plane view at
-                    //     the z→−z symmetry center 0. Descent then leaves it. ---
-                    cur_root_src = "julia";
+                } else if dynamical {
+                    // --- DYNAMICAL ROOT STEP (Julia / Julia-multibrot / Phoenix):
+                    //     deterministic base-scale z-plane view at center 0. Descent
+                    //     then leaves it. ---
+                    cur_root_src = if phoenix_cp.is_some() { "phoenix" } else { "julia" };
                     root_step_julia(args.julia_root_fw, node_w, node_h, args.maxiter, &render_node)
                 } else if rng.unit() < root_mix {
                     // --- ROOT STEP (rev4 Part A): 50/50 sampler mixture, permissive
@@ -812,22 +852,23 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 out_width: prev_w,
                 out_height: prev_h,
             };
-            let (samples, spacing) = match julia_c {
-                Some(jc) => {
-                    let backend = JuliaBackend::new(jc, args.maxiter, args.bailout, trap);
-                    let buf = render::iterate_samples(&backend, &frame, 1);
-                    (buf.samples, frame.pixel_size())
-                }
-                None => {
-                    let prec = hp::prec_bits(prev_w, c.fw);
-                    let cre = BigFloat::from_f64(c.cx, prec);
-                    let cim = BigFloat::from_f64(c.cy, prec);
-                    let panel = probe::render_mandel_panel(
-                        &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
-                        degree, prec, trap, BackendChoice::F64,
-                    );
-                    (panel.buf.samples, panel.spacing)
-                }
+            let (samples, spacing) = if let Some((pc, pp)) = phoenix_cp {
+                let backend = PhoenixBackend::new(pc, pp, args.maxiter, args.bailout, trap);
+                let buf = render::iterate_samples(&backend, &frame, 1);
+                (buf.samples, frame.pixel_size())
+            } else if let Some(jc) = julia_c {
+                let backend = JuliaBackend::new_degree(jc, args.maxiter, args.bailout, trap, degree);
+                let buf = render::iterate_samples(&backend, &frame, 1);
+                (buf.samples, frame.pixel_size())
+            } else {
+                let prec = hp::prec_bits(prev_w, c.fw);
+                let cre = BigFloat::from_f64(c.cx, prec);
+                let cim = BigFloat::from_f64(c.cy, prec);
+                let panel = probe::render_mandel_panel(
+                    &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
+                    degree, prec, trap, BackendChoice::F64,
+                );
+                (panel.buf.samples, panel.spacing)
             };
             let img = render::shade_and_downsample(&samples, prev_w, prev_h, 1, &palette, &params, spacing);
             img.save(tiles_dir.join(format!("tile_{:04}.png", c.idx)))
@@ -2365,28 +2406,48 @@ pub struct GuidedDescendArgs {
     /// per-degree root box swapped in. Each degree carries **per-family band / box
     /// defaults** tuned by eye (`z^d` escapes faster, so a shared Mandelbrot band
     /// mis-fires): see `WalkFamily::root8k_band_defaults` / `flat_spread_min_default`
-    /// / `flat_box_default`. Incompatible with `--julia`.
+    /// / `flat_box_default`. Under `--julia`, `--family multibrot{d}` instead descends
+    /// the **dynamical** Julia-multibrot z^d plane (z-plane root, no c-plane apparatus).
     #[arg(long, value_enum, default_value_t = WalkFamily::Mandelbrot)]
     pub family: WalkFamily,
 
     // --- Julia descent mode (z-plane descent at fixed c) ----------------------
-    /// Descend in the **z-plane** at a fixed Julia parameter `c` instead of the
-    /// c-plane Mandelbrot. The descent geometry (foci / density / placement /
-    /// best-of-N screen) is fractal-agnostic and reused verbatim; only the root
-    /// step changes (deterministic base-scale Julia view, not the 8k/flat c-plane
-    /// samplers) and the DE-dependent boundary branch is gated off (Julia carries
-    /// no DE). Requires `--c`; `--c` without `--julia` is an error.
+    /// Descend in the **z-plane** at a fixed parameter `c` instead of the c-plane.
+    /// The descent geometry (foci / density / placement / best-of-N screen) is
+    /// fractal-agnostic and reused verbatim; only the root step changes (deterministic
+    /// base-scale z-plane view, not the 8k/flat c-plane samplers) and the DE-dependent
+    /// boundary branch is gated off (the dynamical kernels carry no DE). Pairs with
+    /// `--family mandelbrot` (quadratic Julia) or `--family multibrot{d}`
+    /// (**Julia-multibrot**, dynamical `z^d+c`). Requires `--c`; `--c` without
+    /// `--julia`/`--phoenix` is an error.
     #[arg(long, default_value_t = false)]
     pub julia: bool,
 
-    /// Julia parameter `c` as two arbitrary-precision decimal strings:
-    /// `--c <re> <im>` (e.g. `--c -0.8 0.156`). Required iff `--julia`. Parsed and
-    /// f64-projected exactly like `render-one`'s `--c`.
+    /// Fixed dynamical parameter `c` as two arbitrary-precision decimal strings:
+    /// `--c <re> <im>` (e.g. `--c -0.8 0.156`). Required iff `--julia` (the Julia /
+    /// Julia-multibrot parameter); under `--phoenix` it is the additive constant
+    /// (optional, defaults to the classic `0.5667 0`). Parsed and f64-projected
+    /// exactly like `render-one`'s `--c`.
     #[arg(long = "c", num_args = 2, value_names = ["RE", "IM"], allow_hyphen_values = true)]
     pub julia_c: Option<Vec<String>>,
 
-    /// Julia z-plane root frame width (the depth-1 base-scale Julia view, centered
-    /// at the z→−z symmetry point 0). Descent then leaves this symmetry center.
+    /// **Phoenix** dynamical z-plane descent (Ushiki `z_{n+1} = z_n² + c + p·z_{n-1}`,
+    /// `z₀ = pixel`, `z_{-1} = 0`). Descends the z-plane like `--julia` (same
+    /// fractal-agnostic policy + base-scale root at center 0), with the two-state
+    /// recurrence swapped in. `--c` (additive const) and `--p` (z_{n-1} coeff) both
+    /// optional, defaulting to the classic real-valued spot. Mutually exclusive with
+    /// `--julia`; incompatible with `--family multibrot*` (Phoenix is degree 2).
+    #[arg(long, default_value_t = false)]
+    pub phoenix: bool,
+
+    /// Phoenix second constant `p` (the `z_{n-1}` coefficient / Ushiki's `q`) as two
+    /// decimal strings `--p <re> <im>`. Valid only with `--phoenix`; defaults to the
+    /// classic `-0.5 0`.
+    #[arg(long = "p", num_args = 2, value_names = ["RE", "IM"], allow_hyphen_values = true)]
+    pub phoenix_p: Option<Vec<String>>,
+
+    /// Julia/Phoenix z-plane root frame width (the depth-1 base-scale view, centered
+    /// at 0). Descent then leaves this center.
     #[arg(long, default_value_t = 3.0)]
     pub julia_root_fw: f64,
 
