@@ -96,6 +96,7 @@ pub fn render_mandel_panel(
     ss: u32,
     maxiter: u32,
     bailout: f64,
+    degree: u32,
     prec: usize,
     trap: Trap,
     backend: BackendChoice,
@@ -113,10 +114,13 @@ pub fn render_mandel_panel(
         BackendChoice::F64 => false,
     };
     let (backend, backend_name): (Box<dyn FractalBackend>, &'static str) = if use_perturb {
+        // Perturbation is degree-2 only (the deep-zoom tier, out of multibrot scope);
+        // callers with degree != 2 always force `BackendChoice::F64` at these shallow
+        // root/descend scales, so this arm is never reached with a higher degree.
         let pb = PerturbationBackend::new(center_re, center_im, maxiter, bailout, prec, trap);
         (Box::new(pb), "PERT")
     } else {
-        (Box::new(F64Backend::new(maxiter, bailout, trap)), "F64")
+        (Box::new(F64Backend::new_degree(maxiter, bailout, trap, degree)), "F64")
     };
     let buf = render::iterate_samples(&*backend, &frame, ss);
     MandelPanel {

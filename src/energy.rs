@@ -802,7 +802,7 @@ fn render_candidate(
     let cre = BigFloat::from_f64(center.re, prec);
     let cim = BigFloat::from_f64(center.im, prec);
     let panel = probe::render_mandel_panel(
-        &cre, &cim, center, width, w, h, ss, maxiter, 1e6, prec, trap, BackendChoice::F64,
+        &cre, &cim, center, width, w, h, ss, maxiter, 1e6, 2, prec, trap, BackendChoice::F64,
     );
     render::shade_and_downsample(
         &panel.buf.samples,

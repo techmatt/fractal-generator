@@ -357,7 +357,7 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         let cim = BigFloat::from_f64(center.im, prec);
         let panel = probe::render_mandel_panel(
             &cre, &cim, center, frame_width, screen_w, screen_h, SCREEN_SS, args.maxiter,
-            args.bailout, prec, trap, BackendChoice::F64,
+            args.bailout, 2, prec, trap, BackendChoice::F64,
         );
         let (interior_frac, esc) = screen_stats(&panel.buf.samples, args.maxiter);
 
@@ -374,7 +374,7 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         let kim = BigFloat::from_f64(center.im, kprec);
         let kpanel = probe::render_mandel_panel(
             &kre, &kim, center, frame_width, KEEP_W, KEEP_H, KEEP_SS, args.maxiter, args.bailout,
-            kprec, trap, BackendChoice::F64,
+            2, kprec, trap, BackendChoice::F64,
         );
         let krgb = render::shade_and_downsample(
             &kpanel.buf.samples, KEEP_W, KEEP_H, KEEP_SS, &palette, &params, kpanel.spacing,

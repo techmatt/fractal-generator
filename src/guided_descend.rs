@@ -291,6 +291,18 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     if julia_c.is_some() && args.julia_root_fw <= 0.0 {
         return Err(format!("--julia-root-fw must be > 0 (got {})", args.julia_root_fw));
     }
+
+    // --- Parameter-plane family (Mandelbrot / multibrot). Degree drives the c-plane
+    //     recurrence (`z^d+c`) and the root-field box; multibrot is parameter-plane
+    //     only, so it is incompatible with the fixed-c dynamical Julia mode. ---
+    let degree = args.family.degree();
+    if degree != 2 && julia_c.is_some() {
+        return Err(
+            "--family multibrot* is a Mandelbrot parameter-plane axis; incompatible with --julia \
+             (the fixed-c dynamical mode). Drop one."
+                .into(),
+        );
+    }
     // The boundary band (rev4 B2 random branch) reads DE; Julia carries none, so
     // gate it off in Julia mode (the branch then draws a DE-free interior point).
     let random_boundary = args.random_boundary && julia_c.is_none();
@@ -413,6 +425,12 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         if black_cap_on { format!("black_frac<{black_cap}") } else { "OFF".into() }, PROBE_W,
         if occ_on { format!("occ>={occ_floor}") } else { "OFF".into() }, node_w,
     );
+    if degree != 2 {
+        eprintln!(
+            "  FAMILY multibrot{degree}: c-plane recurrence z^{degree}+c, origin-square root box; \
+             ALL pre-gate/seed-bias thresholds left at Mandelbrot values (expected to mis-fire — tune later)"
+        );
+    }
 
     let render_node = |frame: &Frame| -> render::SampleBuffer {
         match julia_c {
@@ -428,7 +446,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 let cim = BigFloat::from_f64(frame.center.im, prec);
                 probe::render_mandel_panel(
                     &cre, &cim, frame.center, frame.frame_width, frame.out_width, frame.out_height, 1,
-                    args.maxiter, args.bailout, prec, trap, BackendChoice::F64,
+                    args.maxiter, args.bailout, degree, prec, trap, BackendChoice::F64,
                 )
                 .buf
             }
@@ -451,7 +469,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         );
         Vec::new()
     } else {
-        let rf: RootField = RootField::load_or_build(args.maxiter, args.bailout, trap)?;
+        let rf: RootField = RootField::load_or_build(args.maxiter, args.bailout, trap, degree)?;
         // 8k window footprint at root-zoom-8k (16:9 to match the node aspect).
         let win_w = ((args.root_zoom_8k / (rf.re_hi - rf.re_lo)) * rf.w as f64).round().max(1.0) as usize;
         let win_h = ((args.root_zoom_8k * node_h as f64 / node_w as f64 / (rf.im_hi - rf.im_lo)) * rf.h as f64)
@@ -762,7 +780,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     let cim = BigFloat::from_f64(c.cy, prec);
                     let panel = probe::render_mandel_panel(
                         &cre, &cim, frame.center, c.fw, prev_w, prev_h, 1, args.maxiter, args.bailout,
-                        prec, trap, BackendChoice::F64,
+                        degree, prec, trap, BackendChoice::F64,
                     );
                     (panel.buf.samples, panel.spacing)
                 }
@@ -1954,6 +1972,35 @@ root-window std (re,im)=({rsx:.3},{rsy:.3}) · unique frames {nuniq}/{ncand} max
 
 
 // ===== Args structs relocated from cli.rs (P0 cli decomposition) =====
+
+/// Parameter-plane escape family the walker descends on: Mandelbrot (`z²+c`) or a
+/// multibrot (`z^d+c`, `d ∈ {3,4,5}`). Mandelbrot is the default and is byte-
+/// identical to prior runs. Multibrot is parameter-plane only (the fixed-`c`
+/// dynamical Julia mode is a separate `--julia` axis and is incompatible with it).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum WalkFamily {
+    /// `z ← z² + c` (degree 2).
+    Mandelbrot,
+    /// `z ← z³ + c`.
+    Multibrot3,
+    /// `z ← z⁴ + c`.
+    Multibrot4,
+    /// `z ← z⁵ + c`.
+    Multibrot5,
+}
+
+impl WalkFamily {
+    /// Escape recurrence degree `d`.
+    pub fn degree(self) -> u32 {
+        match self {
+            WalkFamily::Mandelbrot => 2,
+            WalkFamily::Multibrot3 => 3,
+            WalkFamily::Multibrot4 => 4,
+            WalkFamily::Multibrot5 => 5,
+        }
+    }
+}
+
 /// `guided-descend` subcommand: see `guided_descend::run_guided_descend`.
 /// Stochastic guided descent from the fixed base-Mandelbrot root; geometric
 /// policy only (no CNN). Reuses the `generate` cheap screen + `AcceptBand` and a
@@ -2177,6 +2224,15 @@ pub struct GuidedDescendArgs {
     /// depth>=2 descent/sampler/gate step is unchanged.
     #[arg(long, default_value_t = 0.0)]
     pub root_start_fw: f64,
+
+    /// Parameter-plane escape family: `mandelbrot` (default, `z²+c`) or
+    /// `multibrot3|multibrot4|multibrot5` (`z^d+c`). Multibrot descends on the
+    /// same geometric policy / screen / best-of-N machinery with the recurrence and
+    /// per-degree root box swapped in; **every pre-gate / seed-bias threshold stays
+    /// at its Mandelbrot value** (`z^d` escapes faster so they mis-fire — a later
+    /// eyeball-and-tune pass owns that). Incompatible with `--julia`.
+    #[arg(long, value_enum, default_value_t = WalkFamily::Mandelbrot)]
+    pub family: WalkFamily,
 
     // --- Julia descent mode (z-plane descent at fixed c) ----------------------
     /// Descend in the **z-plane** at a fixed Julia parameter `c` instead of the

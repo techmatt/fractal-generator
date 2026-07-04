@@ -176,32 +176,58 @@ impl RootField {
     }
 
     /// Load the cached field if a matching header exists, else render + cache it.
-    /// Matching = same dims, bbox, and maxiter (bailout is recorded but not keyed —
-    /// the smooth field is insensitive to it once large).
-    pub fn load_or_build(maxiter: u32, bailout: f64, trap: Trap) -> Result<RootField, String> {
-        let (blob, header) = cache_paths(FIELD_W, FIELD_H, maxiter);
-        if let Some(f) = try_load(&blob, &header, maxiter)? {
+    /// Matching = same dims, maxiter, **and degree** (bailout is recorded but not
+    /// keyed — the smooth field is insensitive to it once large). `degree` selects
+    /// the `z^d + c` recurrence and the origin-symmetric bounding box for `d ≥ 3`
+    /// (see [`degree_bbox`]); `d = 2` keeps the exact historical Mandelbrot box.
+    pub fn load_or_build(maxiter: u32, bailout: f64, trap: Trap, degree: u32) -> Result<RootField, String> {
+        let (blob, header) = cache_paths(FIELD_W, FIELD_H, maxiter, degree);
+        if let Some(f) = try_load(&blob, &header, maxiter, degree)? {
             eprintln!(
-                "  root_field: loaded cache {} ({}x{}, maxiter {})",
-                blob.display(), f.w, f.h, f.maxiter
+                "  root_field: loaded cache {} ({}x{}, maxiter {}, degree {})",
+                blob.display(), f.w, f.h, f.maxiter, degree
             );
             return Ok(f);
         }
-        let f = build(maxiter, bailout, trap);
-        write_cache(&f, &blob, &header, bailout)?;
+        let f = build(maxiter, bailout, trap, degree);
+        write_cache(&f, &blob, &header, bailout, degree)?;
         Ok(f)
     }
 }
 
-/// `(blob, header)` cache paths keyed by dims + maxiter.
-fn cache_paths(w: u32, h: u32, maxiter: u32) -> (PathBuf, PathBuf) {
-    let stem = format!("field_{w}x{h}_m{maxiter}");
+/// Per-degree root bounding box. `d = 2` keeps the exact historical Mandelbrot box
+/// (asymmetric, main-cardioid framed) so the degree-2 field is byte-identical.
+/// Multibrot sets (`d ≥ 3`) are origin-symmetric, so use an origin-centered square
+/// of half-width `2^(1/(d−1))·MARGIN` — `2^(1/(d−1))` is the `|c|` escape bound (the
+/// radius that contains the connected set), and `MARGIN` adds an exterior frame.
+fn degree_bbox(degree: u32) -> (f64, f64, f64, f64) {
+    if degree == 2 {
+        (RE_LO, RE_HI, IM_LO, IM_HI)
+    } else {
+        const MARGIN: f64 = 1.2;
+        let r = 2f64.powf(1.0 / (degree as f64 - 1.0)) * MARGIN;
+        (-r, r, -r, r)
+    }
+}
+
+/// `(blob, header)` cache paths keyed by dims + maxiter + degree. Degree 2 keeps
+/// the historical suffix-free filename so existing caches still load; `d ≥ 3` adds
+/// a `_d{degree}` suffix (its box differs, so it must never collide with `d = 2`).
+fn cache_paths(w: u32, h: u32, maxiter: u32, degree: u32) -> (PathBuf, PathBuf) {
+    let stem = if degree == 2 {
+        format!("field_{w}x{h}_m{maxiter}")
+    } else {
+        format!("field_{w}x{h}_m{maxiter}_d{degree}")
+    };
     let dir = Path::new(CACHE_DIR);
     (dir.join(format!("{stem}.f32")), dir.join(format!("{stem}.json")))
 }
 
 /// Attempt to load a cached field; `Ok(None)` if absent or header mismatch.
-fn try_load(blob: &Path, header: &Path, maxiter: u32) -> Result<Option<RootField>, String> {
+/// Keyed on dims, maxiter, and degree. The bbox is read back from the header (so a
+/// multibrot field restores its origin-square box); legacy degree-2 headers lack a
+/// `"degree"` key (defaults to 2) but always carry the bbox floats.
+fn try_load(blob: &Path, header: &Path, maxiter: u32, degree: u32) -> Result<Option<RootField>, String> {
     if !blob.exists() || !header.exists() {
         return Ok(None);
     }
@@ -209,7 +235,8 @@ fn try_load(blob: &Path, header: &Path, maxiter: u32) -> Result<Option<RootField
     let w = json_u(&txt, "w").unwrap_or(0) as usize;
     let h = json_u(&txt, "h").unwrap_or(0) as usize;
     let m = json_u(&txt, "maxiter").unwrap_or(0) as u32;
-    if w != FIELD_W as usize || h != FIELD_H as usize || m != maxiter {
+    let deg = json_u(&txt, "degree").unwrap_or(2) as u32;
+    if w != FIELD_W as usize || h != FIELD_H as usize || m != maxiter || deg != degree {
         return Ok(None);
     }
     let bytes = std::fs::read(blob).map_err(|e| format!("read {}: {e}", blob.display()))?;
@@ -220,13 +247,21 @@ fn try_load(blob: &Path, header: &Path, maxiter: u32) -> Result<Option<RootField
     for (i, c) in bytes.chunks_exact(4).enumerate() {
         data[i] = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
     }
+    // Restore the box from the header (fallback to the degree's canonical box if a
+    // field float is somehow missing — keeps old headers robust).
+    let (be_lo, be_hi, bi_lo, bi_hi) = degree_bbox(degree);
     Ok(Some(RootField {
-        w, h, re_lo: RE_LO, re_hi: RE_HI, im_lo: IM_LO, im_hi: IM_HI, maxiter, data,
+        w, h,
+        re_lo: json_f(&txt, "re_lo").unwrap_or(be_lo),
+        re_hi: json_f(&txt, "re_hi").unwrap_or(be_hi),
+        im_lo: json_f(&txt, "im_lo").unwrap_or(bi_lo),
+        im_hi: json_f(&txt, "im_hi").unwrap_or(bi_hi),
+        maxiter, data,
     }))
 }
 
 /// Persist the field (raw little-endian f32 blob + JSON header).
-fn write_cache(f: &RootField, blob: &Path, header: &Path, bailout: f64) -> Result<(), String> {
+fn write_cache(f: &RootField, blob: &Path, header: &Path, bailout: f64, degree: u32) -> Result<(), String> {
     crate::ensure_parent_dir(blob)?;
     let mut bytes = Vec::with_capacity(f.data.len() * 4);
     for &v in &f.data {
@@ -234,10 +269,10 @@ fn write_cache(f: &RootField, blob: &Path, header: &Path, bailout: f64) -> Resul
     }
     std::fs::write(blob, &bytes).map_err(|e| format!("write {}: {e}", blob.display()))?;
     let hdr = format!(
-        "{{\n  \"w\": {}, \"h\": {}, \"maxiter\": {}, \"bailout\": {},\n  \
+        "{{\n  \"w\": {}, \"h\": {}, \"maxiter\": {}, \"degree\": {}, \"bailout\": {},\n  \
          \"re_lo\": {}, \"re_hi\": {}, \"im_lo\": {}, \"im_hi\": {},\n  \
          \"interior_sentinel\": \"NaN\", \"format\": \"row-major little-endian f32 smooth_iter\"\n}}\n",
-        f.w, f.h, f.maxiter, bailout, f.re_lo, f.re_hi, f.im_lo, f.im_hi,
+        f.w, f.h, f.maxiter, degree, bailout, f.re_lo, f.re_hi, f.im_lo, f.im_hi,
     );
     std::fs::write(header, hdr).map_err(|e| format!("write {}: {e}", header.display()))?;
     eprintln!("  root_field: cached {} ({:.0} MB)", blob.display(), bytes.len() as f64 / 1e6);
@@ -245,27 +280,32 @@ fn write_cache(f: &RootField, blob: &Path, header: &Path, bailout: f64) -> Resul
 }
 
 /// Render the full field in horizontal strips, projecting each strip's escape
-/// result to f32 (NaN = interior) and dropping its samples.
-fn build(maxiter: u32, bailout: f64, trap: Trap) -> RootField {
+/// result to f32 (NaN = interior) and dropping its samples. `degree` selects the
+/// `z^d + c` recurrence and the [`degree_bbox`] (origin-square for `d ≥ 3`).
+fn build(maxiter: u32, bailout: f64, trap: Trap, degree: u32) -> RootField {
     let w = FIELD_W as usize;
     let h = FIELD_H as usize;
+    let (re_lo, re_hi, im_lo, im_hi) = degree_bbox(degree);
     let mut data = vec![INTERIOR; w * h];
-    let full_h_plane = IM_HI - IM_LO;
+    let full_h_plane = im_hi - im_lo;
     let t0 = std::time::Instant::now();
-    eprintln!("  root_field: building {FIELD_W}x{FIELD_H} smooth field (maxiter {maxiter}) in strips ...");
+    eprintln!(
+        "  root_field: building {FIELD_W}x{FIELD_H} smooth field (maxiter {maxiter}, degree {degree}, \
+         box re[{re_lo},{re_hi}] im[{im_lo},{im_hi}]) in strips ..."
+    );
 
     let mut y0 = 0u32;
     while y0 < FIELD_H {
         let sh = STRIP_H.min(FIELD_H - y0);
         // Strip center: full width, sub-height; im at the strip's vertical midpoint.
-        let center_im = IM_HI - ((y0 as f64 + sh as f64 / 2.0) / FIELD_H as f64) * full_h_plane;
-        let center = Complex::new((RE_LO + RE_HI) / 2.0, center_im);
-        let frame_width = RE_HI - RE_LO;
+        let center_im = im_hi - ((y0 as f64 + sh as f64 / 2.0) / FIELD_H as f64) * full_h_plane;
+        let center = Complex::new((re_lo + re_hi) / 2.0, center_im);
+        let frame_width = re_hi - re_lo;
         let prec = hp::prec_bits(FIELD_W, frame_width);
         let cre = BigFloat::from_f64(center.re, prec);
         let cim = BigFloat::from_f64(center.im, prec);
         let panel = probe::render_mandel_panel(
-            &cre, &cim, center, frame_width, FIELD_W, sh, 1, maxiter, bailout, prec, trap,
+            &cre, &cim, center, frame_width, FIELD_W, sh, 1, maxiter, bailout, degree, prec, trap,
             BackendChoice::F64,
         );
         let base = y0 as usize * w;
@@ -279,7 +319,7 @@ fn build(maxiter: u32, bailout: f64, trap: Trap) -> RootField {
         y0 += sh;
     }
     eprintln!("  root_field: built in {:.1}s", t0.elapsed().as_secs_f64());
-    RootField { w, h, re_lo: RE_LO, re_hi: RE_HI, im_lo: IM_LO, im_hi: IM_HI, maxiter, data }
+    RootField { w, h, re_lo, re_hi, im_lo, im_hi, maxiter, data }
 }
 
 /// Minimal unsigned-int field reader for the tiny hand-rolled JSON header
@@ -292,4 +332,20 @@ fn json_u(txt: &str, key: &str) -> Option<u64> {
     let rest = &rest[colon..];
     let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
+}
+
+/// Minimal signed-float field reader for the header (`"key": -1.75`). Consumes the
+/// float token after the colon (sign / digits / `.` / exponent). Used to restore
+/// the per-degree bounding box on load.
+fn json_f(txt: &str, key: &str) -> Option<f64> {
+    let pat = format!("\"{key}\"");
+    let i = txt.find(&pat)? + pat.len();
+    let rest = &txt[i..];
+    let colon = rest.find(':')? + 1;
+    let tok: String = rest[colon..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))
+        .collect();
+    tok.parse().ok()
 }

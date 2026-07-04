@@ -183,18 +183,40 @@ pub const PHASE_DEFER: u8 = 1;
 pub const PHASE_EVERY: u8 = 2;
 
 /// Plain `f64` escape-time backend. Uses `c`, ignores `dc`.
+///
+/// `degree` is the escape recurrence exponent `d` in `z ← z^d + c` (parameter
+/// plane). `degree == 2` is the classic Mandelbrot and takes the byte-identical
+/// [`sample_flags`](Self::sample_flags) kernel; `degree ≥ 3` (the multibrot walker
+/// / root-field families) takes [`sample_multibrot`](Self::sample_multibrot). Only
+/// the trait [`sample`](FractalBackend::sample) dispatches on `degree`; the
+/// channel-intent render path ([`crate::render::iterate_samples_f64`]) stays
+/// degree-2 (`render`/`sheet` never drive multibrot through this backend —
+/// `render-one` renders multibrot through `render_modes`).
 pub struct F64Backend {
     maxiter: u32,
     bailout2: f64,
     trap: Trap,
+    degree: u32,
 }
 
 impl F64Backend {
+    /// Degree-2 (Mandelbrot) backend. Bit-for-bit the prior behaviour — `new` is
+    /// exactly `new_degree(.., 2)`, and degree 2 routes through `sample_flags`.
     pub fn new(maxiter: u32, bailout: f64, trap: Trap) -> Self {
+        F64Backend::new_degree(maxiter, bailout, trap, 2)
+    }
+
+    /// Degree-parametric constructor for the parameter-plane multibrot walker /
+    /// root field (`z ← z^d + c`, `d ≥ 2`). `degree` is clamped to `≥ 2`; the
+    /// trait [`sample`](FractalBackend::sample) routes `d == 2` through the
+    /// byte-identical [`sample_flags`](Self::sample_flags) path and `d ≥ 3` through
+    /// [`sample_multibrot`](Self::sample_multibrot).
+    pub fn new_degree(maxiter: u32, bailout: f64, trap: Trap, degree: u32) -> Self {
         F64Backend {
             maxiter,
             bailout2: bailout * bailout,
             trap,
+            degree: degree.max(2),
         }
     }
 }
@@ -326,13 +348,103 @@ impl F64Backend {
             atom_min: atom_min2.sqrt(),
         }
     }
+
+    /// General multibrot kernel: `z ← z^d + c` for `d = self.degree ≥ 3`
+    /// (parameter plane, `z_0 = 0`). Every channel is live and its semantics match
+    /// the degree-2 [`sample_flags`](Self::sample_flags)`::<true, true, true,
+    /// PHASE_GATED>` path — trap distance + gated phase, atom-domain min, exterior
+    /// DE via the degree-`d` derivative `dz ← d·z^{d-1}·dz + 1`, and the smooth
+    /// value with the `ln d` outer log base. `z^{d-1}` (and `z^d = z·z^{d-1}`) are
+    /// formed by repeated real-`f64` complex multiplication ([`cpow_f64`]).
+    ///
+    /// This is a **separate** kernel from `sample_flags`, not a generalization of
+    /// it: keeping the degree-2 kernel textually untouched is what guarantees the
+    /// Mandelbrot walker / root-field bytes are unchanged. `d ≥ 3` is a new
+    /// capability with no byte-identity constraint, so this path is written for
+    /// clarity (all channels, no const-generic ablation).
+    fn sample_multibrot(&self, c: Complex<f64>) -> PixelSample {
+        let d = self.degree;
+        let d_f = d as f64;
+        let mut zr = 0.0f64; // z_0
+        let mut zi = 0.0f64;
+        let mut dzr = 0.0f64; // dz_0
+        let mut dzi = 0.0f64;
+        let mut n = 0u32;
+        let mut trap_min = f64::INFINITY;
+        let mut trap_phase = 0.0f64;
+        let mut atom_min2 = f64::INFINITY;
+        let mut atom_period = 0u32;
+
+        let escaped;
+        let smooth_iter;
+        let de;
+        loop {
+            // z^{d-1} of the current z_n (drives both the derivative and z^d).
+            let (pr, pi) = cpow_f64(zr, zi, d - 1);
+            // dz_{n+1} = d·z_n^{d-1}·dz_n + 1 (parameter-plane +1). z_n still holds.
+            let cr = pr * dzr - pi * dzi;
+            let ci = pr * dzi + pi * dzr;
+            dzr = d_f * cr + 1.0;
+            dzi = d_f * ci;
+
+            // z_{n+1} = z_n^d + c = z_n·z_n^{d-1} + c.
+            let nzr = zr * pr - zi * pi + c.re;
+            let nzi = zr * pi + zi * pr + c.im;
+            zr = nzr;
+            zi = nzi;
+            n += 1;
+
+            let zmag2 = zr * zr + zi * zi;
+            // Gated trap phase: atan2 only on a trap-min improvement (as sample_flags).
+            let dist = self.trap.eval_dist(zr, zi);
+            if dist < trap_min {
+                trap_min = dist;
+                trap_phase = self.trap.phase_at(zr, zi);
+            }
+            if zmag2 < atom_min2 {
+                atom_min2 = zmag2;
+                atom_period = n;
+            }
+
+            if n >= self.maxiter {
+                escaped = false;
+                smooth_iter = 0.0;
+                de = 0.0;
+                break;
+            }
+            if zmag2 > self.bailout2 {
+                escaped = true;
+                smooth_iter = smooth_deg(n, zmag2, d);
+                de = exterior_de(dzr, dzi, zmag2);
+                break;
+            }
+        }
+
+        PixelSample {
+            escaped,
+            smooth_iter,
+            de,
+            trap_min,
+            trap_phase,
+            glitched: false,
+            atom_period,
+            atom_min: atom_min2.sqrt(),
+        }
+    }
 }
 
 impl FractalBackend for F64Backend {
     #[inline]
     fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
-        // The real render path: every channel live, trap phase gated.
-        self.sample_flags::<true, true, true, PHASE_GATED>(c)
+        // Degree 2 → the byte-identical Mandelbrot kernel (every channel live, trap
+        // phase gated); degree ≥ 3 → the general multibrot kernel. The branch is per
+        // pixel on a per-backend constant (perfectly predicted), so the maxiter-long
+        // inner loop pays nothing and the degree-2 bytes are literally unchanged.
+        if self.degree == 2 {
+            self.sample_flags::<true, true, true, PHASE_GATED>(c)
+        } else {
+            self.sample_multibrot(c)
+        }
     }
 }
 
@@ -635,6 +747,47 @@ fn smooth(n: u32, norm_sqr: f64) -> f64 {
     }
 }
 
+/// Degree-`d` smooth value: the `smooth` formula with the correct outer log base.
+/// Near escape `|z_{n+1}| ≈ |z_n|^d`, so the double-log base is the degree, not
+/// always 2. Degree 2 pins the exact [`LN_2`](std::f64::consts::LN_2) constant, so
+/// `smooth_deg(n, m², 2)` is bit-for-bit `smooth(n, m²)` — the same convention as
+/// `render_modes::smooth_value`'s un-normalized twin (no `ln B` term here: the
+/// backend's smooth is un-normalized, and the multibrot walker consumes it in the
+/// same units the degree-2 path emits). Used by [`F64Backend::sample_multibrot`].
+#[inline]
+fn smooth_deg(n: u32, norm_sqr: f64, degree: u32) -> f64 {
+    let log_zn = 0.5 * norm_sqr.ln(); // ln|z|
+    let ln_d = if degree == 2 {
+        std::f64::consts::LN_2
+    } else {
+        (degree as f64).ln()
+    };
+    if log_zn > 0.0 && log_zn.is_finite() {
+        (n + 1) as f64 - log_zn.ln() / ln_d
+    } else {
+        (n + 1) as f64
+    }
+}
+
+/// `z^k` (`k ≥ 1`) by repeated real-`f64` complex multiplication — the multibrot
+/// kernel's power primitive (no `powf`/polar). `k = 1` returns `z`. Byte-note: for
+/// `z^{d-1}` at `d = 2` this returns `z` unchanged, so the degree-2 recurrence it
+/// would reconstruct (`z·z`, `2·z·dz`) matches the inline degree-2 kernel exactly —
+/// but the trait `sample` never routes degree 2 here, so that identity is only a
+/// design invariant, not a live path.
+#[inline]
+fn cpow_f64(zr: f64, zi: f64, k: u32) -> (f64, f64) {
+    let mut pr = zr; // z^1
+    let mut pi = zi;
+    for _ in 1..k {
+        let nr = pr * zr - pi * zi;
+        let ni = pr * zi + pi * zr;
+        pr = nr;
+        pi = ni;
+    }
+    (pr, pi)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,6 +798,76 @@ mod tests {
             Trap { shape: TrapShape::Cross, center: Complex::new(0.13, -0.21), radius: 0.5 },
             Trap { shape: TrapShape::Circle, center: Complex::new(-0.31, 0.42), radius: 0.7 },
         ]
+    }
+
+    fn sample_eq(a: &PixelSample, b: &PixelSample) -> bool {
+        a.escaped == b.escaped
+            && a.smooth_iter.to_bits() == b.smooth_iter.to_bits()
+            && a.de.to_bits() == b.de.to_bits()
+            && a.trap_min.to_bits() == b.trap_min.to_bits()
+            && a.trap_phase.to_bits() == b.trap_phase.to_bits()
+            && a.atom_period == b.atom_period
+            && a.atom_min.to_bits() == b.atom_min.to_bits()
+    }
+
+    /// The degree-parametric constructor must not perturb the Mandelbrot path:
+    /// `new_degree(.., 2)` (which dispatches through the `degree == 2` branch of the
+    /// trait `sample`) must produce **bit-for-bit** identical `PixelSample`s to the
+    /// prior `new(..)` across every trap shape, interior + exterior, and a range of
+    /// `maxiter`. This is the byte-identity gate for the whole degree change.
+    #[test]
+    fn degree2_dispatch_is_byte_identical() {
+        for trap in traps() {
+            for &maxiter in &[1u32, 2, 7, 50, 300, 2000] {
+                let base = F64Backend::new(maxiter, 1e6, trap);
+                let deg2 = F64Backend::new_degree(maxiter, 1e6, trap, 2);
+                let n = 60;
+                for iy in 0..n {
+                    let ci = -1.3 + 2.6 * (iy as f64 + 0.5) / n as f64;
+                    for ix in 0..n {
+                        let cr = -2.2 + 3.0 * (ix as f64 + 0.5) / n as f64;
+                        let c = Complex::new(cr, ci);
+                        let z = Complex::new(0.0, 0.0);
+                        assert!(
+                            sample_eq(&base.sample(c, z), &deg2.sample(c, z)),
+                            "degree-2 dispatch mismatch shape={:?} maxiter={maxiter} c=({cr},{ci})",
+                            trap.shape,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The multibrot degrees must actually iterate `z^d + c` and produce a
+    /// non-trivial set (some escaping, some bounded), with finite smooth values on
+    /// escape and the origin bounded for every degree. Not a byte gate — a
+    /// "renders correctly" smoke test that the degree is live.
+    #[test]
+    fn multibrot_degrees_are_live() {
+        let trap = traps()[0];
+        for d in [3u32, 4, 5] {
+            let bk = F64Backend::new_degree(400, 1e6, trap, d);
+            // Origin is in every multibrot set (0 → 0^d + 0 = 0 forever).
+            let s0 = bk.sample(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0));
+            assert!(!s0.escaped, "degree {d}: origin should be bounded");
+            let (mut esc, mut bounded) = (0usize, 0usize);
+            let n = 48;
+            for iy in 0..n {
+                let ci = -1.9 + 3.8 * (iy as f64 + 0.5) / n as f64;
+                for ix in 0..n {
+                    let cr = -1.9 + 3.8 * (ix as f64 + 0.5) / n as f64;
+                    let s = bk.sample(Complex::new(cr, ci), Complex::new(0.0, 0.0));
+                    if s.escaped {
+                        esc += 1;
+                        assert!(s.smooth_iter.is_finite(), "degree {d}: non-finite smooth");
+                    } else {
+                        bounded += 1;
+                    }
+                }
+            }
+            assert!(esc > 0 && bounded > 0, "degree {d}: esc={esc} bounded={bounded}");
+        }
     }
 
     /// All three trap-phase strategies — GATED (production), DEFER, and EVERY
