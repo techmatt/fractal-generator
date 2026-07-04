@@ -1,0 +1,54 @@
+{
+  "ts": "20260703_204148",
+  "smoke": false,
+  "wallclock_s": 2224.8,
+  "batches": 1,
+  "batch_timings_s": [
+    2224.8
+  ],
+  "config": {
+    "seed_launch_cap": 20,
+    "outcome_distinct_cap": 10,
+    "dedup_k": 1.5,
+    "node_width": 384,
+    "sigma_band": "8,10,12,14,16",
+    "depth": [
+      4,
+      14
+    ],
+    "occ_floor": 0.321,
+    "black_cap": 0.3,
+    "batch_seeds": 24,
+    "budget_min": 15.0,
+    "scorer": "data/classifier/v5/model_best.pt"
+  },
+  "totals": {
+    "proposed": 24,
+    "seed_capped": 0,
+    "probe_rejected": 3,
+    "walked": 21,
+    "harvested_distinct": 17,
+    "near_dup": 4,
+    "guarded": 0,
+    "backfills": 0,
+    "realized": {
+      "native": 24,
+      "exploit": 0,
+      "explore": 0
+    }
+  },
+  "guard_telemetry": {
+    "n_walks": 21,
+    "clean_harvest": 15,
+    "salvaged_harvest": 6,
+    "dropped": 0,
+    "frames_gated_total": 6
+  },
+  "cells_saturated": 2,
+  "cells_launch_capped": 2,
+  "cumulative": {
+    "harvested_outcomes": 78,
+    "cells_tracked": 59,
+    "scored_rows": 202
+  }
+}

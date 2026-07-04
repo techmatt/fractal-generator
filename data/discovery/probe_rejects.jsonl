@@ -113,3 +113,6 @@
 {"seed_cx": -0.6763828277235135, "seed_cy": -0.5837021993430412, "seed_cell": 34, "mix_source": "explore", "reached": 1, "cause": "degenerate", "child_occ": null}
 {"seed_cx": 0.12641484502266054, "seed_cy": -0.7273076554077621, "seed_cell": 39, "mix_source": "explore", "reached": 1, "cause": "degenerate", "child_occ": null}
 {"seed_cx": 0.2890155314153311, "seed_cy": 0.05133970332087512, "seed_cell": 96, "mix_source": "explore", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": -1.547454833984375, "seed_cy": -0.026702880859375, "seed_cell": 71, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -0.165740966796875, "seed_cy": 0.678253173828125, "seed_cell": 135, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": -0.983489990234375, "seed_cy": -0.280487060546875, "seed_cell": 60, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}

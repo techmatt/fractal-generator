@@ -551,6 +551,10 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch):
     Returns (reward_k3, reward_k1, raw_top3, reached_depth, outcome_cx/cy/fw, argmax_idx)."""
     sr.SCRATCH = scratch
     raws = raw_screen_walk(scorer, wid, frames, workers)
+    # Run-scoped guard observability (pure read of the raw scores — changes nothing):
+    # a raw frame that scored GUARD_SENTINEL was pushed out of top-3 contention as
+    # degenerate. `frames_gated` counts them; the salvage-breakdown classifier uses it.
+    frames_gated = int(sum(1 for r in raws if r <= guard.GUARD_SENTINEL + 1e-6))
     order = sorted(range(len(frames)), key=lambda i: raws[i], reverse=True)
     topk = order[:KRAW]
     raw_top3 = [float(raws[i]) for i in topk]
@@ -577,6 +581,7 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch):
         "reward_k3": reward_k3, "reward_k1": reward_k1, "raw_top3": raw_top3,
         "reached_depth": reached, "k3_argmax_idx": k3_idx,
         "outcome_cx": float(res.cx), "outcome_cy": float(res.cy), "outcome_fw": float(res.fw),
+        "frames_gated": frames_gated, "n_frames": len(frames),
     }
 
 
@@ -695,6 +700,9 @@ def _run(args):
               "realized": {"native": 0, "exploit": 0, "explore": 0}}
     distinct_tiles, dup_tiles = [], []
     batch_timings = []
+    # Run-scoped guard telemetry (per walk). Observes scoring; never alters it or the
+    # durable ledger schema. Written to the run dir as guard_telemetry.jsonl.
+    telemetry = []
     t0 = time.time()
     seq = 0
     batch_i = 0
@@ -768,6 +776,15 @@ def _run(args):
                 "guard_pass": guard_pass, "guard_fail": None if guard_pass else "sentinel",
             }
             ledgers.append_outcome(row, feat)
+            # run-scoped guard telemetry: k3_is_sentinel <=> every top-3 framing failed
+            # the guard (== not guard_pass), so the walk produced no harvestable outcome.
+            telemetry.append({
+                "walk_uid": f"b{batch_i:03d}_w{wid:04d}", "batch": batch_i, "walk": int(wid),
+                "outcome_id": oid, "mix_source": sv["mix_source"],
+                "frames_gated": int(rew["frames_gated"]), "n_frames": int(rew["n_frames"]),
+                "k3": float(rew["reward_k3"]), "k3_is_sentinel": (not guard_pass),
+                "guard_pass": bool(guard_pass), "harvested_distinct": bool(harvest_distinct),
+            })
             if harvest_distinct:
                 ledgers.bump_distinct(sv["seed_cell"])
                 b_distinct += 1
@@ -805,6 +822,26 @@ def _run(args):
     ledgers.save_cells(); ledgers.save_feats()
     n_sat = sum(1 for s in ledgers.cells.values() if s.get("saturated"))
     n_launch_capped = sum(1 for s in ledgers.cells.values() if cell_launch_capped(s))
+
+    # Run-scoped guard telemetry (does NOT touch the durable ledger). Salvage breakdown:
+    #   dropped         = every framing degenerate (k3_is_sentinel) -> no outcome
+    #   clean-harvest   = frames_gated == 0 and harvested a guard-passing outcome
+    #   salvaged-harvest= frames_gated  > 0 but the guard steered to a passing framing
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with open(run_dir / "guard_telemetry.jsonl", "w", encoding="utf-8") as f:
+        for t in telemetry:
+            f.write(json.dumps(t) + "\n")
+    dropped = sum(1 for t in telemetry if t["k3_is_sentinel"])
+    clean = sum(1 for t in telemetry if not t["k3_is_sentinel"] and t["frames_gated"] == 0)
+    salvaged = sum(1 for t in telemetry if not t["k3_is_sentinel"] and t["frames_gated"] > 0)
+    guard_telemetry = {
+        "n_walks": len(telemetry), "clean_harvest": clean,
+        "salvaged_harvest": salvaged, "dropped": dropped,
+        "frames_gated_total": sum(t["frames_gated"] for t in telemetry),
+    }
+    print(f"  guard telemetry: clean={clean} salvaged={salvaged} dropped={dropped} "
+          f"(over {len(telemetry)} walks; {guard_telemetry['frames_gated_total']} frames gated)")
+
     summary = {
         "ts": run_ts, "smoke": smoke, "wallclock_s": round(time.time() - t0, 1),
         "batches": batch_i, "batch_timings_s": [round(x, 1) for x in batch_timings],
@@ -813,6 +850,7 @@ def _run(args):
                    "depth": [DEPTH_MIN, DEPTH_MAX], "occ_floor": OCC_FLOOR, "black_cap": BLACK_CAP,
                    "batch_seeds": batch_seeds, "budget_min": budget_min, "scorer": SCORER_PATH},
         "totals": totals,
+        "guard_telemetry": guard_telemetry,
         "cells_saturated": n_sat, "cells_launch_capped": n_launch_capped,
         "cumulative": {"harvested_outcomes": len(ledgers.harvested),
                        "cells_tracked": len(ledgers.cells),

@@ -1,0 +1,31 @@
+{
+  "run_ts": "20260703_204148",
+  "n_scored_rows": 21,
+  "salvage_breakdown": {
+    "n_walks": 21,
+    "clean_harvest": 15,
+    "salvaged_harvest": 6,
+    "dropped": 0,
+    "frames_gated_total": 6
+  },
+  "self_consistency": {
+    "n_guard_passed": 21,
+    "n_regate_failures": 0,
+    "failures": []
+  },
+  "occupancy_accrual": {
+    "n_rows": 21,
+    "n_non_null": 21,
+    "n_null": 0,
+    "floor": 0.321,
+    "min": 0.234375,
+    "p25": 0.3315972222222222,
+    "median": 0.5190972222222222,
+    "p75": 0.6163194444444444,
+    "max": 0.8107638888888888,
+    "mean": 0.513888888888889,
+    "sub_floor_count": 5,
+    "sub_floor_fraction": 0.2381
+  },
+  "guard_passed_pool": 78
+}
