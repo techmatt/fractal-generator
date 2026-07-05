@@ -220,7 +220,16 @@ def gen0_spread(sel_names, all_names, D):
 # The per-location run: gen-0 -> beam -> swept refinement.
 # ===========================================================================
 
-def run_location(label, ref, lib, sampler, model, device, seed):
+def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False):
+    """Per-location gen-0 -> beam -> swept refinement.
+
+    `retain_all` (opt-in; default False leaves the validated return untouched) adds
+    `res["all_candidates"]`: EVERY evaluated candidate — all 60 gen-0 draws plus every
+    refinement variant across all rounds — as re-renderable records
+    `{palette, palette_type, gen, lineage, score, survivor, config}` (`config` is the
+    live `cm.CandidateConfig`; `gen` 0 == gen-0, r == refinement round r; `lineage` ==
+    the palette, which is lineage-distinct). This is the full within-location pref-v2
+    gradient the wallpaper-quality bootstrap strata-samples over — no images retained."""
     stem = aq._field_key(ref)
     fld, _ = aq.ensure_field(ref)
     prep = cm.stretch_field(fld)
@@ -234,6 +243,16 @@ def run_location(label, ref, lib, sampler, model, device, seed):
 
     # --- Stage 1: beam -> top-18 lineages ---
     order = sorted(range(len(gen0_scores)), key=lambda i: -gen0_scores[i])[:TOP_KEEP]
+
+    all_candidates = None
+    if retain_all:
+        keep = set(order)
+        all_candidates = [
+            {"palette": gen0_cfgs[i].palette, "palette_type": lib.palette_type(gen0_cfgs[i].palette),
+             "gen": 0, "lineage": gen0_cfgs[i].palette, "score": float(gen0_scores[i]),
+             "survivor": i in keep, "config": gen0_cfgs[i]}
+            for i in range(len(gen0_cfgs))
+        ]
     lineages = []
     for i in order:
         lineages.append({
@@ -263,6 +282,12 @@ def run_location(label, ref, lib, sampler, model, device, seed):
                 variants.append((l, cfg, recolor(fld, cfg, lib, prep)))
         if variants:
             vscores = P.score_frames(model, [v[2] for v in variants], device)
+            if retain_all:
+                for (l, cfg, _img), s in zip(variants, vscores):
+                    all_candidates.append(
+                        {"palette": l["palette"], "palette_type": l["ptype"],
+                         "gen": r, "lineage": l["palette"], "score": float(s),
+                         "survivor": True, "config": cfg})
             per_lin = {}
             for (l, cfg, img), s in zip(variants, vscores):
                 cur = per_lin.get(id(l))
@@ -290,6 +315,7 @@ def run_location(label, ref, lib, sampler, model, device, seed):
         "pal_names": pal_names, "gen0_scores": gen0_scores,
         "spread": gen0_spread(pal_names, all_names, Dfeat),
         "lineages": lineages, "snapshots": snapshots, "moves": moves,
+        "all_candidates": all_candidates,
     }
 
 
