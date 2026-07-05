@@ -151,8 +151,14 @@ GATHER_SCRATCH_ROOT = ROOT / "out" / "atlas" / "gather"
 # the c-plane family the Julia descent hangs off (degree = that family's z^d degree).
 # Values sit below the assessment's per-degree real-set medians / lower tails, so genuine
 # filled and dendritic Julia sets pass while true far-exterior instant-escape is still
-# excluded. Deliberately loose — gathering wants volume; guard is off; the 80% "best"
-# bucket is v5 + guard-verdict filtered downstream at selection. (esc_median_min, spread_min).
+# excluded. (esc_median_min, spread_min).
+#
+# NOTE: these were validated by the overnight gather yield and PROMOTED into the engine as
+# the permanent Julia-specific defaults — `WalkFamily::julia_band_defaults` in
+# src/guided_descend.rs. Every `--julia` descent now resolves to exactly these WITHOUT any
+# CLI override, so the explicit `--esc-median-min`/`--spread-min` pass below is redundant;
+# it is kept as a self-documenting explicit override (gather logs its bands in the summary).
+# **Keep this table bit-identical to `julia_band_defaults`** — if you retune one, retune both.
 JULIA_GATHER_BANDS = {
     "mandelbrot": (3.0, 14.0),   # d2: esc 3.0 (unchanged), flat 20 -> 14
     "multibrot3": (2.0, 10.0),   # d3: esc 3.0 -> 2.0,        flat 15 -> 10

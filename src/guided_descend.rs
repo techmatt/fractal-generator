@@ -2184,6 +2184,35 @@ impl WalkFamily {
         }
     }
 
+    /// Julia-specific descent band defaults `(esc_median_min, flat_spread_min)` — the
+    /// loosened, degree-aware bands applied to **dynamical Julia descents only**
+    /// (`--julia`, NOT Phoenix and NOT the parameter plane). Promoted from the
+    /// `--gather` Julia-only overrides after the overnight harvest validated them by
+    /// yield (`julia:mandelbrot` 222/288 q3, 287/288 guard-pass; multibrot-Julia
+    /// families q3-rich). The c-plane `z^d` descent escapes such that a shared
+    /// Mandelbrot band (`esc_median_min = 3.0`, the per-family `flat_spread_min`)
+    /// starves higher-degree Julia sets: real filled/dendritic `z^d` Julia structure
+    /// reads as instant-escape / flat and is culled. These values sit below the
+    /// assessment's per-degree real-set medians / lower tails, so genuine Julia
+    /// structure passes while true far-exterior instant-escape is still excluded.
+    /// The c-plane keeps its calibrated `root8k_band_defaults` / `flat_spread_min_default`
+    /// — this table is Julia-only. (Mirror of `JULIA_GATHER_BANDS` in
+    /// `tools/atlas/production_seeder.py`.)
+    ///
+    /// - **d2 (quadratic Julia):** `esc_median_min` 3.0 (unchanged), `flat_spread_min`
+    ///   20 → 14.
+    /// - **d3 (Julia-multibrot3):** `esc` 3.0 → 2.0, `flat` 15 → 10.
+    /// - **d4 (Julia-multibrot4):** `esc` 3.0 → 2.0, `flat` 16 → 13.
+    /// - **d5 (Julia-multibrot5):** `esc` 3.0 → 1.8, `flat` 17 → 13.
+    pub fn julia_band_defaults(self) -> (f64, f64) {
+        match self {
+            WalkFamily::Mandelbrot => (3.0, 14.0),
+            WalkFamily::Multibrot3 => (2.0, 10.0),
+            WalkFamily::Multibrot4 => (2.0, 13.0),
+            WalkFamily::Multibrot5 => (1.8, 13.0),
+        }
+    }
+
     /// Per-family flat-sampler root box `(re_lo, re_hi, im_lo, im_hi)`. The flat
     /// sampler draws uniform centers in this box; the Mandelbrot default is the
     /// historical asymmetric cardioid frame, but multibrot sets (`d ≥ 3`) are
@@ -2549,15 +2578,32 @@ pub struct GuidedDescendArgs {
 
 impl GuidedDescendArgs {
     /// Effective accept band (each clause flag-overridable; shared default).
+    ///
+    /// Band defaults are **descent-mode-aware**. A dynamical **Julia** descent
+    /// (`--julia`, NOT Phoenix) resolves its `esc_median_min` / `spread_min` from the
+    /// loosened, degree-aware [`WalkFamily::julia_band_defaults`] table — the `z^d`
+    /// Julia plane escapes such that the c-plane Mandelbrot/multibrot floors starve
+    /// real filled/dendritic Julia structure. Parameter-plane descents (and Phoenix,
+    /// which is degree-2 and descends cleanly on the Mandelbrot defaults) keep the
+    /// calibrated `esc_median_min = 3.0` + per-family `flat_spread_min_default`. In
+    /// every mode an explicit CLI `--esc-median-min` / `--spread-min` still wins.
     pub fn band(&self) -> crate::generate::AcceptBand {
         let d = crate::generate::AcceptBand::default();
+        // Julia-only loosened defaults (`--julia`; Phoenix stays on the c-plane
+        // defaults). d2 esc default == d.esc_median_min (3.0), so only the spread
+        // floor moves for quadratic Julia.
+        let (esc_default, spread_default) = if self.julia {
+            self.family.julia_band_defaults()
+        } else {
+            (d.esc_median_min, self.family.flat_spread_min_default())
+        };
         crate::generate::AcceptBand {
             // spread_min drifts with degree (`z^d` compresses the smooth-iter range);
-            // resolve against the per-family default. d2 default == d.spread_min, so
-            // Mandelbrot stays byte-identical.
-            spread_min: self.spread_min.unwrap_or(self.family.flat_spread_min_default()),
+            // resolve against the per-mode default. c-plane d2 default == d.spread_min,
+            // so parameter-plane Mandelbrot stays byte-identical.
+            spread_min: self.spread_min.unwrap_or(spread_default),
             interior_max: self.interior_max.unwrap_or(d.interior_max),
-            esc_median_min: self.esc_median_min.unwrap_or(d.esc_median_min),
+            esc_median_min: self.esc_median_min.unwrap_or(esc_default),
         }
     }
 
