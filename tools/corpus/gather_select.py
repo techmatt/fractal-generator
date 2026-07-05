@@ -23,7 +23,8 @@ Dedup (bounds renders, never re-presents a labeled location):
 Render: each kept pick -> `render-one` at the canonical crop spec (1280x720, ss4,
 Lanczos-3, q90 JPG, center, interior black, maxiter 8000), the multi-family renderer
 (the Mandelbrot-only `enrich --mode render` cannot render julia/multibrot/phoenix).
-Palette per pick = seeded-random from the 777-pool (palette is the label; legibility only).
+Palette per pick = seeded-random from the 76 curated q3 palettes (score3_colormaps.json;
+bright by construction — palette is legibility-only, location quality is palette-invariant).
 
 Phases (run `all`, or a phase for iteration):
   select : ledgers+walks -> per-(class,role) spatially-deduped candidate lists -> picks.jsonl
@@ -47,8 +48,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))            # tools/corpus/
 from corpus_common import (make_row, provenance_block, label_block,       # noqa: E402
-                           render_block, hp_str, write_jsonl, read_jsonl)
-from location import Location, render_one_flags                           # noqa: E402
+                           render_block, hp_str, write_jsonl, read_jsonl,
+                           render_label_crop, render_recipe_stamp)
+from verify_render_path import check_batch                                # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mining"))
 from dedup import phash, DedupIndex                                       # noqa: E402
@@ -56,7 +58,10 @@ from dedup import phash, DedupIndex                                       # noqa
 ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "target" / "release" / "fractal-generator.exe"
 GATHER_DIR = ROOT / "data" / "discovery" / "gather"
-POOL_COLORMAPS = ROOT / "data" / "palettes" / "pool_colormaps.json"
+# Location quality is palette-invariant, so the label crop's palette is legibility-only.
+# We draw from the 76 curated q3 palettes (bright by construction — no dark, unlabelable
+# crop can result), NOT the 777 pool (which admitted too-dark crops in the first v6 batch).
+SCORE3_COLORMAPS = ROOT / "data" / "palettes" / "score3_colormaps.json"
 BATCHES_DIR = ROOT / "data" / "label_corpus" / "batches"
 
 BATCH_ID = "2026-07-05_gather_v6"
@@ -267,7 +272,7 @@ def build_candidates(led, walks, rng):
         all_cands.extend(best_sel + dis_sel + re_sel)
 
     # --- palette assignment (seeded, stable order) ---
-    names = [c["name"] for c in json.load(open(POOL_COLORMAPS, encoding="utf-8"))]
+    names = [c["name"] for c in json.load(open(SCORE3_COLORMAPS, encoding="utf-8"))]
     for c in sorted(all_cands, key=lambda c: c["image_id"]):
         c["palette"] = rng.choice(names)
     return all_cands, stats
@@ -281,23 +286,33 @@ def _cand_from_outcome(role, r):
 
 
 # --------------------------------------------------------------------------- render
+def cand_render_block(c) -> dict:
+    """The version-invariant render block for a candidate — the SINGLE source of the
+    crop's pixels. Built once here and reused verbatim at emit, so the stored block
+    is exactly what was rendered (the crop stays a pure function of its render block,
+    rebuildable via `render-one --palette`; see corpus_common.render_label_crop)."""
+    render = render_block(cx=hp_str(c["cx"]), cy=hp_str(c["cy"]), fw=hp_str(c["fw"]),
+                          maxiter=MAXITER, palette=c["palette"], composition=COMPOSITION,
+                          width=W, height=H, ss=SS, filter=FILTER, interior_mode=INTERIOR)
+    # multi-family render-block extension (fractal_type + fixed c travel on the record,
+    # as tools/julia_ladder/build_j0.py established for Julia rows).
+    render["fractal_type"] = render_family(c["family"])
+    if c["c_re"] is not None:
+        render["c_re"] = hp_str(c["c_re"])
+        render["c_im"] = hp_str(c["c_im"])
+    return render
+
+
 def _render(c):
     out = STAGE_CROPS / f"{c['image_id']}.jpg"
     if out.exists():
         return (c["image_id"], True)
-    loc = Location(family=render_family(c["family"]),
-                   cx=repr(c["cx"]), cy=repr(c["cy"]), fw=repr(c["fw"]),
-                   c_re=None if c["c_re"] is None else repr(c["c_re"]),
-                   c_im=None if c["c_im"] is None else repr(c["c_im"]))
-    cmd = [str(BIN), "render-one", *render_one_flags(loc),
-           "--cx", repr(c["cx"]), "--cy", repr(c["cy"]), "--fw", repr(c["fw"]),
-           "--width", str(W), "--height", str(H), "--supersample", str(SS),
-           "--filter", FILTER, "--maxiter", str(MAXITER),
-           "--palette", c["palette"], "--colormaps", str(POOL_COLORMAPS),
-           "--jpg-quality", str(JPGQ), "--out", str(out)]
-    r = subprocess.run(cmd, capture_output=True, text=True, creationflags=BELOW_NORMAL)
-    if r.returncode != 0 or not out.exists():
-        sys.stderr.write(f"[render {c['image_id']}] FAILED: {r.stderr[-300:]}\n")
+    try:
+        render_label_crop(cand_render_block(c), out, palette_source=SCORE3_COLORMAPS,
+                          bin_path=BIN, jpg_quality=JPGQ, cwd=str(ROOT),
+                          creationflags=BELOW_NORMAL)
+    except RuntimeError as e:
+        sys.stderr.write(f"[render {c['image_id']}] FAILED: {e}\n")
         return (c["image_id"], False)
     return (c["image_id"], True)
 
@@ -390,15 +405,7 @@ def emit(cands):
     rows = []
     for c in kept:
         shutil.copyfile(STAGE_CROPS / f"{c['image_id']}.jpg", CROPS_DIR / f"{c['image_id']}.jpg")
-        render = render_block(cx=hp_str(c["cx"]), cy=hp_str(c["cy"]), fw=hp_str(c["fw"]),
-                              maxiter=MAXITER, palette=c["palette"], composition=COMPOSITION,
-                              width=W, height=H, ss=SS, filter=FILTER, interior_mode=INTERIOR)
-        # multi-family render-block extension (fractal_type + fixed c travel on the record,
-        # as tools/julia_ladder/build_j0.py established for Julia rows).
-        render["fractal_type"] = render_family(c["family"])
-        if c["c_re"] is not None:
-            render["c_re"] = hp_str(c["c_re"])
-            render["c_im"] = hp_str(c["c_im"])
+        render = cand_render_block(c)            # SAME block that produced the crop
         prov = provenance_block(
             GENERATOR_VERSION, BATCH_ID,
             family=c["family"], selection_role=c["role"],
@@ -413,6 +420,11 @@ def emit(cands):
     json.dump({}, open(BATCH_DIR / "scores.json", "w"))    # empty harness export (unlabeled)
 
     report(kept, rows, dropped_dup, dropped_target, missing, len(index.hashes))
+
+    # Guard B — auto-verify this freshly-emitted batch is rebuildable from its render
+    # blocks via the canonical render-one --palette path (fails loudly if off-recipe).
+    print("\n===== Guard B: render-path reproducibility (K-sample) =====")
+    check_batch(BATCH_DIR, k=6)
     return kept
 
 
@@ -428,7 +440,8 @@ def write_batch_json():
             "roles": "best (guard-pass & decoded>=2, k3-desc) / random_eval (uniform "
                      "mid-walk depth>=2 frames) / disagreement (guard-fail, high k3)",
             "targets": TARGET,
-            "palette_pool": "data/palettes/pool_colormaps.json (777, seeded-random per pick)",
+            "palette_pool": "data/palettes/score3_colormaps.json (76 curated q3, "
+                            "bright by construction; seeded-random per pick)",
             "seed": SEED,
             "spatial_dedup": {"shift_frac": SHIFT_FRAC, "scale_band": [SCALE_LO, SCALE_HI],
                               "julia_cbucket": "parent_oid (fixed-c partition)"},
@@ -440,6 +453,9 @@ def write_batch_json():
             "interior_mode": INTERIOR, "maxiter": MAXITER, "composition": COMPOSITION,
             "jpg_quality": JPGQ,
         },
+        # self-identifying render provenance — the canonical path these crops were
+        # produced through. Guard B asserts this is CANONICAL_CROP_RECIPE.
+        "render_recipe": render_recipe_stamp(SCORE3_COLORMAPS, jpg_quality=JPGQ),
     }
     json.dump(bj, open(BATCH_DIR / "batch.json", "w"), indent=2)
 

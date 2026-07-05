@@ -78,5 +78,10 @@
     "maxiter": 8000,
     "composition": "center",
     "jpg_quality": 90
+  },
+  "render_recipe": {
+    "path": "render-one --palette --colormaps",
+    "palette_source": "data/palettes/score3_colormaps.json",
+    "jpg_quality": 90
   }
 }

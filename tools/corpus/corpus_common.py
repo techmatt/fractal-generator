@@ -7,8 +7,11 @@ is version-tagged (free to be null/absent), `label` is the verdict.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import os
+import subprocess
+import sys
 
 # repo root = two levels up from tools/corpus/
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -161,3 +164,91 @@ def read_jsonl(path: str):
 
 def batch_dir(batch_id: str) -> str:
     return os.path.join(BATCHES_DIR, batch_id)
+
+
+# ===========================================================================
+# The canonical location-corpus label-crop render path.
+#
+# There is exactly ONE way a location-corpus label crop is produced: the native
+# Rust colorer, `render-one --palette <name> --colormaps <library>`. The crop is
+# a pure function of its version-invariant render block THROUGH this call (the
+# "crops are rebuildable" contract) — geometry, ss, filter, maxiter, and the
+# named palette fully determine the pixels.
+#
+# NEVER build a corpus crop from `render-one --dump-field` + `colormap.render_
+# candidate`: that Python pct-stretch→LUT tail is a DIFFERENT recipe (measured
+# mean Δ 16.2 / max 209 vs this path, ~75% of pixels differ), it is ~5–10× slower
+# (59 MB field dump + GIL-serialized numpy), and it breaks cross-batch coloring
+# consistency and reproducibility. The dump-field tail is correct only for
+# ARBITRARY-PARAM coloring (gamma/phase/cycles/reverse) — e.g. the wallpaper-
+# bootstrap / preference path, which is its own canonical recipe and out of scope.
+#
+# Route every location-corpus crop render through `render_label_crop` below so the
+# wrong path is structurally unreachable for corpus code.
+# ===========================================================================
+CANONICAL_CROP_RECIPE = "render-one --palette --colormaps"
+DEFAULT_CROP_JPGQ = 90
+
+
+def default_bin() -> str:
+    """The release engine binary (Windows exe; the .exe suffix is harmless on the
+    path join even where absent — callers on this project run win32)."""
+    return os.path.join(ROOT, "target", "release", "fractal-generator.exe")
+
+
+def _location_mod():
+    """Lazy import of the sibling `location` module (avoids a hard import-order
+    dependency: callers insert tools/corpus on sys.path before importing us)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    return importlib.import_module("location")
+
+
+def render_label_crop(render: dict, out_path, *, palette_source, bin_path=None,
+                      jpg_quality: int = DEFAULT_CROP_JPGQ, cwd=None,
+                      creationflags: int = 0, timeout=None) -> str:
+    """Render ONE location-corpus label crop the canonical way and return `out_path`.
+
+    `render` is a version-invariant render block (`RENDER_KEYS`, optionally the
+    multi-family `fractal_type` + `c_re`/`c_im`); `palette_source` is the
+    `--colormaps` library the `render["palette"]` name resolves in. Every pixel-
+    affecting input is read straight off the block, so a rebuild from the same
+    block + palette_source is byte-reproducible (this is what Guard B enforces).
+
+    Raises RuntimeError on a non-zero exit or a missing output file. This is the
+    ONLY sanctioned corpus-crop renderer — no raw `--dump-field`/`render_candidate`.
+    """
+    loc_mod = _location_mod()
+    loc = loc_mod.from_render_block(render)
+    binp = str(bin_path) if bin_path is not None else default_bin()
+    cmd = [binp, "render-one", *loc_mod.render_one_flags(loc),
+           "--cx", str(render["cx"]), "--cy", str(render["cy"]), "--fw", str(render["fw"]),
+           "--width", str(render["width"]), "--height", str(render["height"]),
+           "--supersample", str(render["ss"]), "--filter", str(render["filter"]),
+           "--maxiter", str(render["maxiter"]),
+           "--palette", str(render["palette"]), "--colormaps", str(palette_source),
+           "--jpg-quality", str(jpg_quality), "--out", str(out_path)]
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                       creationflags=creationflags, timeout=timeout)
+    if r.returncode != 0 or not os.path.exists(out_path):
+        raise RuntimeError(
+            f"render_label_crop failed for {out_path} "
+            f"(rc={r.returncode}): {(r.stderr or '')[-400:]}")
+    return str(out_path)
+
+
+def render_recipe_stamp(palette_source, jpg_quality: int = DEFAULT_CROP_JPGQ) -> dict:
+    """Self-identifying provenance for `batch.json`: the render path a batch's crops
+    were produced through. Guard B asserts `path == CANONICAL_CROP_RECIPE`, so a
+    batch built off-recipe (or hand-stamped wrong) fails the reproducibility check.
+    `palette_source` is stored repo-relative when it lives under the repo."""
+    src = str(palette_source)
+    try:
+        rel = os.path.relpath(src, ROOT)
+        if not rel.startswith(".."):
+            src = rel.replace("\\", "/")
+    except ValueError:                       # different drive on win32 → keep absolute
+        pass
+    return {"path": CANONICAL_CROP_RECIPE, "palette_source": src,
+            "jpg_quality": int(jpg_quality)}
