@@ -31,3 +31,10 @@ torchvision = [{ index = "pytorch-cu124" }]
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    # Opt-in slow tests (e.g. the guard 81-set re-render tripwire, which renders 81
+    # tiles through the live f64 field path). Exclude with: pytest -m "not slow".
+    "slow: renders/heavy; opt-in, excluded by -m 'not slow'",
+]

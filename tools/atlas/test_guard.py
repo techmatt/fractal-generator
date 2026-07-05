@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Unit tests for the degenerate-outcome guard predicate + field measures.
 
-The control for the *gate logic* (the manifest reproduction is the separate hard
-gate in control_guard_manifest.py). Pure, GPU-free, no render.
+The control for the *gate logic*. Pure, GPU-free, no render — the live f64 field
+path is regressed separately by the re-render tripwire (test_guard_tripwire.py).
 
   uv run pytest tools/atlas/test_guard.py
 """

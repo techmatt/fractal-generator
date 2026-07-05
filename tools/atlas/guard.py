@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Degenerate-outcome guard — the model-free, field-based gate inside the reward.
 
-Two calibrated gates (pinned in `diag_guard_manifest.py` / the drop manifest) become
-a HARD guard that raw-frame scoring, reframe candidate scoring, and outcome scoring
-all inherit:
+Two calibrated gates (pinned thresholds; the canonical 81-set + verdicts they produce
+are the tripwire fixture `data/atlas/guard_tripwire.json`) become a HARD guard that
+raw-frame scoring, reframe candidate scoring, and outcome scoring all inherit:
 
     interior gate:  interior_frac >= INTERIOR_CAP   -> fail (black gate)
     flat gate:      field_std     <  FIELD_STD_FLOOR -> fail (flat gate)
@@ -15,8 +15,9 @@ measured. The field is sourced from the fast escape-time F64Backend smooth chann
 (NOT the slow beautiful kernel the diagnostic dumped) — its value differs by the
 constant `ln(ln B)/ln d` bailout-normalization offset, to which interior_frac (an
 escape-mask fraction) and field_std (a std) are both invariant. So the in-scorer
-field path's VERDICTS match `diag_outcome_guards.py` and the Part-2 control
-reproduces the drop manifest exactly (field values are NOT byte-identical, by design).
+field path's VERDICTS match `diag_outcome_guards.py`, and the re-render tripwire
+(`test_guard_tripwire.py`) regresses this exact path against the pinned 81-set
+verdicts every run (field values are NOT byte-identical, by design).
 
 `field_measures` is the byte-for-byte reproduction of `diag_outcome_guards.measures`
 (the interior_frac / field_std half); `guard_fail` applies the pinned thresholds;
@@ -133,7 +134,7 @@ def render_field(cx, cy, fw, out_bin: Path, *, family: str = "mandelbrot",
         # invariant to the bailout-normalization offset between the beautiful and
         # escape-time smooth kernels. Source the field from the fast F64Backend
         # smooth channel (deletes the redundant slow beautiful-kernel render); the
-        # calibration control (control_guard_manifest.py) proves verdict parity.
+        # re-render tripwire (test_guard_tripwire.py) proves verdict parity.
         "--dump-field-source", "f64",
     ] + loc_mod.render_one_flags(loc)
     r = subprocess.run(cmd, capture_output=True, text=True)
