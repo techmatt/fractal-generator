@@ -14,15 +14,15 @@ button:hover{background:#262a36}
 .bad{color:#e06a6a}.mid{color:#e0b24a}.good{color:#5ec07a}
 main{display:flex;gap:18px;padding:18px;align-items:flex-start}
 #stage{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:10px}
-#stage img{max-width:100%;max-height:74vh;border:1px solid #23252e;border-radius:6px;background:#000}
+#stage img{width:100%;height:auto;max-height:86vh;object-fit:contain;border:1px solid #23252e;border-radius:6px;background:#000}
 .meta{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;color:#777;font-size:11px}
 .meta .cap{border:1px solid #23252e;border-radius:4px;padding:1px 7px}
 .cur-score{font-size:12px}
 .score-btns{display:flex;gap:10px;margin-top:2px}
 .score-btns button{font-size:15px;padding:8px 18px}
 .sb1{border-color:#5a2c2c}.sb2{border-color:#5a4a2c}.sb3{border-color:#2c5a3a}
-aside{width:300px;flex:none;max-height:86vh;overflow:auto;border:1px solid #1c1f29;border-radius:6px;padding:6px}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+aside{width:340px;flex:none;max-height:86vh;overflow:auto;border:1px solid #1c1f29;border-radius:6px;padding:6px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .cell{position:relative;border:2px solid transparent;border-radius:3px;cursor:pointer;aspect-ratio:16/9;background:#000;overflow:hidden}
 .cell img{width:100%;height:100%;object-fit:cover;display:block}
 .cell.cur{border-color:#6a8fd0}
@@ -82,7 +82,7 @@ code{color:#9bb}
 <script>
 // --- which batch to label: ?batch=<dir> query param overrides, else this default
 //     (a dir under data/label_corpus/batches/) ---
-const BATCH_ID=new URLSearchParams(location.search).get('batch')||'julia_ladder_j0';
+const BATCH_ID=new URLSearchParams(location.search).get('batch')||'2026-07-05_gather_v6';
 const ROOT='../../';                 // tools/viz/ -> repo root
 const BATCH_DIR='data/label_corpus/batches/'+BATCH_ID;
 const IMAGES_URL=ROOT+BATCH_DIR+'/images.jsonl';
