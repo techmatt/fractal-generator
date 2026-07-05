@@ -1,0 +1,38 @@
+{
+  "ts": "20260705_042506",
+  "mode": "gather",
+  "smoke": false,
+  "family": "phoenix",
+  "wallclock_s": 495.9,
+  "rounds": 4,
+  "config": {
+    "family": "phoenix",
+    "walks_per_round": 12,
+    "budget_min": 6.0,
+    "depth": [
+      4,
+      14
+    ],
+    "scorer": "data/classifier/v5/model_best.pt",
+    "guard": "OFF (verdict logged as prior)"
+  },
+  "totals": {
+    "outcomes": 48,
+    "decoded": {
+      "1": 0,
+      "2": 6,
+      "3": 42
+    },
+    "walk_errors": 0,
+    "guard": {
+      "pass": 41,
+      "interior": 7,
+      "flat": 0,
+      "both": 0,
+      "render_error": 0
+    }
+  },
+  "cumulative": {
+    "ledger_rows": 99
+  }
+}

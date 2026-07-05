@@ -92,6 +92,7 @@ import reframe  # noqa: E402  (reframe_location + the DUMP_GUARD_FIELD hook)
 from reframe import reframe_location  # noqa: E402
 import guard  # noqa: E402  (degenerate-outcome guard: make_guarded_scorer + the field gate)
 from score_lib import corn_decode  # noqa: E402  (canonical v5 CORN hard-class decode)
+from probe import make_scorer as make_raw_scorer  # noqa: E402  (UNGUARDED v5 — gather mode)
 
 # =========================================================================== #
 # Config (top-of-file constants — the experiment knobs)
@@ -134,6 +135,30 @@ PROBE_REJECTS = DISCOVERY_DIR / "probe_rejects.jsonl"
 RUNS_DIR = DISCOVERY_DIR / "runs"
 # disposable render scratch (never data/): native run, probe pools, walk pools, reward tiles
 SCRATCH_ROOT = ROOT / "out" / "atlas" / "production_seeder"
+
+# --- Gather mode (--gather): the guard-OFF oversampling harvest for the v6 label pass.
+# A SEPARATE durable subtree per class, so guard-off rows NEVER pollute the production
+# q3 cloud: production `build_cloud` requires guard_pass, and gather rows are raw-scored
+# (guard-pass always true), so mixing them into the production ledger would silently
+# admit degenerate decoded-class-3 outcomes into live discovery. Each class run appends
+# its own ledger + writes its own walks.jsonl; nothing is cleaned up between classes. ---
+GATHER_DIR = DISCOVERY_DIR / "gather"
+GATHER_SCRATCH_ROOT = ROOT / "out" / "atlas" / "gather"
+
+# Loosened, degree-aware Julia DESCENT bands (from the Julia-band assessment) — applied
+# to JULIA descents ONLY (the --julia-hook sub-descents + any standalone --julia gather),
+# NEVER the parameter plane (c-plane keeps its calibrated per-degree defaults). Keyed by
+# the c-plane family the Julia descent hangs off (degree = that family's z^d degree).
+# Values sit below the assessment's per-degree real-set medians / lower tails, so genuine
+# filled and dendritic Julia sets pass while true far-exterior instant-escape is still
+# excluded. Deliberately loose — gathering wants volume; guard is off; the 80% "best"
+# bucket is v5 + guard-verdict filtered downstream at selection. (esc_median_min, spread_min).
+JULIA_GATHER_BANDS = {
+    "mandelbrot": (3.0, 14.0),   # d2: esc 3.0 (unchanged), flat 20 -> 14
+    "multibrot3": (2.0, 10.0),   # d3: esc 3.0 -> 2.0,        flat 15 -> 10
+    "multibrot4": (2.0, 13.0),   # d4: esc 3.0 -> 2.0,        flat 16 -> 13
+    "multibrot5": (1.8, 13.0),   # d5: esc 3.0 -> 1.8,        flat 17 -> 13
+}
 
 NCOL_DUP = 6   # cap the near-dup / non-q3 strip on the contact sheet
 
@@ -571,7 +596,9 @@ def run_full_walks(survivors: list[dict], workdir: Path, seed: int,
 
 
 def run_julia_descent(c, mode: str, seed: int, workdir: Path, n_walks: int,
-                      family: str = "mandelbrot") -> Path:
+                      family: str = "mandelbrot",
+                      esc_median_min: float | None = None,
+                      spread_min: float | None = None) -> Path:
     """Native Julia z-plane descent at the fixed parameter `c = (c_re, c_im)`, run at
     PRODUCTION depth (not depth-1). A variant of `generate_native_seeds` that shells
     `guided-descend --julia --c <c_re> <c_im>` (+ `--julia-center` when `mode ==
@@ -579,7 +606,11 @@ def run_julia_descent(c, mode: str, seed: int, workdir: Path, n_walks: int,
     the render family). NATIVE only — never `--seed-list` (the engine rejects a z-plane
     seed list under `--julia`); the julia root step is the engine's own base-scale
     z-plane draw, so native descent needs no injected seeds. Writes `pool.jsonl` under
-    `workdir/pool` and returns that pool dir (for `load_frames_by_walk`)."""
+    `workdir/pool` and returns that pool dir (for `load_frames_by_walk`).
+
+    `esc_median_min` / `spread_min` (default None → engine per-family defaults) inject the
+    loosened, degree-aware Julia bands for gather mode via `--esc-median-min` /
+    `--spread-min`. Julia-only: passed ONLY on the julia sub-descent, never the c-plane."""
     workdir.mkdir(parents=True, exist_ok=True)
     pool = workdir / "pool"
     fam_flags = [] if family == "mandelbrot" else ["--family", family]
@@ -593,9 +624,37 @@ def run_julia_descent(c, mode: str, seed: int, workdir: Path, n_walks: int,
         "--julia", "--c", str(c[0]), str(c[1]),
         "--out-dir", str(pool),
     ] + fam_flags + (["--julia-center"] if mode == "center" else [])
+    if esc_median_min is not None:
+        cmd += ["--esc-median-min", str(esc_median_min)]
+    if spread_min is not None:
+        cmd += ["--spread-min", str(spread_min)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"julia descent failed (c={c}, mode={mode}):\n{r.stderr[-2000:]}")
+    return pool
+
+
+def run_phoenix_descent(seed: int, workdir: Path, n_walks: int) -> Path:
+    """Native Phoenix z-plane descent at the fixed Ushiki location (engine defaults
+    c=0.5667,0 / p=-0.5,0), run at PRODUCTION depth. Phoenix has NO parameter plane to
+    prospect (single fixed location), so gather harvests it by repeatedly descending the
+    one z-plane and logging every outcome — no seed list, no density rejection. Writes
+    `pool.jsonl` under `workdir/pool` and returns that pool dir."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    pool = workdir / "pool"
+    cmd = [
+        str(prescreen.BIN), "guided-descend",
+        "--n-walks", str(n_walks), "--seed", str(seed), "--per-walk-rng",
+        "--depth-min", str(DEPTH_MIN), "--depth-max", str(DEPTH_MAX),
+        "--node-width", str(NODE_WIDTH), "--sigma-band", SIGMA_BAND,
+        "--descent-occ-floor", str(OCC_FLOOR), "--descent-black-cap", str(BLACK_CAP),
+        "--preview-width", "48", "--cols", "40",
+        "--phoenix",
+        "--out-dir", str(pool),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"phoenix descent failed:\n{r.stderr[-2000:]}")
     return pool
 
 
@@ -674,6 +733,96 @@ def outcome_feature(scorer, cx, cy, fw, tile: Path, *, family="mandelbrot", c=No
     if not ok:
         raise SystemExit(f"outcome tile render failed [{tile.name}]: {err}")
     return prescreen.embed_paths(scorer, [tile])[0]
+
+
+# =========================================================================== #
+# Gather mode (--gather): guard-OFF harvest for the v6 label pass. Reuses the
+# native seeder / probe / walk / reward machinery, but (1) scores with the RAW v5
+# (degenerate frames survive — v6 needs the OOD cases), (2) records the guard
+# would-pass verdict per outcome as a prior (not a gate), (3) writes to a separate
+# durable per-class subtree with the full walks.jsonl and NO image/feature dumps.
+# =========================================================================== #
+def outcome_guard_verdict(cx, cy, fw, out_bin: Path, *, family="mandelbrot", c=None,
+                          family_params=None):
+    """Compute the degenerate-outcome guard's would-pass verdict on ONE outcome crop,
+    model-free from the dumped f64 smooth field (same path production uses inside the
+    guarded scorer). Returns (verdict, GuardStats) where verdict ∈
+    {"pass","interior","flat","both"} or "render_error" (field render failed twice).
+    This is a PRIOR logged per outcome — never a gate in gather mode — so a transient
+    render failure logs "render_error" with null stats and the OUTCOME IS STILL KEPT
+    (it must never abort the harvest). `c=(re,im)` for dynamical families, else None."""
+    c_re, c_im = (c if c is not None else (None, None))
+    err = ""
+    for _ in range(2):   # one retry absorbs transient Windows spawn / render hiccups
+        ok, err = guard.render_field(cx, cy, fw, out_bin, family=family, c_re=c_re,
+                                     c_im=c_im, family_params=family_params)
+        if ok:
+            stats = guard.field_measures(guard.load_field(out_bin).values)
+            reason = guard.guard_fail(stats.interior_frac, stats.field_std)
+            return ("pass" if reason is None else reason), stats
+    print(f"  WARN guard field render failed (verdict=render_error, outcome kept) "
+          f"[{Path(out_bin).name}]: {err.strip()[:120]}")
+    return "render_error", guard.GuardStats(interior_frac=None, field_std=None,
+                                            n_px=0, n_escaped=0)
+
+
+class GatherLedger:
+    """Append-only guard-OFF ledger for one gather class, under GATHER_DIR/<partition>/.
+    Cross-run cumulative (reloads existing rows so a resumed class keeps its q3 cloud +
+    Julia repulsion). No feature store (gather logs coords only; selection re-renders
+    from coords), no image tiles."""
+
+    def __init__(self, class_dir: Path):
+        self.class_dir = class_dir
+        self.path = class_dir / "outcome_ledger.jsonl"
+        self.rows: list[dict] = []
+        if self.path.exists():
+            for line in open(self.path, encoding="utf-8"):
+                line = line.strip()
+                if line:
+                    self.rows.append(json.loads(line))
+
+    def append(self, row: dict):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+        self.rows.append(row)
+
+
+def load_walk_meta(pool: Path) -> dict:
+    """Per-walk metadata rows the engine writes to `pool/walks.jsonl` (root_cx/cy/fw,
+    cause, child_occ, reached_depth), keyed by walk id. Empty dict if absent."""
+    meta = {}
+    p = pool / "walks.jsonl"
+    if p.exists():
+        for line in open(p, encoding="utf-8"):
+            line = line.strip()
+            if line:
+                w = json.loads(line)
+                meta[int(w["walk"])] = w
+    return meta
+
+
+def _frame_lite(fr: dict) -> dict:
+    """One trajectory frame's coords + occupancy (the light per-frame record)."""
+    return {"idx": int(fr["idx"]), "depth": int(fr["depth"]),
+            "cx": fr["cx"], "cy": fr["cy"], "fw": fr["fw"], "occ": fr.get("occ")}
+
+
+def persist_walk(fh, *, family, batch, walk, outcome_id, frames, meta,
+                 parent_oid=None, descend_mode="cplane"):
+    """Append one walk's full trajectory (every frame's coords + occupancy) + the engine
+    per-walk metadata to the gather run's walks.jsonl. No images — coords only."""
+    m = meta or {}
+    rec = {
+        "family": family, "batch": int(batch), "walk": int(walk),
+        "outcome_id": outcome_id, "parent_oid": parent_oid, "descend_mode": descend_mode,
+        "reached_depth": max((int(f["depth"]) for f in frames), default=0),
+        "root_cx": m.get("root_cx"), "root_cy": m.get("root_cy"), "root_fw": m.get("root_fw"),
+        "cause": m.get("cause"), "child_occ": m.get("child_occ"),
+        "frames": [_frame_lite(f) for f in frames],
+    }
+    fh.write(json.dumps(rec) + "\n")
 
 
 # =========================================================================== #
@@ -1068,6 +1217,376 @@ def _run(args, fam: FamilyResolved):
     return summary
 
 
+def _gather(args, fam: FamilyResolved):
+    """Guard-OFF gathering harvest for one c-plane class (+ optional --julia-hook). Raw
+    v5 scoring; guard would-pass verdict logged per outcome as a prior; density rejection
+    keyed on decoded_class == 3 alone (guard is off); durable per-class ledger + full
+    walks.jsonl; NO image/feature dumps. Byte-independent of production discovery (its
+    own GATHER_DIR/<partition> subtree)."""
+    smoke = args.smoke
+    run_ts = time.strftime("%Y%m%d_%H%M%S")
+    class_dir = GATHER_DIR / fam.partition
+    run_dir = class_dir / "runs" / run_ts
+    run_dir.mkdir(parents=True, exist_ok=True)
+    scratch = GATHER_SCRATCH_ROOT / fam.partition / run_ts
+    scratch.mkdir(parents=True, exist_ok=True)
+
+    global Q3_DENSITY_CAP, MAX_SEED_REDRAWS, NATIVE_POOL_WALKS
+    if smoke:
+        Q3_DENSITY_CAP = 2
+        MAX_SEED_REDRAWS = 30
+        NATIVE_POOL_WALKS = 60
+    batch_seeds = args.batch or (8 if smoke else BATCH_SEEDS)
+    budget_min = args.budget if args.budget is not None else (0 if smoke else WALLCLOCK_BUDGET_MIN)
+
+    print(f"=== GATHER (guard-OFF) {'SMOKE ' if smoke else ''}ts={run_ts} class={fam.partition} ===")
+    print(f"family: {fam.partition}  (descend flags: {' '.join(fam.flags) or '(none: native mandelbrot)'}"
+          f"; render family {fam.render_family})")
+    print(f"coverage: q3-density REJECTION (decoded_class==3 only; guard OFF)  radius={REJECT_RADIUS} "
+          f"cap={Q3_DENSITY_CAP} max_redraws={MAX_SEED_REDRAWS} dedup_k={DEDUP_K}  batch={batch_seeds} "
+          f"budget={budget_min}min")
+
+    # RAW (unguarded) v5 — degenerate frames survive scoring so v6 gets the OOD cases.
+    # The reframe guard-field hook stays OFF (raw scorer ignores sidecars; skip the cost).
+    reframe.DUMP_GUARD_FIELD = False
+    scorer = make_raw_scorer(SCORER_PATH)
+    print(f"scorer: RAW v5 CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}  (guard OFF)")
+    print(f"guard-verdict prior (logged, NOT gated): interior_frac>={guard.INTERIOR_CAP} | "
+          f"field_std<{guard.FIELD_STD_FLOOR} @ {guard.GUARD_STAT_RES}")
+
+    ledger = GatherLedger(class_dir)
+    cloud = build_cloud(ledger.rows, fam.partition)
+    print(f"gather ledger: {len(ledger.rows)} rows in '{fam.partition}'  | q3 cloud "
+          f"{len(cloud)} distinct places (decoded_class==3)")
+
+    rng = np.random.default_rng(args.seed)
+    native = NativeSeeder(args.seed, scratch, rng, fam.flags)
+    loc_of = make_loc_of(fam.render_family, fam.c)
+
+    # --- Julia sub-descent hook (parent gate stays ON; loosened degree-aware bands) ---
+    julia_hook = bool(args.julia_hook)
+    if julia_hook:
+        julia_render_family = "julia" if fam.partition == "mandelbrot" else f"julia_{fam.partition}"
+        julia_part = julia_partition(fam.partition)
+        julia_cloud = build_cloud(ledger.rows, julia_part)
+        j_esc, j_spread = JULIA_GATHER_BANDS[fam.partition]
+        print(f"julia-hook: ON  partition '{julia_part}' render_family={julia_render_family} "
+              f"walks/descent={JULIA_WALKS_PER_DESCENT}  bands: esc_median_min={j_esc} "
+              f"spread_min={j_spread}  | julia q3 cloud {len(julia_cloud)} distinct c")
+    julia_added_this_run = 0
+
+    totals = {"outcomes": 0, "decoded": {1: 0, 2: 0, 3: 0}, "q3_distinct": 0, "walk_errors": 0,
+              "guard": {"pass": 0, "interior": 0, "flat": 0, "both": 0, "render_error": 0},
+              "julia_descents": 0, "julia_outcomes": 0, "julia_q3": 0, "julia_distinct": 0,
+              "julia_guard": {"pass": 0, "interior": 0, "flat": 0, "both": 0, "render_error": 0}}
+    gf_dir = scratch / "guard_fields"
+    t0 = time.time()
+    seq = 0
+    batch_i = 0
+    walks_fh = open(run_dir / "walks.jsonl", "w", encoding="utf-8")
+
+    while True:
+        batch_i += 1
+        # Engine subprocess spawns (native draw / depth-2 probe / full walks) are the
+        # first thing to fail under system resource exhaustion (they can't spawn
+        # render-one/guided-descend). A failure here must END THE CLASS CLEANLY — write
+        # the summary and exit 0 — NOT hard-crash: a dirty crash mid-GPU-work wedges CUDA
+        # and cascades DLL-init failures into every subsequent class. The next class then
+        # starts as a fresh process with all memory reclaimed.
+        try:
+            props = native.draw_batch(cloud, batch_seeds)
+            if not props:
+                print("  GLOBAL SATURATION; stopping." if native.saturated
+                      else "  native seed source produced no proposals; stopping.")
+                break
+
+            pw = scratch / f"batch_{batch_i:03d}" / "probe"
+            survivors, rejects, pcauses = depth2_probe(props, pw, args.seed, fam.flags)
+            if not survivors:
+                print(f"  batch {batch_i}: 0/{len(props)} descendable (causes {pcauses}); next batch.")
+                if native.saturated:
+                    break
+                if budget_min and (time.time() - t0) / 60 >= budget_min:
+                    break
+                if smoke:
+                    break
+                continue
+
+            ww = scratch / f"batch_{batch_i:03d}" / "walks"
+            pool = run_full_walks(survivors, ww, args.seed, fam.flags)
+            by_walk = load_frames_by_walk(pool)
+            wmeta = load_walk_meta(pool)
+        except (SystemExit, Exception) as e:
+            totals["engine_errors"] = totals.get("engine_errors", 0) + 1
+            print(f"  ENGINE FAILURE batch {batch_i} (likely resource exhaustion); ending class "
+                  f"cleanly to avoid a dirty-crash CUDA wedge: {type(e).__name__}: {str(e)[:160]}")
+            break
+
+        b_out = b_q3 = 0
+        for wid in sorted(by_walk):
+          # One walk's reward/render can hit a transient render failure; it must NOT
+          # abort a multi-hour class (a hard crash mid-GPU-work also wedges the next
+          # class's CUDA init). Log, count, and move on — the ledger is per-outcome so
+          # nothing already committed is lost.
+          try:
+            frames = by_walk[wid]
+            rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
+                                      scratch / f"reward_b{batch_i:03d}", loc_of)
+            decoded = corn_decode(rew["p_notbad"], rew["p_good"])
+            oid = f"{fam.id_tag}_{run_ts}_{seq:06d}"; seq += 1
+            verdict, gstats = outcome_guard_verdict(
+                rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"],
+                gf_dir / f"{oid}.field.bin", family=fam.render_family, c=fam.c)
+            is_q3 = decoded == 3
+            distinct, dup_of = (is_distinct(rew["outcome_cx"], rew["outcome_cy"],
+                                            rew["outcome_fw"], cloud, DEDUP_K)
+                                if is_q3 else (False, None))
+            sv = survivors[wid] if wid < len(survivors) else survivors[-1]
+            row = {
+                "id": oid, "ts": run_ts, "family": fam.partition, "descend_mode": "cplane",
+                "parent_oid": None, "mix_source": sv["mix_source"],
+                "seed_cx": sv["seed_cx"], "seed_cy": sv["seed_cy"],
+                "outcome_cx": rew["outcome_cx"], "outcome_cy": rew["outcome_cy"],
+                "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"],
+                "raw_top3": rew["raw_top3"], "reached_depth": rew["reached_depth"],
+                "decoded_class": decoded,
+                # guard would-pass verdict — a recorded PRIOR, never a gate in gather.
+                "guard_verdict": verdict, "guard_pass": verdict == "pass",
+                "interior_frac": gstats.interior_frac, "field_std": gstats.field_std,
+                "distinct": distinct, "dup_of": dup_of,
+            }
+            ledger.append(row)
+            persist_walk(walks_fh, family=fam.partition, batch=batch_i, walk=wid,
+                         outcome_id=oid, frames=frames, meta=wmeta.get(wid),
+                         descend_mode="cplane")
+            totals["outcomes"] += 1; b_out += 1
+            totals["decoded"][decoded] += 1
+            totals["guard"][verdict] += 1
+            if is_q3 and distinct:
+                cloud.append(row); totals["q3_distinct"] += 1; b_q3 += 1
+
+            # --- Julia sub-descent hook (parent gate ON; loosened degree-aware bands) ---
+            if julia_hook:
+                qualifies = rew["n_frames_q2plus"] >= 2 or rew["n_frames_q3"] >= 1
+                jc = (rew["outcome_cx"], rew["outcome_cy"])
+                jc_fw = rew["outcome_fw"]
+                dense = count_within(julia_cloud, jc[0], jc[1], REJECT_RADIUS) >= Q3_DENSITY_CAP
+                if qualifies and not dense:
+                    totals["julia_descents"] += 1
+                    jmode = "center" if rng.random() < 0.5 else "normal"
+                    jseed = int(hashlib.md5(f"{oid}:{run_ts}".encode()).hexdigest()[:8], 16)
+                    jwork = scratch / f"batch_{batch_i:03d}" / "julia" / f"w{wid:04d}"
+                    jpool = run_julia_descent(jc, jmode, jseed, jwork, JULIA_WALKS_PER_DESCENT,
+                                              family=fam.partition,
+                                              esc_median_min=j_esc, spread_min=j_spread)
+                    jloc_of = make_loc_of(julia_render_family, (str(jc[0]), str(jc[1])))
+                    jwmeta = load_walk_meta(jpool)
+                    for jwid, jframes in sorted(load_frames_by_walk(jpool).items()):
+                        jrew = harvest_walk_reward(
+                            scorer, jwid, jframes, WORKERS,
+                            scratch / f"jreward_b{batch_i:03d}_w{wid:04d}", jloc_of)
+                        jdecoded = corn_decode(jrew["p_notbad"], jrew["p_good"])
+                        joid = f"j{fam.id_tag}_{run_ts}_{seq:06d}"; seq += 1
+                        jverdict, jgstats = outcome_guard_verdict(
+                            jrew["outcome_cx"], jrew["outcome_cy"], jrew["outcome_fw"],
+                            gf_dir / f"{joid}.field.bin", family=julia_render_family,
+                            c=(str(jc[0]), str(jc[1])))
+                        jis_q3 = jdecoded == 3
+                        jdistinct, jdup_of = (is_distinct(jc[0], jc[1], jc_fw, julia_cloud, DEDUP_K)
+                                              if jis_q3 else (False, None))
+                        jrow = {
+                            "id": joid, "ts": run_ts, "family": julia_part,
+                            "mix_source": "julia_hook", "parent_oid": oid,
+                            "descend_mode": jmode,
+                            "outcome_cx": jc[0], "outcome_cy": jc[1], "outcome_fw": jc_fw,
+                            "julia_z_cx": jrew["outcome_cx"], "julia_z_cy": jrew["outcome_cy"],
+                            "julia_z_fw": jrew["outcome_fw"],
+                            "k3": jrew["reward_k3"], "raw_top3": jrew["raw_top3"],
+                            "reached_depth": jrew["reached_depth"], "decoded_class": jdecoded,
+                            "guard_verdict": jverdict, "guard_pass": jverdict == "pass",
+                            "interior_frac": jgstats.interior_frac, "field_std": jgstats.field_std,
+                            "distinct": jdistinct, "dup_of": jdup_of,
+                        }
+                        ledger.append(jrow)
+                        persist_walk(walks_fh, family=julia_part, batch=batch_i, walk=jwid,
+                                     outcome_id=joid, frames=jframes, meta=jwmeta.get(jwid),
+                                     parent_oid=oid, descend_mode=jmode)
+                        totals["julia_outcomes"] += 1
+                        totals["julia_guard"][jverdict] += 1
+                        if jis_q3:
+                            totals["julia_q3"] += 1
+                        if jis_q3 and jdistinct:
+                            julia_cloud.append(jrow); julia_added_this_run += 1
+                            totals["julia_distinct"] += 1
+          except (SystemExit, Exception) as e:   # render SystemExit OR torch CUDA/OOM RuntimeError
+            totals["walk_errors"] += 1
+            print(f"  WARN walk b{batch_i:03d}_w{wid:04d} skipped ({totals['walk_errors']} total): "
+                  f"{type(e).__name__}: {str(e)[:140]}")
+            continue
+
+        el_min = (time.time() - t0) / 60
+        jinfo = (f"| julia desc={totals['julia_descents']} jout={totals['julia_outcomes']} "
+                 f"jcloud={len(julia_cloud)} " if julia_hook else "")
+        print(f"  batch {batch_i}: props={len(props)} surv={len(survivors)} walked={len(by_walk)} "
+              f"| out+{b_out} q3+{b_q3} {jinfo}| cloud={len(cloud)} rej={native.rejects}/{native.draws} "
+              f"| elapsed {el_min:.1f}m")
+
+        if native.saturated:
+            print(f"  GLOBAL SATURATION during batch {batch_i}; stopping.")
+            break
+        if budget_min and el_min >= budget_min:
+            print(f"  wallclock budget {budget_min}min reached; stopping.")
+            break
+        if smoke and batch_i >= 2:
+            break
+
+    walks_fh.close()
+    summary = {
+        "ts": run_ts, "mode": "gather", "smoke": smoke, "family": fam.partition,
+        "wallclock_s": round(time.time() - t0, 1), "batches": batch_i,
+        "config": {"family": fam.partition, "family_flags": fam.flags,
+                   "reject_radius": REJECT_RADIUS, "q3_density_cap": Q3_DENSITY_CAP,
+                   "dedup_k": DEDUP_K, "depth": [DEPTH_MIN, DEPTH_MAX], "batch_seeds": batch_seeds,
+                   "budget_min": budget_min, "scorer": SCORER_PATH, "guard": "OFF (verdict logged as prior)",
+                   "julia_hook": julia_hook,
+                   "julia_bands": JULIA_GATHER_BANDS[fam.partition] if julia_hook else None},
+        "totals": totals,
+        "seeds": {"draws": native.draws, "rejected": native.rejects, "saturation": native.saturated},
+        "cumulative": {"ledger_rows": len(ledger.rows), "q3_cloud_size": len(cloud)},
+    }
+    if julia_hook:
+        summary["julia"] = {"partition": julia_part, "cloud_size": len(julia_cloud),
+                            "distinct_added": julia_added_this_run}
+    _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
+
+    g = totals["guard"]
+    print("\n=== GATHER SUMMARY ===")
+    print(f"  class {fam.partition}: {totals['outcomes']} c-plane outcomes  "
+          f"decoded 1/2/3={totals['decoded'][1]}/{totals['decoded'][2]}/{totals['decoded'][3]}  "
+          f"q3_distinct={totals['q3_distinct']}")
+    print(f"  guard verdict (prior): pass={g['pass']} interior={g['interior']} flat={g['flat']} "
+          f"both={g['both']} render_error={g['render_error']}  | walk_errors={totals['walk_errors']}")
+    if julia_hook:
+        jg = totals["julia_guard"]
+        print(f"  julia-hook: {totals['julia_descents']} descents -> {totals['julia_outcomes']} outcomes "
+              f"(q3={totals['julia_q3']}, distinct+{totals['julia_distinct']})  "
+              f"guard pass={jg['pass']} int={jg['interior']} flat={jg['flat']} both={jg['both']} "
+              f"render_error={jg['render_error']}")
+    print(f"  wallclock {summary['wallclock_s']}s over {batch_i} batches")
+    print(f"  ledger -> {ledger.path}")
+    print(f"  walks  -> {run_dir / 'walks.jsonl'}\n  summary-> {run_dir / 'summary.json'}")
+    return summary
+
+
+def _gather_phoenix(args):
+    """Guard-OFF gathering harvest for Phoenix — the single fixed Ushiki location (no
+    parameter plane, so no density rejection, no --julia-hook). Repeatedly descends the
+    z-plane time-boxed and logs every outcome with its guard would-pass verdict prior."""
+    smoke = args.smoke
+    run_ts = time.strftime("%Y%m%d_%H%M%S")
+    class_dir = GATHER_DIR / "phoenix"
+    run_dir = class_dir / "runs" / run_ts
+    run_dir.mkdir(parents=True, exist_ok=True)
+    scratch = GATHER_SCRATCH_ROOT / "phoenix" / run_ts
+    scratch.mkdir(parents=True, exist_ok=True)
+    budget_min = args.budget if args.budget is not None else (0 if smoke else WALLCLOCK_BUDGET_MIN)
+    walks_per = args.batch or (3 if smoke else 12)   # native --phoenix walks per descent round
+
+    print(f"=== GATHER (guard-OFF) {'SMOKE ' if smoke else ''}ts={run_ts} class=phoenix ===")
+    print(f"phoenix native (fixed Ushiki location; no parameter plane -> no rejection/hook)  "
+          f"walks/round={walks_per} budget={budget_min}min")
+
+    reframe.DUMP_GUARD_FIELD = False
+    scorer = make_raw_scorer(SCORER_PATH)
+    print(f"scorer: RAW v5 CORN ({SCORER_PATH})  (guard OFF; verdict logged as prior)")
+
+    ledger = GatherLedger(class_dir)
+    loc_of = make_loc_of("phoenix", None)
+    gf_dir = scratch / "guard_fields"
+
+    totals = {"outcomes": 0, "decoded": {1: 0, 2: 0, 3: 0}, "walk_errors": 0,
+              "guard": {"pass": 0, "interior": 0, "flat": 0, "both": 0, "render_error": 0}}
+    t0 = time.time()
+    seq = 0
+    rnd = 0
+    walks_fh = open(run_dir / "walks.jsonl", "w", encoding="utf-8")
+
+    while True:
+        rnd += 1
+        try:
+            pool = run_phoenix_descent(args.seed + rnd, scratch / f"round_{rnd:03d}", walks_per)
+            by_walk = load_frames_by_walk(pool)
+            wmeta = load_walk_meta(pool)
+        except (SystemExit, Exception) as e:
+            totals["engine_errors"] = totals.get("engine_errors", 0) + 1
+            print(f"  ENGINE FAILURE round {rnd} (likely resource exhaustion); ending cleanly: "
+                  f"{type(e).__name__}: {str(e)[:160]}")
+            break
+        b_out = 0
+        for wid in sorted(by_walk):
+          # A transient render failure must not abort a multi-hour class (see _gather).
+          try:
+            frames = by_walk[wid]
+            rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
+                                      scratch / f"reward_r{rnd:03d}", loc_of)
+            decoded = corn_decode(rew["p_notbad"], rew["p_good"])
+            oid = f"ph_{run_ts}_{seq:06d}"; seq += 1
+            verdict, gstats = outcome_guard_verdict(
+                rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"],
+                gf_dir / f"{oid}.field.bin", family="phoenix", c=None)
+            row = {
+                "id": oid, "ts": run_ts, "family": "phoenix", "descend_mode": "phoenix",
+                "parent_oid": None,
+                "outcome_cx": rew["outcome_cx"], "outcome_cy": rew["outcome_cy"],
+                "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"],
+                "raw_top3": rew["raw_top3"], "reached_depth": rew["reached_depth"],
+                "decoded_class": decoded,
+                "guard_verdict": verdict, "guard_pass": verdict == "pass",
+                "interior_frac": gstats.interior_frac, "field_std": gstats.field_std,
+            }
+            ledger.append(row)
+            persist_walk(walks_fh, family="phoenix", batch=rnd, walk=wid, outcome_id=oid,
+                         frames=frames, meta=wmeta.get(wid), descend_mode="phoenix")
+            totals["outcomes"] += 1; b_out += 1
+            totals["decoded"][decoded] += 1
+            totals["guard"][verdict] += 1
+          except (SystemExit, Exception) as e:   # render SystemExit OR torch CUDA/OOM RuntimeError
+            totals["walk_errors"] += 1
+            print(f"  WARN phoenix round {rnd} walk {wid} skipped "
+                  f"({totals['walk_errors']} total): {type(e).__name__}: {str(e)[:140]}")
+            continue
+        el_min = (time.time() - t0) / 60
+        print(f"  round {rnd}: walked={len(by_walk)} out+{b_out} "
+              f"decoded 1/2/3={totals['decoded'][1]}/{totals['decoded'][2]}/{totals['decoded'][3]} "
+              f"| elapsed {el_min:.1f}m")
+        if budget_min and el_min >= budget_min:
+            print(f"  wallclock budget {budget_min}min reached; stopping.")
+            break
+        if smoke and rnd >= 1:
+            break
+
+    walks_fh.close()
+    g = totals["guard"]
+    summary = {
+        "ts": run_ts, "mode": "gather", "smoke": smoke, "family": "phoenix",
+        "wallclock_s": round(time.time() - t0, 1), "rounds": rnd,
+        "config": {"family": "phoenix", "walks_per_round": walks_per, "budget_min": budget_min,
+                   "depth": [DEPTH_MIN, DEPTH_MAX], "scorer": SCORER_PATH,
+                   "guard": "OFF (verdict logged as prior)"},
+        "totals": totals, "cumulative": {"ledger_rows": len(ledger.rows)},
+    }
+    _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
+    print("\n=== GATHER SUMMARY (phoenix) ===")
+    print(f"  {totals['outcomes']} outcomes  decoded 1/2/3="
+          f"{totals['decoded'][1]}/{totals['decoded'][2]}/{totals['decoded'][3]}")
+    print(f"  guard verdict (prior): pass={g['pass']} interior={g['interior']} flat={g['flat']} "
+          f"both={g['both']} render_error={g['render_error']}  | walk_errors={totals['walk_errors']}")
+    print(f"  wallclock {summary['wallclock_s']}s over {rnd} rounds")
+    print(f"  ledger -> {ledger.path}")
+    print(f"  walks  -> {run_dir / 'walks.jsonl'}\n  summary-> {run_dir / 'summary.json'}")
+    return summary
+
+
 def _finalize(run_ts: str):
     """Rebuild a run's summary.json + contact_sheet.png from the DURABLE ledger + the
     on-disk outcome tiles. The ledger is written per-outcome, so a kill in the cosmetic
@@ -1127,6 +1646,12 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--smoke", action="store_true", help="~20-seed run, lowered knobs so rejection fires")
     ap.add_argument("--run", action="store_true", help="30-min time-boxed production run")
+    ap.add_argument("--gather", action="store_true",
+                    help="guard-OFF oversampling harvest for the v6 label pass: raw v5 scoring "
+                         "(degenerate frames survive), guard would-pass verdict logged per outcome "
+                         "as a PRIOR (not a gate), density rejection keyed on decoded_class==3 alone, "
+                         "durable per-class GATHER_DIR/<class> ledger + full walks.jsonl, NO image/"
+                         "feature dumps. Honors --family / --julia-hook / --phoenix / --budget / --smoke.")
     ap.add_argument("--time-only", action="store_true", help="project per-batch wallclock")
     ap.add_argument("--finalize", metavar="RUN_TS", default=None,
                     help="rebuild summary + contact sheet for a run from the durable ledger")
@@ -1154,6 +1679,13 @@ def main():
     args = ap.parse_args()
     if args.finalize:
         _finalize(args.finalize)
+    elif args.gather:
+        # Phoenix has no parameter plane (resolve_family rejects it): route it to the
+        # dedicated single-location gather path. Every other family resolves normally.
+        if args.phoenix:
+            _gather_phoenix(args)
+        else:
+            _gather(args, resolve_family(args))
     elif args.time_only:
         _time_only(args, resolve_family(args))
     elif args.smoke or args.run:

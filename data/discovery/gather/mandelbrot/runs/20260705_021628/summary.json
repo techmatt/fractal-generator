@@ -1,0 +1,70 @@
+{
+  "ts": "20260705_021628",
+  "mode": "gather",
+  "smoke": false,
+  "family": "mandelbrot",
+  "wallclock_s": 393.8,
+  "batches": 2,
+  "config": {
+    "family": "mandelbrot",
+    "family_flags": [],
+    "reject_radius": 0.2,
+    "q3_density_cap": 5,
+    "dedup_k": 1.5,
+    "depth": [
+      4,
+      14
+    ],
+    "batch_seeds": 24,
+    "budget_min": 6.0,
+    "scorer": "data/classifier/v5/model_best.pt",
+    "guard": "OFF (verdict logged as prior)",
+    "julia_hook": true,
+    "julia_bands": [
+      3.0,
+      14.0
+    ]
+  },
+  "totals": {
+    "outcomes": 45,
+    "decoded": {
+      "1": 25,
+      "2": 20,
+      "3": 0
+    },
+    "q3_distinct": 0,
+    "walk_errors": 0,
+    "guard": {
+      "pass": 28,
+      "interior": 6,
+      "flat": 9,
+      "both": 2,
+      "render_error": 0
+    },
+    "julia_descents": 1,
+    "julia_outcomes": 3,
+    "julia_q3": 3,
+    "julia_distinct": 1,
+    "julia_guard": {
+      "pass": 3,
+      "interior": 0,
+      "flat": 0,
+      "both": 0,
+      "render_error": 0
+    }
+  },
+  "seeds": {
+    "draws": 69,
+    "rejected": 21,
+    "saturation": false
+  },
+  "cumulative": {
+    "ledger_rows": 811,
+    "q3_cloud_size": 49
+  },
+  "julia": {
+    "partition": "julia:mandelbrot",
+    "cloud_size": 49,
+    "distinct_added": 1
+  }
+}
