@@ -49,6 +49,20 @@ PROVENANCE_KEYS = (
     "source", "seed_landmark_id", "perturbation_frac", "beam_path", "loc_score",
     "location_score_palette", "palette_family", "gate_kind", "gate_t2",
     "gate_score", "biased", "v3_model_id",
+    # v6 gather-pool batch (2026-07-05): the guard-OFF gather harvest → label batch.
+    # `family` = the ledger cloud partition / class (mandelbrot, multibrot{3,4,5},
+    # julia:{mandelbrot,multibrot{3,4,5}}, phoenix); `k3` = the raw v5 E[ord] ∈ [0,2]
+    # the pick was ranked on (also mirrored into `filter_score` so the UI orders
+    # best-first); `decoded_class` = the CORN hard class ∈ {1,2,3} of the k3-winning
+    # frame; `guard_verdict` = the degenerate-outcome guard's prior ∈
+    # {pass,flat,interior,both} (logged, NOT gated — gather is guard-off);
+    # `descend_mode` = the descent mode (cplane/phoenix, or Julia center/normal);
+    # `parent_oid` = the c-plane parent outcome a Julia sub-descent hung off (null
+    # for native families); `lineage` = "gather". `selection_role` (best /
+    # random_eval / disagreement) and `filter_score` are reused from above. Bias
+    # loop / analysis only — never enters training.
+    "family", "k3", "decoded_class", "guard_verdict", "descend_mode",
+    "parent_oid", "lineage",
 )
 
 
