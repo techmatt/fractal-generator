@@ -1,0 +1,82 @@
+{
+  "created": "2026-07-05",
+  "labeler": null,
+  "generator_version": "gather_v6",
+  "source_run": "data/discovery/gather/<class>/ (guard-OFF v6 gather harvest)",
+  "schema_extension": "render block adds fractal_type (+c_re/c_im for Julia) for the multi-family crops; provenance adds a v6 gather block",
+  "sampling_metaparameters": {
+    "roles": "best (guard-pass & decoded>=2, k3-desc) / random_eval (uniform mid-walk depth>=2 frames) / disagreement (guard-fail, high k3)",
+    "targets": {
+      "mandelbrot": {
+        "best": 110,
+        "random_eval": 14,
+        "disagreement": 42
+      },
+      "multibrot3": {
+        "best": 55,
+        "random_eval": 13,
+        "disagreement": 6
+      },
+      "multibrot4": {
+        "best": 50,
+        "random_eval": 13,
+        "disagreement": 5
+      },
+      "multibrot5": {
+        "best": 55,
+        "random_eval": 13,
+        "disagreement": 6
+      },
+      "julia:mandelbrot": {
+        "best": 105,
+        "random_eval": 14,
+        "disagreement": 1
+      },
+      "julia:multibrot3": {
+        "best": 75,
+        "random_eval": 13,
+        "disagreement": 1
+      },
+      "julia:multibrot4": {
+        "best": 60,
+        "random_eval": 13,
+        "disagreement": 0
+      },
+      "julia:multibrot5": {
+        "best": 40,
+        "random_eval": 13,
+        "disagreement": 0
+      },
+      "phoenix": {
+        "best": 50,
+        "random_eval": 14,
+        "disagreement": 19
+      }
+    },
+    "palette_pool": "data/palettes/pool_colormaps.json (777, seeded-random per pick)",
+    "seed": 20260705,
+    "spatial_dedup": {
+      "shift_frac": 0.5,
+      "scale_band": [
+        0.6666666666666666,
+        1.5
+      ],
+      "julia_cbucket": "parent_oid (fixed-c partition)"
+    },
+    "phash_dedup": {
+      "thresh": 6,
+      "seed": "prior-corpus LABELED crops"
+    }
+  },
+  "present_gates": null,
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 4,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "maxiter": 8000,
+    "composition": "center",
+    "jpg_quality": 90
+  }
+}
