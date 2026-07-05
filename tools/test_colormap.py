@@ -141,6 +141,47 @@ def test_lut_reproduces_stops(library):
 
 
 # --------------------------------------------------------------------------- #
+# LUT memo — the module-level cache is PURE: byte-identical to an uncached bake. #
+# --------------------------------------------------------------------------- #
+
+def test_lut_memo_byte_identical(library):
+    """`build_lut` (memoized) must equal `_bake_lut` (uncached) exactly, and a render
+    with the memo warm must equal one that re-bakes fresh — for varied palette + reverse
+    + mirror. Any nonzero delta means the memo key is wrong (silent color corruption)."""
+    import json
+    cms = {c["name"]: c for c in json.loads(Path("data/palettes/score3_colormaps.json").read_text())}
+    field = _synthetic_field()
+    ow, oh = field.out_size
+    # (a) LUT-level: memoized == fresh bake, both reverse states, both mirror states.
+    for name in ("twilight", "magma", "viridis"):
+        stops = [(p, rgb) for p, rgb in cms[name]["stops"]]
+        for reverse in (False, True):
+            for mirror in (False, True):
+                cm._LUT_MEMO.clear()
+                fresh = cm._bake_lut(stops, reverse=reverse, mirror=mirror)
+                memo1 = cm.build_lut(stops, reverse=reverse, mirror=mirror)   # miss -> bake
+                memo2 = cm.build_lut(stops, reverse=reverse, mirror=mirror)   # hit
+                assert np.array_equal(fresh, memo1)
+                assert memo1 is memo2                                         # cached object reused
+    # (b) render-level: memo-warm == re-bake-every-render, across coloring knobs.
+    configs = [
+        dict(palette="twilight", reverse=False, gamma=1.0, phase=0.0, n_cycles=1),
+        dict(palette="twilight", reverse=False, gamma=1.7, phase=0.35, n_cycles=2),
+        dict(palette="magma", reverse=True, gamma=0.8, log_premap="log"),
+        dict(palette="viridis", reverse=False, gamma=1.2),
+    ]
+    for kw in configs:
+        cfg = cm.CandidateConfig(location=field.location, eval_width=ow, eval_height=oh, **kw)
+        cm._LUT_MEMO.clear(); library._lut_cache.clear()
+        warm = cm.render_candidate(field, cfg, library)                      # populates caches
+        again = cm.render_candidate(field, cfg, library)                     # memo hit
+        cm._LUT_MEMO.clear(); library._lut_cache.clear()
+        fresh = cm.render_candidate(field, cfg, library)                     # cold re-bake
+        assert np.array_equal(warm, again), kw
+        assert np.array_equal(warm, fresh), kw
+
+
+# --------------------------------------------------------------------------- #
 # Reference-match — the headline gate (shells out to the release binary).
 # --------------------------------------------------------------------------- #
 

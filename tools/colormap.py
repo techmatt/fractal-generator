@@ -153,7 +153,43 @@ def _interp_oklab_cyclic(pos, lab, t):
     return last_c + (first_c - last_c) * f
 
 
+# Module-level LUT memo. The baked LUT is a PURE function of (stops, reverse,
+# mirror): every other coloring knob (gamma / phase / n_cycles / log_premap /
+# transform) is applied to the LUT's *output* downstream in `render_candidate`,
+# never to the bake — so one bake per distinct (stops, reverse, mirror) suffices for
+# the whole process. Shared across every PaletteLibrary instance and every
+# `render_candidate` loop (beam, bootstrap, query gen), which is why it lives at
+# module scope rather than on the library. Keyed on the stops' CONTENT (not a palette
+# name) so it stays correct if two colormap files ever carry the same name with
+# different stops. Bounded by the pool's distinct (palette, reverse) count (~hundreds);
+# LUTs are tiny; no eviction. A redundant concurrent bake under threads is harmless
+# (identical result), so no lock. The cached array is never mutated downstream
+# (`lookup_linear` reads it; interior fill / downsample touch other buffers), so
+# returning the shared object is safe — same contract the per-instance cache relied on.
+_LUT_MEMO = {}
+
+
+def _stops_key(stops):
+    """Hashable, exact content signature of `stops` (list of (pos, rgb)) for the LUT
+    memo. Values kept verbatim (no rounding) so the key is a faithful identity of the
+    bake input; list rgb -> tuple so it is hashable."""
+    return tuple((float(p), tuple(float(v) for v in rgb)) for p, rgb in stops)
+
+
 def build_lut(stops, reverse=False, mirror=False):
+    """Baked (LUT_SIZE, 3) linear-RGB LUT for `stops`, memoized on (stops-content,
+    reverse, mirror). Pure memoization: byte-identical to an uncached bake. See
+    `_LUT_MEMO` above for why (stops, reverse, mirror) is the complete key."""
+    key = (_stops_key(stops), bool(reverse), bool(mirror))
+    cached = _LUT_MEMO.get(key)
+    if cached is not None:
+        return cached
+    lut = _bake_lut(stops, reverse=reverse, mirror=mirror)
+    _LUT_MEMO[key] = lut
+    return lut
+
+
+def _bake_lut(stops, reverse=False, mirror=False):
     """Bake sRGB8 stops -> (LUT_SIZE, 3) linear-RGB LUT (Rust `from_srgb8_stops_mirrored`).
 
     `stops`: list of (pos, [r,g,b]) 8-bit. `mirror` pre-reflects (sequential seam
