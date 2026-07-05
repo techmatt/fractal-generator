@@ -47,6 +47,42 @@ SWATCH_PNG = os.path.join(ROOT, "out", "palettes", "pool_types.png")
 COMPOSITE_CUT = 0.422
 DUP_THRESH = 0.06  # survey's provisional trajectory-distance near-dup threshold
 
+# Mean-luma floor (Rec.709, 0-255) applied SOURCE-BLIND over the merged pool: no
+# palette dimmer than this is ever drawn again (location render / preference sampler /
+# coloring). Anchored just below the curated-q3 brightness floor (83.7 = `seismic`) so
+# all 76 curated score-3 palettes survive; the boundary swatch montage
+# (out/palette_luma_floor/) shows the 70-84 band renders fine while <70 is near-black.
+# The dark tail lived almost entirely in `extracted` (floor 9.2), which put unlabelable
+# crops into gather_v6. Provisional -- re-run at a different value is a one-constant edit
+# with no re-renders. (84 = the strict alternative; it additionally drops `seismic` q3 +
+# 3 diverging q2.)
+LUMA_FLOOR = 70.0
+
+
+def mean_luma(stops):
+    """Rec.709 mean luma over a 256-sample gradient. SAME definition as the darkness
+    detector (out/dark_detect_v6/) so the floor is consistent with the diagnosis."""
+    ts = np.array([s[0] for s in stops], float)
+    cols = np.array([s[1] for s in stops], float)
+    g = np.linspace(0, 1, 256)
+    interp = np.stack([np.interp(g, ts, cols[:, k]) for k in range(3)], axis=1)
+    lum = 0.2126 * interp[:, 0] + 0.7152 * interp[:, 1] + 0.0722 * interp[:, 2]
+    return float(lum.mean())
+
+
+def apply_luma_floor(pool):
+    """Split the merged pool on the mean-luma floor. Returns (survivors, dropped) where
+    dropped = [(name, source, mean_luma)] sorted darkest-first (report + never-drawn)."""
+    survivors, dropped = [], []
+    for p in pool:
+        m = mean_luma(p["stops"])
+        if m >= LUMA_FLOOR:
+            survivors.append(p)
+        else:
+            dropped.append((p["name"], p["source"], m))
+    dropped.sort(key=lambda x: x[2])
+    return survivors, dropped
+
 
 def build_curated():
     """[{name, source: curated_q2|curated_q3, cycle, score, stops}], + diagnostics."""
@@ -183,8 +219,60 @@ def dedup_report(pool, feats):
     }
 
 
+def regate_existing():
+    """Re-apply the luminance floor to the already-built, git-tracked pool without the
+    survey. The floor is a pure source-blind SUBSET filter (needs only name/source/stops,
+    all present in pool_colormaps.json), so re-gating the committed pool yields exactly the
+    pool a full survey rebuild would. Used when `out/` (disposable) has been wiped so the
+    extracted survey is gone -- keeps the floor trivially re-runnable at any value.
+    Prunes the dropped names from palette_features.json too so the two stay consistent."""
+    from collections import Counter
+    pool = json.load(open(POOL_JSON))
+    n_pre = len(pool)
+    pool, dropped = apply_luma_floor(pool)
+    dc = Counter(s for _, s, _ in dropped)
+    print("re-gate (survey absent): reading existing %s" % os.path.relpath(POOL_JSON, ROOT))
+    print("luma floor %.1f: %d -> %d  (dropped %d: q3=%d q2=%d ext=%d)"
+          % (LUMA_FLOOR, n_pre, len(pool), len(dropped),
+             dc["curated_q3"], dc["curated_q2"], dc["extracted"]))
+    for nm, s, m in dropped:
+        print("   drop %-46s %-11s mean=%.1f" % (nm, s, m))
+    json.dump(pool, open(POOL_JSON, "w"), indent=1)
+    print("\nwrote %s  (%d entries)" % (os.path.relpath(POOL_JSON, ROOT), len(pool)))
+    if os.path.exists(FEATURES_JSON):
+        keep = {p["name"] for p in pool}  # prune to final membership (idempotent)
+        feats = json.load(open(FEATURES_JSON))  # flat {name: features}
+        before = len(feats)
+        feats = {k: v for k, v in feats.items() if k in keep}
+        json.dump(feats, open(FEATURES_JSON, "w"), indent=1)
+        print("pruned %s to match  (%d -> %d)"
+              % (os.path.relpath(FEATURES_JSON, ROOT), before, len(feats)))
+    if not dropped:
+        print("(pool already at/above floor -- no drop-list report rewritten)")
+        return
+    # durable drop-list report (reuses the shared writer's section)
+    L = ["# Pool luminance-floor re-gate (survey absent -> re-gated committed pool)\n"]
+    L.append("Mean-luma floor **%.1f** (Rec.709). %d -> %d (dropped %d: q3=%d q2=%d "
+             "ext=%d). See `out/palette_luma_floor/` for the montage + survivor table.\n"
+             % (LUMA_FLOOR, n_pre, len(pool), len(dropped), dc["curated_q3"],
+                dc["curated_q2"], dc["extracted"]))
+    L.append("| name | source | mean_luma |")
+    L.append("|---|---|--:|")
+    for nm, s, m in dropped:
+        L.append("| %s | %s | %.1f |" % (nm, s, m))
+    os.makedirs(os.path.dirname(REPORT_MD), exist_ok=True)
+    open(os.path.join(os.path.dirname(REPORT_MD), "pool_luma_floor_drops.md"), "w",
+         encoding="utf-8").write("\n".join(L) + "\n")
+    print("wrote out/palettes/pool_luma_floor_drops.md")
+
+
 def main():
     import time
+    if not os.path.exists(SURVEY):
+        print("!! survey %s absent (out/ wiped) -> re-gate existing pool only\n"
+              % os.path.relpath(SURVEY, ROOT))
+        regate_existing()
+        return
     curated, missing = build_curated()
     extracted, ediag = build_extracted()
 
@@ -202,6 +290,17 @@ def main():
     pool = curated + extracted
     names = [p["name"] for p in pool]
     assert len(names) == len(set(names)), "duplicate names in pool!"
+
+    # --- luminance floor (source-blind): dark palettes are never drawn again ---
+    n_pre = len(pool)
+    pool, dropped = apply_luma_floor(pool)
+    from collections import Counter
+    dc = Counter(s for _, s, _ in dropped)
+    print("\nluma floor %.1f: %d -> %d  (dropped %d: q3=%d q2=%d ext=%d)"
+          % (LUMA_FLOOR, n_pre, len(pool), len(dropped),
+             dc["curated_q3"], dc["curated_q2"], dc["extracted"]))
+    for nm, s, m in dropped:
+        print("   drop %-46s %-11s mean=%.1f" % (nm, s, m))
 
     # --- write pool artifact (name, source, source-native quality, cycle, mirror_needed, stops) ---
     # `mirror_needed` is emitted here so the pool shares ONE schema with score3/clean
@@ -278,12 +377,12 @@ def main():
 
     # --- markdown report ---
     write_report(curated, extracted, missing, ediag, tab, sources, types,
-                 col_tot, grand, ext_cyc, ext_non_names, dd, dt)
+                 col_tot, grand, ext_cyc, ext_non_names, dd, dt, dropped)
     print("wrote", os.path.relpath(REPORT_MD, ROOT))
 
 
 def write_report(curated, extracted, missing, ediag, tab, sources, types,
-                 col_tot, grand, ext_cyc, ext_non_names, dd, dt):
+                 col_tot, grand, ext_cyc, ext_non_names, dd, dt, dropped=()):
     ext_non = len(ext_non_names)
     L = []
     L.append("# Merged palette pool — contingency + dedup report\n")
@@ -321,6 +420,21 @@ def write_report(curated, extracted, missing, ediag, tab, sources, types,
         L.append("|---|---|---|")
         for nm, ed, seam in sorted(ext_non_names, key=lambda x: x[0]):
             L.append("| %s | %.3f | %.3f |" % (nm, ed, seam))
+        L.append("")
+    if dropped is not None and len(dropped):
+        from collections import Counter
+        dc = Counter(s for _, s, _ in dropped)
+        L.append("## Luminance floor (source-blind)\n")
+        L.append("Mean-luma floor **%.1f** (Rec.709, same def as `out/dark_detect_v6/`), "
+                 "applied over the merged pool so no dark palette is drawn again. "
+                 "Dropped **%d** (q3=%d, q2=%d, extracted=%d). Boundary swatch montage + "
+                 "survivor-by-floor table: `out/palette_luma_floor/`.\n"
+                 % (LUMA_FLOOR, len(dropped), dc["curated_q3"], dc["curated_q2"],
+                    dc["extracted"]))
+        L.append("| name | source | mean_luma |")
+        L.append("|---|---|--:|")
+        for nm, s, m in dropped:
+            L.append("| %s | %s | %.1f |" % (nm, s, m))
         L.append("")
     L.append("## Contingency table (type x source)\n")
     L.append("```")
