@@ -57,6 +57,7 @@ Reuse (located, not reinvented):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -122,6 +123,9 @@ BATCH_SEEDS = 24             # accepted proposals per batch (amortizes engine st
 NATIVE_POOL_WALKS = 400      # native depth-1 walks generated per refill (seed source)
 WORKERS = 4              # multiprocessing worker cap (project rule: max 4)
 
+# --- Julia sub-descent hook (--julia-hook; strictly additive, default off) ---
+JULIA_WALKS_PER_DESCENT = 3  # native --julia walks per qualifying parent outcome (tunable)
+
 # --- durable store (committed via .gitignore negation, like the atlas) ---
 DISCOVERY_DIR = ROOT / "data" / "discovery"
 OUTCOME_LEDGER = DISCOVERY_DIR / "outcome_ledger.jsonl"
@@ -147,15 +151,27 @@ NCOL_DUP = 6   # cap the near-dup / non-q3 strip on the contact sheet
 from collections import namedtuple
 
 # Known-good Julia z-plane anchor (mirrors cross_family_shakeout.JULIA_C). `c` is fixed
-# for a Julia run and is baked into the partition key; beyond that discriminator it never
-# enters the (cx, cy) z-plane radius query.
+# for a standalone --julia run; the partition is degree-only (`julia:{fam}`, see
+# julia_partition) and `c` is the cloud coordinate, not part of the key.
 JULIA_C = ("-0.07810228973371881", "-0.6514609012382414")
 
 _MULTIBROT = ("multibrot3", "multibrot4", "multibrot5")
 
+
+def julia_partition(fam: str) -> str:
+    """Degree-only Julia cloud partition key: `julia:{fam}` (fam is the c-plane family
+    the descent hangs off — mandelbrot / multibrot{d}). The parameter `c` is the cloud
+    COORDINATE (outcome_cx/cy), NOT part of the key, so the partition matches the
+    multibrot partitions structurally and every Julia found-point in the plane repels
+    future `c` regardless of its z-plane spot. Defined once; reused by resolve_family
+    (standalone --julia runs) and the julia-hook found-point commit."""
+    return f"julia:{fam}"
+
+
 # flags        : extra guided-descend CLI flags (family/julia grammar; [] for mandelbrot).
-# partition    : ledger `family` discriminator keying the q3 cloud (family+degree, +anchor
-#                for Julia). "mandelbrot" for the native family (byte-identical to old rows).
+# partition    : ledger `family` discriminator keying the q3 cloud (family+degree; Julia
+#                is degree-only `julia:{fam}`, c is a coordinate). "mandelbrot" for the
+#                native family (byte-identical to old rows).
 # render_family: canonical location.family for the outcome/reward render path.
 # c            : fixed (re, im) decimal-string pair under --julia, else None.
 # id_tag       : short outcome-id prefix (keeps ids legible + collision-free across families).
@@ -217,7 +233,9 @@ def resolve_family(args) -> FamilyResolved:
         flags = (["--family", fam] if fam != "mandelbrot" else []) + \
             ["--julia", "--c", c[0], c[1]]
         render_family = "julia" if fam == "mandelbrot" else f"julia_{fam}"
-        partition = f"julia:{fam}@{c[0]},{c[1]}"
+        # Degree-only partition (`c` is the cloud coordinate, not the key) — structurally
+        # identical to the multibrot partitions; shared with the julia-hook found-points.
+        partition = julia_partition(fam)
         id_tag = "jm" if fam == "mandelbrot" else f"jmb{deg}"
     elif fam in _MULTIBROT:
         deg = fam[len("multibrot"):]
@@ -552,6 +570,35 @@ def run_full_walks(survivors: list[dict], workdir: Path, seed: int,
     return pool
 
 
+def run_julia_descent(c, mode: str, seed: int, workdir: Path, n_walks: int,
+                      family: str = "mandelbrot") -> Path:
+    """Native Julia z-plane descent at the fixed parameter `c = (c_re, c_im)`, run at
+    PRODUCTION depth (not depth-1). A variant of `generate_native_seeds` that shells
+    `guided-descend --julia --c <c_re> <c_im>` (+ `--julia-center` when `mode ==
+    "center"`, + `--family multibrot{d}` for a multibrot parent so the dynamics match
+    the render family). NATIVE only — never `--seed-list` (the engine rejects a z-plane
+    seed list under `--julia`); the julia root step is the engine's own base-scale
+    z-plane draw, so native descent needs no injected seeds. Writes `pool.jsonl` under
+    `workdir/pool` and returns that pool dir (for `load_frames_by_walk`)."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    pool = workdir / "pool"
+    fam_flags = [] if family == "mandelbrot" else ["--family", family]
+    cmd = [
+        str(prescreen.BIN), "guided-descend",
+        "--n-walks", str(n_walks), "--seed", str(seed), "--per-walk-rng",
+        "--depth-min", str(DEPTH_MIN), "--depth-max", str(DEPTH_MAX),
+        "--node-width", str(NODE_WIDTH), "--sigma-band", SIGMA_BAND,
+        "--descent-occ-floor", str(OCC_FLOOR), "--descent-black-cap", str(BLACK_CAP),
+        "--preview-width", "48", "--cols", "40",
+        "--julia", "--c", str(c[0]), str(c[1]),
+        "--out-dir", str(pool),
+    ] + fam_flags + (["--julia-center"] if mode == "center" else [])
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"julia descent failed (c={c}, mode={mode}):\n{r.stderr[-2000:]}")
+    return pool
+
+
 def _chosen_probs(res) -> tuple[float, float]:
     """CORN (p_notbad, p_good) of a reframe winner's chosen frame — pulled from the
     reframe trace (already computed when k3 was scored; no extra render/forward)."""
@@ -574,7 +621,14 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch, loc_of=_mand_loca
     raw-screen render AND the top-3 reframe through the correct fractal so a multibrot /
     Julia walk's reward is scored on its own frames, not Mandelbrot crops."""
     sr.SCRATCH = scratch
-    raws = raw_screen_walk(scorer, wid, frames, workers, loc_of=loc_of)
+    triples = raw_screen_walk(scorer, wid, frames, workers, loc_of=loc_of,
+                              return_triples=True)
+    raws = [t[0] for t in triples]
+    # Parent gate for the Julia sub-descent hook: decode the RAW frames (un-reframed —
+    # the frames raw_screen_walk already scored; no new render/forward) and surface the
+    # counts. Harmless to compute for Julia sub-walks too; only read on parents.
+    n_frames_q2plus = sum(1 for (_, nb, g) in triples if corn_decode(nb, g) >= 2)
+    n_frames_q3 = sum(1 for (_, nb, g) in triples if corn_decode(nb, g) == 3)
     # Run-scoped guard observability (pure read of the raw scores — changes nothing):
     # a raw frame that scored GUARD_SENTINEL was pushed out of top-3 contention as
     # degenerate. `frames_gated` counts them; the salvage-breakdown classifier uses it.
@@ -608,6 +662,7 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch, loc_of=_mand_loca
         "outcome_cx": float(res.cx), "outcome_cy": float(res.cy), "outcome_fw": float(res.fw),
         "p_notbad": p_notbad, "p_good": p_good,
         "frames_gated": frames_gated, "n_frames": len(frames),
+        "n_frames_q2plus": n_frames_q2plus, "n_frames_q3": n_frames_q3,
     }
 
 
@@ -714,8 +769,27 @@ def _run(args, fam: FamilyResolved):
     # active family's reward-render factory (raw-screen + reframe route through this).
     loc_of = make_loc_of(fam.render_family, fam.c)
 
+    # --- Julia sub-descent hook state (only when --julia-hook; else fully inert) ---
+    # The hook hangs a native --julia descent off each qualifying c-plane outcome `c`,
+    # scores it, and commits q3 results in the degree-only `julia:{fam}` partition. That
+    # partition's found-points are a SEPARATE intra-run cloud (repel future `c`); cross-run
+    # repulsion is automatic (rebuilt from the ledger next run). The render/descent family
+    # is this run's c-plane family flipped to its dynamical Julia twin.
+    julia_hook = bool(args.julia_hook)
+    if julia_hook:
+        julia_render_family = "julia" if fam.partition == "mandelbrot" \
+            else f"julia_{fam.partition}"
+        julia_part = julia_partition(fam.partition)
+        julia_cloud = build_cloud(ledgers.rows, julia_part)
+        jdiag = cloud_diagnostic(ledgers.rows, julia_cloud, julia_part)
+        print(f"julia-hook: ON  partition '{julia_part}' render_family={julia_render_family} "
+              f"walks/descent={JULIA_WALKS_PER_DESCENT}  | julia q3 cloud "
+              f"{jdiag['cloud_size']} distinct c ({jdiag['partition_rows']} partition rows)")
+    julia_added_this_run = 0
+
     totals = {"proposed": 0, "probe_rejected": 0, "walked": 0,
-              "harvested_distinct": 0, "q3_dup": 0, "not_q3": 0, "guarded": 0}
+              "harvested_distinct": 0, "q3_dup": 0, "not_q3": 0, "guarded": 0,
+              "julia_descents": 0, "julia_walks": 0, "julia_q3": 0, "julia_distinct": 0}
     distinct_tiles, dup_tiles = [], []
     batch_timings = []
     # Run-scoped guard telemetry (per walk). Observes scoring; never alters it or the
@@ -764,6 +838,7 @@ def _run(args, fam: FamilyResolved):
 
         # 4. per-walk k3 reward + outcome center + decode + 1280-D feature; 5. cloud add.
         b_distinct = b_q3dup = b_notq3 = b_guarded = 0
+        b_jdesc = b_jdist = 0   # julia-hook: descents fired / distinct julia q3 this batch
         for wid in sorted(by_walk):
             frames = by_walk[wid]
             rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
@@ -827,6 +902,78 @@ def _run(args, fam: FamilyResolved):
                 b_notq3 += 1
                 if len(dup_tiles) < NCOL_DUP:
                     dup_tiles.append((tile, f"k3={rew['reward_k3']:.2f} cls{decoded}"))
+
+            # --- Julia sub-descent hook (strictly additive; runs only with --julia-hook,
+            # AFTER the parent has committed above; the parent path is byte-unchanged). ---
+            if julia_hook:
+                # Parent gate (un-dropped raw-frame decodes): fire only if the parent walk
+                # shows real structure — >=2 raw frames decode q2+ OR >=1 raw frame decodes
+                # q3 (the q3 clause rescues a single-spike walk). No reframing / new renders.
+                qualifies = rew["n_frames_q2plus"] >= 2 or rew["n_frames_q3"] >= 1
+                jc = (rew["outcome_cx"], rew["outcome_cy"])   # the parameter c (cloud coord)
+                jc_fw = rew["outcome_fw"]                      # parent plane fw = dedup scale
+                # Density pre-check: skip a c already saturated with Julia found-points.
+                dense = count_within(julia_cloud, jc[0], jc[1], REJECT_RADIUS) >= Q3_DENSITY_CAP
+                if qualifies and not dense:
+                    totals["julia_descents"] += 1; b_jdesc += 1
+                    jmode = "center" if rng.random() < 0.5 else "normal"   # 50/50
+                    # deterministic per-parent seed (stable across runs; oid embeds seq+ts).
+                    jseed = int(hashlib.md5(f"{oid}:{run_ts}".encode()).hexdigest()[:8], 16)
+                    jwork = scratch / f"batch_{batch_i:03d}" / "julia" / f"w{wid:04d}"
+                    jpool = run_julia_descent(jc, jmode, jseed, jwork,
+                                              JULIA_WALKS_PER_DESCENT, family=fam.partition)
+                    # score each Julia walk on ITS OWN frames (fixed c) via the julia factory.
+                    jloc_of = make_loc_of(julia_render_family, (str(jc[0]), str(jc[1])))
+                    for jwid, jframes in sorted(load_frames_by_walk(jpool).items()):
+                        totals["julia_walks"] += 1
+                        jrew = harvest_walk_reward(
+                            scorer, jwid, jframes, WORKERS,
+                            scratch / f"jreward_b{batch_i:03d}_w{wid:04d}", jloc_of)
+                        # guard verdict / decode / q3 — EXACTLY as the parent loop does.
+                        jguard_pass = jrew["reward_k3"] > guard.GUARD_SENTINEL + 1e-6
+                        jdecoded = corn_decode(jrew["p_notbad"], jrew["p_good"]) if jguard_pass else None
+                        jis_q3 = jguard_pass and jdecoded == 3
+                        # distinctness is on `c` (the parameter), NOT the z-plane spot:
+                        # multiple q3 walks at the same c collapse to one found-point.
+                        if jis_q3:
+                            jdistinct, jdup_of = is_distinct(jc[0], jc[1], jc_fw,
+                                                             julia_cloud, DEDUP_K)
+                        else:
+                            jdistinct, jdup_of = False, None
+
+                        joid = f"j{fam.id_tag}_{run_ts}_{seq:06d}"; seq += 1
+                        jtile = tiles_dir / f"{joid}.jpg"
+                        # 1280-D feature on the Julia z-plane outcome crop (fixed c).
+                        jfeat = outcome_feature(
+                            scorer, jrew["outcome_cx"], jrew["outcome_cy"], jrew["outcome_fw"],
+                            jtile, family=julia_render_family, c=(str(jc[0]), str(jc[1])))
+                        jrow = {
+                            # cloud role: outcome_* IS the parameter c (build_cloud repels on c).
+                            "id": joid, "ts": run_ts, "family": julia_part,
+                            "mix_source": "julia_hook", "parent_oid": oid,
+                            "descend_mode": jmode,
+                            "outcome_cx": jc[0], "outcome_cy": jc[1], "outcome_fw": jc_fw,
+                            # render target: the Julia walk's own z-plane wallpaper location.
+                            "julia_z_cx": jrew["outcome_cx"], "julia_z_cy": jrew["outcome_cy"],
+                            "julia_z_fw": jrew["outcome_fw"],
+                            "k3": jrew["reward_k3"], "raw_top3": jrew["raw_top3"],
+                            "reached_depth": jrew["reached_depth"],
+                            "decoded_class": jdecoded,
+                            "distinct": jdistinct, "dup_of": jdup_of,
+                            "guard_pass": jguard_pass,
+                            "guard_fail": None if jguard_pass else "sentinel",
+                        }
+                        # commit EVERY Julia walk (feeds the v6 pool + record), mirroring
+                        # the parent loop committing all outcomes.
+                        ledgers.append_outcome(jrow, jfeat)
+                        if jis_q3:
+                            totals["julia_q3"] += 1
+                        if jis_q3 and jdistinct:
+                            julia_cloud.append(jrow)
+                            julia_added_this_run += 1
+                            totals["julia_distinct"] += 1; b_jdist += 1
+                            distinct_tiles.append(
+                                (jtile, f"{joid[-6:]} k3={jrew['reward_k3']:.2f} Jq3 {jmode}"))
         ledgers.save_feats()
         totals["harvested_distinct"] += b_distinct
         totals["q3_dup"] += b_q3dup
@@ -837,9 +984,11 @@ def _run(args, fam: FamilyResolved):
         batch_timings.append(dt)
         el_min = (time.time() - t0) / 60
         rej_frac = native.rejects / max(1, native.draws)
+        jinfo = (f"| julia desc={b_jdesc} jq3+{b_jdist} jcloud={len(julia_cloud)} "
+                 if julia_hook else "")
         print(f"  batch {batch_i}: props={len(props)} surv={len(survivors)} walked={len(by_walk)} "
               f"| q3+{b_distinct} q3dup+{b_q3dup} notq3+{b_notq3} guarded+{b_guarded} "
-              f"| draws={native.draws} rej={native.rejects} ({rej_frac:.0%}) cloud={len(cloud)} "
+              f"{jinfo}| draws={native.draws} rej={native.rejects} ({rej_frac:.0%}) cloud={len(cloud)} "
               f"| {dt:.0f}s (elapsed {el_min:.1f}m)")
 
         if native.saturated:
@@ -878,7 +1027,9 @@ def _run(args, fam: FamilyResolved):
                    "max_seed_redraws": MAX_SEED_REDRAWS, "dedup_k": DEDUP_K,
                    "node_width": NODE_WIDTH, "sigma_band": SIGMA_BAND,
                    "depth": [DEPTH_MIN, DEPTH_MAX], "occ_floor": OCC_FLOOR, "black_cap": BLACK_CAP,
-                   "batch_seeds": batch_seeds, "budget_min": budget_min, "scorer": SCORER_PATH},
+                   "batch_seeds": batch_seeds, "budget_min": budget_min, "scorer": SCORER_PATH,
+                   "julia_hook": julia_hook,
+                   "julia_walks_per_descent": JULIA_WALKS_PER_DESCENT if julia_hook else None},
         "totals": totals,
         "seeds": {"draws": native.draws, "rejected": native.rejects,
                   "rejected_fraction": rej_frac, "saturation": native.saturated},
@@ -887,6 +1038,13 @@ def _run(args, fam: FamilyResolved):
         "cumulative": {"q3_cloud_size": len(cloud),
                        "scored_rows": ledgers.n_outcomes_logged},
     }
+    if julia_hook:
+        summary["julia"] = {
+            "partition": julia_part, "render_family": julia_render_family,
+            "descents": totals["julia_descents"], "walks": totals["julia_walks"],
+            "q3": totals["julia_q3"], "distinct_added": julia_added_this_run,
+            "cloud_size": len(julia_cloud),
+        }
     _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
     sheet = build_contact_sheet(
         distinct_tiles, dup_tiles, run_dir / "contact_sheet.png",
@@ -900,6 +1058,10 @@ def _run(args, fam: FamilyResolved):
     print(f"  seeds: {native.draws} drawn, {native.rejects} rejected ({rej_frac:.1%}), "
           f"saturation={native.saturated}")
     print(f"  q3 cloud: {len(cloud)} distinct places (+{q3_added_this_run} this run)")
+    if julia_hook:
+        print(f"  julia-hook: {totals['julia_descents']} descents / {totals['julia_walks']} walks "
+              f"-> {totals['julia_q3']} q3 ({julia_added_this_run} distinct new) "
+              f"| julia cloud {len(julia_cloud)} distinct c  [partition '{julia_part}']")
     print(f"  wallclock {summary['wallclock_s']}s over {batch_i} batches")
     print(f"  ledgers -> {OUTCOME_LEDGER.name}, {OUTCOME_FEATS.name}, {PROBE_REJECTS.name}")
     print(f"  summary -> {run_dir / 'summary.json'}\n  sheet   -> {sheet}")
@@ -984,6 +1146,11 @@ def main():
     ap.add_argument("--phoenix", action="store_true",
                     help="recognized but rejected: Phoenix is a single fixed location with no "
                          "parameter plane to prospect (descend it directly via guided-descend).")
+    ap.add_argument("--julia-hook", action="store_true",
+                    help="for each qualifying parameter-plane outcome c, run a native --julia "
+                         "descent at that c, score it, and commit q3 results as found-points in "
+                         "a degree-only julia:{fam} partition (strictly additive; default off — "
+                         "c-plane runs are byte-unchanged when off).")
     args = ap.parse_args()
     if args.finalize:
         _finalize(args.finalize)

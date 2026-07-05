@@ -108,7 +108,7 @@ def _raw_tile_name(idx: int) -> str:
 
 
 def raw_screen_walk(scorer, wid: int, frames: list[dict], workers: int,
-                    loc_of=_mand_location) -> list[float]:
+                    loc_of=_mand_location, return_triples: bool = False):
     """Render the reframe center tile (fw x1.0 rung, 640x360 ss2) for every frame and
     score it -- this is exactly reframe_location's `original_score` for that frame, so
     the later reframe of a top-k frame satisfies reframed >= this raw.
@@ -117,7 +117,13 @@ def raw_screen_walk(scorer, wid: int, frames: list[dict], workers: int,
     (default `_mand_location`, byte-identical for every existing Mandelbrot caller).
     Pass a Julia/multibrot factory to route those families' frames through the SAME
     raw-screen render path -- `_render` reads the family off the Location via
-    `render_one_flags`, so nothing else changes."""
+    `render_one_flags`, so nothing else changes.
+
+    Default returns the score-only list (`[score, ...]`, frame order) — every existing
+    caller is unchanged. With `return_triples=True` returns the full CORN triples
+    `[(score, p_notbad, p_good), ...]` instead: the raw-frame decode the Julia-hook
+    parent gate needs (`raw_screen_walk` scores the triples then drops p_notbad/p_good;
+    this opt-in preserves them without a second forward)."""
     tiles = SCRATCH / f"walk_{wid:04d}" / "raw"
     tiles.mkdir(parents=True, exist_ok=True)
     to_render = []
@@ -141,6 +147,8 @@ def raw_screen_walk(scorer, wid: int, frames: list[dict], workers: int,
             raise SystemExit(f"raw render failed ({len(fails)}) [{out.name}]: {err}")
     paths = [tiles / _raw_tile_name(fr["idx"]) for fr in frames]
     triples = scorer.score_paths(paths)
+    if return_triples:
+        return [(float(t[0]), float(t[1]), float(t[2])) for t in triples]
     return [float(t[0]) for t in triples]
 
 
