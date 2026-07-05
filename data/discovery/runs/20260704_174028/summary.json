@@ -1,0 +1,60 @@
+{
+  "ts": "20260704_174028",
+  "smoke": true,
+  "wallclock_s": 630.2,
+  "batches": 3,
+  "batch_timings_s": [
+    209.0,
+    225.4,
+    195.7
+  ],
+  "config": {
+    "family": "multibrot3",
+    "family_flags": [
+      "--family",
+      "multibrot3"
+    ],
+    "reject_radius": 0.2,
+    "q3_density_cap": 2,
+    "max_seed_redraws": 30,
+    "dedup_k": 1.5,
+    "node_width": 384,
+    "sigma_band": "8,10,12,14,16",
+    "depth": [
+      4,
+      14
+    ],
+    "occ_floor": 0.321,
+    "black_cap": 0.3,
+    "batch_seeds": 12,
+    "budget_min": 0,
+    "scorer": "data/classifier/v5/model_best.pt"
+  },
+  "totals": {
+    "proposed": 36,
+    "probe_rejected": 1,
+    "walked": 35,
+    "harvested_distinct": 6,
+    "q3_dup": 0,
+    "not_q3": 29,
+    "guarded": 0
+  },
+  "seeds": {
+    "draws": 36,
+    "rejected": 0,
+    "rejected_fraction": 0.0,
+    "saturation": false
+  },
+  "q3_added_this_run": 6,
+  "guard_telemetry": {
+    "n_walks": 35,
+    "clean_harvest": 24,
+    "salvaged_harvest": 11,
+    "dropped": 0,
+    "frames_gated_total": 12
+  },
+  "cumulative": {
+    "q3_cloud_size": 6,
+    "scored_rows": 237
+  }
+}
