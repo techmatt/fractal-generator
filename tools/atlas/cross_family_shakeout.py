@@ -2,9 +2,12 @@
 r"""Cross-family shakeout — timings + visual sanity on the fast (guarded) reward path.
 
 Observation run, NOT discovery. Now that the guard field is sourced from the fast
-F64Backend smooth channel (~20-45x faster), run a small shakeout across all five
-descendable families to (a) measure real per-walk wallclock on the fast path and
-(b) eyeball that each family's descents land on real boundary detail. NO
+F64Backend smooth channel (~20-45x faster), run a small shakeout across the
+parameter-plane descendable families (mandelbrot + multibrot3/4/5) to (a) measure
+real per-walk wallclock on the fast path and (b) eyeball that each family's descents
+land on real boundary detail. (Fixed-anchor Julia was dropped — the Julia discovery
+hook now descends the z-plane per outcome c, superseding a single hardcoded anchor.)
+NO
 density-rejection / atlas apparatus -- just ~4 seed-varied walks per family through
 the normal guarded reward pipeline:
 
@@ -74,13 +77,13 @@ BLACK_CAP = 0.30
 WORKERS = 4                # project rule: max 4
 SCORER_PATH = "data/classifier/v5/model_best.pt"
 
-# Known-good Julia anchor (prompt): seeds vary the z-plane crop.
-JULIA_C = ("-0.07810228973371881", "-0.6514609012382414")
-
 FAMILIES = [
     # (key, guided-descend extra flags, reframe-Location family, (c_re,c_im)|None)
+    # Fixed-anchor Julia was removed: the single hardcoded JULIA_C anchor (z-crop
+    # scatter) is superseded by the Julia discovery hook, which descends the z-plane
+    # per parameter-plane outcome c. The remaining parameter-plane families
+    # (mandelbrot, multibrot3/4/5) stay valid observation/timing paths.
     ("mandelbrot", [], "mandelbrot", None),
-    ("julia", ["--julia", "--c", JULIA_C[0], JULIA_C[1]], "julia", JULIA_C),
     ("multibrot3", ["--family", "multibrot3"], "multibrot3", None),
     ("multibrot4", ["--family", "multibrot4"], "multibrot4", None),
     ("multibrot5", ["--family", "multibrot5"], "multibrot5", None),
@@ -339,7 +342,7 @@ def _timing_table(summary: list[dict]):
     print("================================================")
     print("note: reward/walk = raw-score every frame + reframe top-3 (all guarded); "
           "fld%tile = guard-field render as % of one tile's two-render wall (was ~85-93%).")
-    print("      fld_src=f64 for every escape-time family (mandelbrot/julia + multibrot).")
+    print("      fld_src=f64 for every escape-time family (mandelbrot + multibrot).")
 
 
 if __name__ == "__main__":
