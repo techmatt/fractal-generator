@@ -49,7 +49,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))            # tools/corpus/
 from corpus_common import (make_row, provenance_block, label_block,       # noqa: E402
                            render_block, hp_str, write_jsonl, read_jsonl,
-                           render_label_crop, render_recipe_stamp)
+                           render_corpus_crop, render_recipe_stamp)
 from verify_render_path import check_batch                                # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mining"))
@@ -290,7 +290,7 @@ def cand_render_block(c) -> dict:
     """The version-invariant render block for a candidate — the SINGLE source of the
     crop's pixels. Built once here and reused verbatim at emit, so the stored block
     is exactly what was rendered (the crop stays a pure function of its render block,
-    rebuildable via `render-one --palette`; see corpus_common.render_label_crop)."""
+    rebuildable via `render-one --palette`; see corpus_common.render_corpus_crop)."""
     render = render_block(cx=hp_str(c["cx"]), cy=hp_str(c["cy"]), fw=hp_str(c["fw"]),
                           maxiter=MAXITER, palette=c["palette"], composition=COMPOSITION,
                           width=W, height=H, ss=SS, filter=FILTER, interior_mode=INTERIOR)
@@ -308,9 +308,9 @@ def _render(c):
     if out.exists():
         return (c["image_id"], True)
     try:
-        render_label_crop(cand_render_block(c), out, palette_source=SCORE3_COLORMAPS,
-                          bin_path=BIN, jpg_quality=JPGQ, cwd=str(ROOT),
-                          creationflags=BELOW_NORMAL)
+        render_corpus_crop(cand_render_block(c), out, palette_source=SCORE3_COLORMAPS,
+                           bin_path=BIN, jpg_quality=JPGQ, cwd=str(ROOT),
+                           creationflags=BELOW_NORMAL)
     except RuntimeError as e:
         sys.stderr.write(f"[render {c['image_id']}] FAILED: {e}\n")
         return (c["image_id"], False)

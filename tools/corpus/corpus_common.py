@@ -183,8 +183,11 @@ def batch_dir(batch_id: str) -> str:
 # ARBITRARY-PARAM coloring (gamma/phase/cycles/reverse) — e.g. the wallpaper-
 # bootstrap / preference path, which is its own canonical recipe and out of scope.
 #
-# Route every location-corpus crop render through `render_label_crop` below so the
-# wrong path is structurally unreachable for corpus code.
+# Route every location-corpus crop render through `render_corpus_crop` below so the
+# wrong path is structurally unreachable for corpus code. (Named `render_corpus_crop`,
+# NOT `render_label_crop`, to avoid colliding with the wallpaper-bootstrap module's
+# own `render_label_crop`, which deliberately uses the render_candidate tail for its
+# arbitrary-param preference recipe — a different, out-of-scope path.)
 # ===========================================================================
 CANONICAL_CROP_RECIPE = "render-one --palette --colormaps"
 DEFAULT_CROP_JPGQ = 90
@@ -205,9 +208,9 @@ def _location_mod():
     return importlib.import_module("location")
 
 
-def render_label_crop(render: dict, out_path, *, palette_source, bin_path=None,
-                      jpg_quality: int = DEFAULT_CROP_JPGQ, cwd=None,
-                      creationflags: int = 0, timeout=None) -> str:
+def render_corpus_crop(render: dict, out_path, *, palette_source, bin_path=None,
+                       jpg_quality: int = DEFAULT_CROP_JPGQ, cwd=None,
+                       creationflags: int = 0, timeout=None) -> str:
     """Render ONE location-corpus label crop the canonical way and return `out_path`.
 
     `render` is a version-invariant render block (`RENDER_KEYS`, optionally the
@@ -233,7 +236,7 @@ def render_label_crop(render: dict, out_path, *, palette_source, bin_path=None,
                        creationflags=creationflags, timeout=timeout)
     if r.returncode != 0 or not os.path.exists(out_path):
         raise RuntimeError(
-            f"render_label_crop failed for {out_path} "
+            f"render_corpus_crop failed for {out_path} "
             f"(rc={r.returncode}): {(r.stderr or '')[-400:]}")
     return str(out_path)
 

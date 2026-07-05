@@ -42,7 +42,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 
-from corpus_common import (read_jsonl, write_jsonl, render_label_crop,     # noqa: E402
+from corpus_common import (read_jsonl, write_jsonl, render_corpus_crop,    # noqa: E402
                            render_recipe_stamp)
 from verify_render_path import check_batch                                # noqa: E402
 
@@ -76,8 +76,8 @@ def recolor_one(row, palette):
     out = CROPS / f"{iid}.jpg"
     block = {**row["render"], "palette": palette}     # same block, new palette only
     try:
-        render_label_crop(block, out, palette_source=SCORE3, bin_path=EXE,
-                          jpg_quality=JPGQ, cwd=str(ROOT), creationflags=BELOW_NORMAL)
+        render_corpus_crop(block, out, palette_source=SCORE3, bin_path=EXE,
+                           jpg_quality=JPGQ, cwd=str(ROOT), creationflags=BELOW_NORMAL)
     except RuntimeError as e:
         return (iid, False, str(e)[-300:])
     with Image.open(out) as im:

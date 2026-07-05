@@ -3,7 +3,7 @@
 
 The enforceable form of the "crops are rebuildable" contract: sample K crops from a
 batch, **rebuild each from its stored render block via the canonical
-`render-one --palette` path** (`corpus_common.render_label_crop`), and assert the
+`render-one --palette` path** (`corpus_common.render_corpus_crop`), and assert the
 rebuild matches the stored crop within JPEG-quantization noise.
 
 Why this is the durable backstop: it fires regardless of HOW a bad batch was
@@ -38,7 +38,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))            # tools/corpus/
 from corpus_common import (CANONICAL_CROP_RECIPE, DEFAULT_CROP_JPGQ,       # noqa: E402
-                           render_label_crop, read_jsonl)
+                           render_corpus_crop, read_jsonl)
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PALETTE_SOURCE = ROOT / "data" / "palettes" / "score3_colormaps.json"
@@ -72,7 +72,7 @@ def _resolve_recipe(batch_dir: Path, palette_source_override):
         if stamp.get("path") != CANONICAL_CROP_RECIPE:
             raise AssertionError(
                 f"batch.json render_recipe.path is {stamp.get('path')!r}, not the canonical "
-                f"{CANONICAL_CROP_RECIPE!r} — this batch was NOT built through render_label_crop")
+                f"{CANONICAL_CROP_RECIPE!r} -- this batch was NOT built through render_corpus_crop")
         ps = palette_source_override or (ROOT / stamp["palette_source"])
         jq = int(stamp.get("jpg_quality", DEFAULT_CROP_JPGQ))
         return Path(ps), jq
@@ -106,9 +106,9 @@ def check_batch(batch_dir, k: int = DEFAULT_K, seed: int = DEFAULT_SEED,
             iid = r["image_id"]
             stored = crops / f"{iid}.jpg"
             rebuilt = Path(td) / f"{iid}.jpg"
-            render_label_crop(r["render"], rebuilt, palette_source=palette_source,
-                              jpg_quality=jpg_quality, cwd=str(ROOT),
-                              creationflags=BELOW_NORMAL)
+            render_corpus_crop(r["render"], rebuilt, palette_source=palette_source,
+                               jpg_quality=jpg_quality, cwd=str(ROOT),
+                               creationflags=BELOW_NORMAL)
             d = _mean_abs_delta(stored, rebuilt)
             deltas.append((iid, d))
             if verbose:
