@@ -340,6 +340,10 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     if dynamical && args.julia_root_fw <= 0.0 {
         return Err(format!("--julia-root-fw must be > 0 (got {})", args.julia_root_fw));
     }
+    // Center-descend is a Julia-only descent shape (a straight centered z-plane zoom).
+    if args.julia_center && julia_c.is_none() {
+        return Err("--julia-center is valid only with --julia".into());
+    }
     // The boundary band (rev4 B2 random branch) reads DE; the dynamical kernels carry
     // none, so gate it off (the branch then draws a DE-free interior point).
     let random_boundary = args.random_boundary && !dynamical;
@@ -652,6 +656,18 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         &band, node_w, node_h, args.maxiter, &render_node, &mut rng,
                     )
                 }
+            } else if args.julia_center {
+                // --- CENTER-DESCEND STEP (depth ≥ 2, `--julia-center`): pure centered
+                //     zoom. Shrink fw by the SAME per-step ratio the normal walk uses,
+                //     honour the SAME --min-fw floor, keep the window at (0,0). No
+                //     finder / best-of-N / placement — every rung is emitted as a
+                //     candidate in the normal shape. ---
+                let new_fw = parent.frame_width * sample_log_uniform(zoom_lo, zoom_hi, &mut rng);
+                if new_fw < args.min_fw {
+                    StepResult::Died(EndCause::MinFwFloor)
+                } else {
+                    center_step_julia(new_fw, node_w, node_h, args.maxiter, &render_node)
+                }
             } else {
                 // --- NORMAL STEP (depth ≥ 2): per-node finder + placement, unchanged
                 //     rev3 best-of-N set-avoidance; rev4 B4 jitters the zoom. ---
@@ -691,6 +707,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         "density" => branch_counts[1] += 1,
                         "random" => branch_counts[2] += 1,
                         "root8k" => root8k_count += 1,
+                        // Center-descend rungs used no policy branch — count them in
+                        // none of the buckets (roots still count as rootjulia below).
+                        "center" => {}
                         _ => rootflat_count += 1, // "rootflat" / "rootjulia"
                     }
                     chosen_interiors.push(interior);
@@ -1250,6 +1269,32 @@ fn root_step_julia(
     let buf = render_node(&frame);
     let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
     StepResult::Accepted(frame, buf, "rootjulia", "center", f64::NAN, int_frac, f64::NAN)
+}
+
+/// Center-descend rung (`--julia-center`): a pure centered zoom step at the (0,0)
+/// z-plane symmetry center. The caller has already applied the normal per-step zoom
+/// ratio and the `--min-fw` floor to `fw`; this just renders the centered node and
+/// emits it as an ordinary accepted candidate. No finder, no best-of-N, no placement
+/// — the walk output is the same shape as a normal walk's, so downstream scoring and
+/// harvest are mode-agnostic. Shares the Julia `render_node` (picks the kernel from
+/// `julia_c`). Interior fraction is logged like the other roots; occupancy is NaN
+/// (no best-of-N selection produced it).
+fn center_step_julia(
+    fw: f64,
+    node_w: u32,
+    node_h: u32,
+    maxiter: u32,
+    render_node: &impl Fn(&Frame) -> render::SampleBuffer,
+) -> StepResult {
+    let frame = Frame {
+        center: Complex::new(0.0, 0.0),
+        frame_width: fw,
+        out_width: node_w,
+        out_height: node_h,
+    };
+    let buf = render_node(&frame);
+    let (int_frac, _esc) = generate::screen_stats(&buf.samples, maxiter);
+    StepResult::Accepted(frame, buf, "center", "center", f64::NAN, int_frac, f64::NAN)
 }
 
 /// Injected root: pin the depth-1 node to an externally proposed `(cx, cy, fw)`
@@ -2450,6 +2495,15 @@ pub struct GuidedDescendArgs {
     /// at 0). Descent then leaves this center.
     #[arg(long, default_value_t = 3.0)]
     pub julia_root_fw: f64,
+
+    /// **Center-descend** the Julia z-plane (valid only with `--julia`): every rung
+    /// stays pinned at the (0,0) symmetry center, shrinking `fw` from `--julia-root-fw`
+    /// by the normal per-step zoom ratio — no foci, no best-of-N, no content search, a
+    /// straight centered zoom. Rung count emerges from the same depth cap / `--min-fw`
+    /// bounds a normal walk uses; the walk output shape is identical so downstream
+    /// scoring/harvest is mode-agnostic. Default off = ordinary off-center descend.
+    #[arg(long, default_value_t = false)]
+    pub julia_center: bool,
 
     /// Flat-grid PNG columns.
     #[arg(long, default_value_t = 10)]
