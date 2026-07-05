@@ -59,7 +59,8 @@ def write_seed_list(path: Path, cx, cy, fw):
 
 
 def prescreen(cloud: np.ndarray, fw: np.ndarray, workdir: Path,
-              node_width: int, occ_floor: float, black_cap: float, seed: int) -> dict:
+              node_width: int, occ_floor: float, black_cap: float, seed: int,
+              extra_flags: list | None = None) -> dict:
     """Descendability pre-screen = guided-descend's OWN step-1, run for real.
 
     A seed's descendability is NOT a property of its (wide) root frame — the occupancy
@@ -70,6 +71,14 @@ def prescreen(cloud: np.ndarray, fw: np.ndarray, workdir: Path,
     node/sigma/screen config to the full run, `--per-walk-rng`): walk w reaches depth 2
     iff its seed is descendable. This reuses the descent machinery verbatim (zero parity
     risk) and directly targets the productivity metric (reached_depth >= 2).
+
+    `extra_flags` are appended to the guided-descend command verbatim — the family
+    grammar (`--family multibrot{d}`, or `--julia --c <re> <im>`) the caller resolved.
+    Default `None` keeps every existing Mandelbrot caller byte-identical. NOTE: the
+    engine's `--seed-list` path is c-plane-only (it rejects `--julia`/`--phoenix`), so
+    the c-plane multibrot families thread cleanly here but a `--julia` probe will fail
+    loudly with the engine's own "c-plane-only" message — Julia is plumbed, not yet
+    runnable end-to-end through the seed-list pipeline (see production_seeder step 5).
 
     Returns per-candidate `pass` (reached >= 2) in cloud-row order + the death-cause
     tally (the undescendable-frontier diagnostic)."""
@@ -85,7 +94,7 @@ def prescreen(cloud: np.ndarray, fw: np.ndarray, workdir: Path,
         "--descent-occ-floor", str(occ_floor), "--descent-black-cap", str(black_cap),
         "--preview-width", "48", "--cols", "40",
         "--out-dir", str(pool),
-    ]
+    ] + (list(extra_flags) if extra_flags else [])
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"guided-descend probe failed:\n{r.stderr[-2000:]}")
@@ -113,10 +122,15 @@ def prescreen(cloud: np.ndarray, fw: np.ndarray, workdir: Path,
 RENDER_W, RENDER_H, RENDER_SS = 640, 360, 2  # reframe search fidelity
 
 
-def _render(cx, cy, fw, out: Path) -> tuple[bool, str]:
+def _render(cx, cy, fw, out: Path, *, family: str = "mandelbrot", c=None) -> tuple[bool, str]:
+    """Render an outcome tile at v5 search fidelity. `family`/`c` select the fractal:
+    default (`mandelbrot`, no c) is byte-identical to the historical call; pass e.g.
+    `family="multibrot3"` or `family="julia", c=(re, im)` and the family's flags are
+    emitted by `render_one_flags` (the ONE flag builder) off the canonical Location."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    loc = loc_mod.Location(family="mandelbrot", cx=str(cx), cy=str(cy), fw=str(fw),
-                           c_re=None, c_im=None, family_params={})
+    c_re, c_im = (c if c is not None else (None, None))
+    loc = loc_mod.Location(family=family, cx=str(cx), cy=str(cy), fw=str(fw),
+                           c_re=c_re, c_im=c_im, family_params={})
     cmd = [
         str(BIN), "render-one", "--cx", str(cx), "--cy", str(cy), "--fw", repr(float(fw)),
         "--width", str(RENDER_W), "--height", str(RENDER_H), "--supersample", str(RENDER_SS),

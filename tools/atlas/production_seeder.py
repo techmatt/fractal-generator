@@ -1,9 +1,17 @@
 #!/usr/bin/env python
-r"""Atlas production discovery seeder (Mandelbrot) — the standing discovery flow.
+r"""Atlas production discovery seeder — the standing discovery flow, per family.
 
 Native-only discovery: the guided-descend engine's own root draw proposes depth-1
 seeds; coverage is controlled by REJECTION SAMPLING over a point cloud of distinct
 q3 outcomes (there is no atlas, no coverage grid, no per-cell cap). Per batch:
+
+Family grammar (`--family` / `--julia --c` / `--phoenix`; see `resolve_family`): the
+c-plane families (mandelbrot + multibrot3/4/5) run the full loop — the engine carries
+the per-degree bands + degree_bbox flat-box, so only `--family` threads through. The q3
+cloud is PARTITIONED by family (ledger `family` key): a d3 outcome and a Mandelbrot seed
+at the same (cx, cy) are different parameter planes, so the radius query + startup
+rebuild filter to the active partition. Julia is plumbed (fixed anchor, borrowed bands),
+Phoenix is deliberately rejected (no parameter plane to prospect).
 
   draw native depth-1 seed  (engine root draw, ~96% descendability pre-gated)
     -> REJECT if >= Q3_DENSITY_CAP distinct q3 outcomes lie within REJECT_RADIUS
@@ -127,6 +135,122 @@ NCOL_DUP = 6   # cap the near-dup / non-q3 strip on the contact sheet
 
 
 # =========================================================================== #
+# Family grammar (mirror src/guided_descend.rs mutual-exclusion / requirement rules).
+# The engine carries the per-degree bands + degree_bbox flat-box internally
+# (WalkFamily::{root8k_band_defaults, flat_spread_min_default, flat_box_default}), so
+# the seeder only passes `--family multibrot{d}` — band/box selection is downstream and
+# correct-by-construction. `partition` is the ledger `family` discriminator that keys the
+# q3 outcome cloud: a d3 outcome and a Mandelbrot seed at the SAME (cx, cy) live in
+# different parameter planes, so both the radius-rejection query and the startup rebuild
+# filter to the active family's partition (else rejection is meaningless).
+# =========================================================================== #
+from collections import namedtuple
+
+# Known-good Julia z-plane anchor (mirrors cross_family_shakeout.JULIA_C). `c` is fixed
+# for a Julia run and is baked into the partition key; beyond that discriminator it never
+# enters the (cx, cy) z-plane radius query.
+JULIA_C = ("-0.07810228973371881", "-0.6514609012382414")
+
+_MULTIBROT = ("multibrot3", "multibrot4", "multibrot5")
+
+# flags        : extra guided-descend CLI flags (family/julia grammar; [] for mandelbrot).
+# partition    : ledger `family` discriminator keying the q3 cloud (family+degree, +anchor
+#                for Julia). "mandelbrot" for the native family (byte-identical to old rows).
+# render_family: canonical location.family for the outcome/reward render path.
+# c            : fixed (re, im) decimal-string pair under --julia, else None.
+# id_tag       : short outcome-id prefix (keeps ids legible + collision-free across families).
+# julia        : bool, the dynamical z-plane mode flag.
+FamilyResolved = namedtuple(
+    "FamilyResolved", "flags partition render_family c id_tag julia")
+
+
+def resolve_family(args) -> FamilyResolved:
+    """Validate the family grammar and resolve it to guided-descend flags + the cloud
+    partition key + the render Location family + the fixed c + a short id tag. Mirrors the
+    engine's rules (src/guided_descend.rs): `--julia` ⊥ `--phoenix`; `--phoenix` is
+    degree-2 (⊥ multibrot); `--julia` requires `--c`; `--c` only with `--julia`. Raises
+    SystemExit with a clear message on any invalid combo — rejected before any descent."""
+    fam = args.family
+    julia = bool(args.julia)
+    phoenix = bool(args.phoenix)
+    c = tuple(str(v) for v in args.c) if args.c is not None else None
+
+    # --- mutual exclusion (engine: --julia and --phoenix are exclusive dynamical modes) ---
+    if julia and phoenix:
+        raise SystemExit("--julia and --phoenix are mutually exclusive dynamical modes")
+
+    # --- Phoenix: recognized, then deliberately rejected (step 6). Phoenix is a single
+    # fixed location with NO parameter plane, so spatial radius-rejection discovery has
+    # nothing to prospect. Rejection is the correct resolution — NOT a one-point descent. ---
+    if phoenix:
+        if fam != "mandelbrot":
+            raise SystemExit(
+                "--phoenix is the degree-2 two-state plane; incompatible with "
+                "--family multibrot*")
+        raise SystemExit(
+            "--phoenix has no (cx, cy) parameter plane to prospect: it is a single fixed "
+            "location, so the seeder's spatial radius-rejection discovery does not apply. "
+            "Descend Phoenix directly with `guided-descend --phoenix` (the shakeout-style "
+            "single-location z-plane descent); the production seeder covers only families "
+            "with a parameter plane to sample.")
+
+    # --- --julia requires --c; --c only meaningful under --julia (Phoenix handled above) ---
+    if julia:
+        if c is None:
+            raise SystemExit(
+                "--julia requires --c <re> <im> (the fixed dynamical parameter); the "
+                f"shakeout's known-good anchor is --c {JULIA_C[0]} {JULIA_C[1]}")
+    elif c is not None:
+        raise SystemExit(
+            "--c given without --julia: it is the fixed dynamical parameter and is only "
+            "valid under --julia")
+
+    # --- resolve flags / partition / render family / id tag ---
+    if julia:
+        # Julia (quadratic) or Julia-multibrot: z-plane descent at the fixed c. Rides
+        # BORROWED/UNTUNED Mandelbrot-family bands (plumbed, not yet validated — no band
+        # tuning in scope). Also: the engine's `--seed-list` path is c-plane-only, so the
+        # depth-2 probe + full walks (both seed-list) fail loudly under --julia — Julia is
+        # wired correctly in construction but not yet runnable end-to-end through this
+        # seed-list pipeline (would need a z-plane seed-list mode in the engine).
+        deg = "" if fam == "mandelbrot" else fam[len("multibrot"):]
+        flags = (["--family", fam] if fam != "mandelbrot" else []) + \
+            ["--julia", "--c", c[0], c[1]]
+        render_family = "julia" if fam == "mandelbrot" else f"julia_{fam}"
+        partition = f"julia:{fam}@{c[0]},{c[1]}"
+        id_tag = "jm" if fam == "mandelbrot" else f"jmb{deg}"
+    elif fam in _MULTIBROT:
+        deg = fam[len("multibrot"):]
+        flags = ["--family", fam]
+        render_family = fam
+        partition = fam
+        id_tag = f"mb{deg}"
+    else:  # mandelbrot c-plane — byte-identical to the historical pipeline
+        flags = []
+        render_family = "mandelbrot"
+        partition = "mandelbrot"
+        id_tag = "m"
+
+    return FamilyResolved(flags=flags, partition=partition, render_family=render_family,
+                          c=c, id_tag=id_tag, julia=julia)
+
+
+def make_loc_of(render_family: str, c):
+    """Per-family reframe.Location factory for the raw-screen + reframe reward path
+    (mirrors cross_family_shakeout.make_loc_of). `make_loc_of("mandelbrot", None)` is
+    byte-identical to step0_reanalysis._mand_location, so the Mandelbrot reward path is
+    unchanged; a multibrot/julia factory routes those frames through the same render path
+    (render_one_flags reads the family off the Location)."""
+    from reframe import Location
+    c_re, c_im = (c if c is not None else (None, None))
+
+    def loc_of(cx, cy, fw):
+        return Location(family=render_family, c_re=c_re, c_im=c_im,
+                        cx=str(cx), cy=str(cy), fw=str(fw), family_params={})
+    return loc_of
+
+
+# =========================================================================== #
 # Distinctness predicates (pure — unit-tested)
 # =========================================================================== #
 def near_dup(a_cx, a_cy, a_fw, b_cx, b_cy, b_fw, k=DEDUP_K) -> bool:
@@ -229,16 +353,22 @@ def append_probe_rejects(rows: list[dict]):
 # The q3 outcome cloud — reconstruct from the durable ledger (cross-run coverage
 # state). Keep guard_pass && decoded_class == 3 rows, deduped by 1.5*max(fw).
 # =========================================================================== #
-def build_cloud(rows: list[dict]) -> list[dict]:
-    """One position per distinct q3 place: guard_pass && decoded_class == 3, deduped by
-    1.5*max(fw). Order-stable: the earliest distinct row wins a dedup cluster, matching
-    the live-harvest add order.
+def build_cloud(rows: list[dict], family: str) -> list[dict]:
+    """One position per distinct q3 place *within the active `family` partition*:
+    row family == `family` && guard_pass && decoded_class == 3, deduped by 1.5*max(fw).
+    Order-stable: the earliest distinct row wins a dedup cluster, matching the live-harvest
+    add order.
 
-    Rows predating the decoded_class field (no historical backfill — see the module note)
-    lack decoded_class and are simply excluded; the cross-run cloud rebuilds from rows the
-    new pipeline logs going forward."""
+    The `family` filter is the correctness fix: cross-family outcomes at the same (cx, cy)
+    are different parameter planes and must never interact in the radius query / dedup.
+    Rows missing `family` default to "mandelbrot" (all pre-grammar rows are Mandelbrot),
+    so the existing Mandelbrot cloud survives with no reset. Rows predating the
+    decoded_class field (no historical backfill — see the module note) lack decoded_class
+    and are simply excluded."""
     cloud: list[dict] = []
     for r in rows:
+        if r.get("family", "mandelbrot") != family:
+            continue
         if r.get("guard_pass", True) and r.get("decoded_class") == 3:
             distinct, _ = is_distinct(r["outcome_cx"], r["outcome_cy"], r["outcome_fw"],
                                       cloud, DEDUP_K)
@@ -247,16 +377,18 @@ def build_cloud(rows: list[dict]) -> list[dict]:
     return cloud
 
 
-def cloud_diagnostic(rows: list[dict], cloud: list[dict]) -> dict:
-    """Startup summary: total rows, guard_pass count, class-2 vs class-3 split among
-    guard-clean *decoded* rows (rows the new pipeline logged; pre-decoded_class rows are
-    not counted), and the distinct q3 cloud size after dedup."""
-    guard_clean = [r for r in rows
+def cloud_diagnostic(rows: list[dict], cloud: list[dict], family: str) -> dict:
+    """Startup summary scoped to the active `family` partition: partition rows, guard_pass
+    count, class-1/2/3 split among guard-clean *decoded* partition rows (pre-decoded_class
+    rows are not counted), and the distinct q3 cloud size after dedup."""
+    fam_rows = [r for r in rows if r.get("family", "mandelbrot") == family]
+    guard_clean = [r for r in fam_rows
                    if r.get("guard_pass", True) and r.get("decoded_class") is not None]
     split = {c: sum(1 for r in guard_clean if r["decoded_class"] == c) for c in (1, 2, 3)}
-    n_undecoded = sum(1 for r in rows
+    n_undecoded = sum(1 for r in fam_rows
                       if r.get("guard_pass", True) and r.get("decoded_class") is None)
-    return {"total_rows": len(rows), "guard_pass": sum(1 for r in rows if r.get("guard_pass", True)),
+    return {"family": family, "total_rows": len(rows), "partition_rows": len(fam_rows),
+            "guard_pass": sum(1 for r in fam_rows if r.get("guard_pass", True)),
             "guard_clean_decoded": len(guard_clean), "undecoded_guard_pass": n_undecoded,
             "class_split": split, "cloud_size": len(cloud)}
 
@@ -268,7 +400,8 @@ def cloud_diagnostic(rows: list[dict], cloud: list[dict]) -> dict:
 # refills on demand (fresh engine sub-seed) so the ONLY stop conditions are global
 # saturation (MAX_SEED_REDRAWS consecutive rejections) and the wallclock budget.
 # =========================================================================== #
-def generate_native_seeds(n_walks: int, seed: int, workdir: Path) -> list[dict]:
+def generate_native_seeds(n_walks: int, seed: int, workdir: Path,
+                          family_flags: list | None = None) -> list[dict]:
     workdir.mkdir(parents=True, exist_ok=True)
     cmd = [
         str(prescreen.BIN), "guided-descend",
@@ -278,7 +411,7 @@ def generate_native_seeds(n_walks: int, seed: int, workdir: Path) -> list[dict]:
         "--descent-occ-floor", str(OCC_FLOOR), "--descent-black-cap", str(BLACK_CAP),
         "--preview-width", "48", "--cols", "40",
         "--out-dir", str(workdir),
-    ]
+    ] + (list(family_flags) if family_flags else [])
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"native seed generation failed:\n{r.stderr[-2000:]}")
@@ -301,10 +434,12 @@ class NativeSeeder:
     native pool from a fresh engine sub-seed when depleted. Tracks draw/reject counters
     and the saturation flag (consecutive rejections > MAX_SEED_REDRAWS)."""
 
-    def __init__(self, base_seed: int, scratch: Path, rng: np.random.Generator):
+    def __init__(self, base_seed: int, scratch: Path, rng: np.random.Generator,
+                 family_flags: list | None = None):
         self.base_seed = base_seed
         self.scratch = scratch
         self.rng = rng
+        self.family_flags = family_flags or []   # native root draw runs on the active family
         self.gen = 0
         self.q: list[dict] = []
         self.draws = 0          # total native seeds examined (accepted + rejected)
@@ -314,7 +449,8 @@ class NativeSeeder:
 
     def _refill(self):
         wd = self.scratch / f"native_{self.gen}"
-        seeds = generate_native_seeds(NATIVE_POOL_WALKS, self.base_seed + 1000 * self.gen, wd)
+        seeds = generate_native_seeds(NATIVE_POOL_WALKS, self.base_seed + 1000 * self.gen, wd,
+                                      self.family_flags)
         self.rng.shuffle(seeds)
         self.q.extend(seeds)
         self.gen += 1
@@ -349,12 +485,15 @@ class NativeSeeder:
 # Depth-2 descendability probe (reuse prescreen.prescreen VERBATIM; read the walks it
 # writes for per-seed reached + cause). reached>=2 -> survivor; else probe-reject.
 # =========================================================================== #
-def depth2_probe(props: list[dict], workdir: Path, seed: int):
+def depth2_probe(props: list[dict], workdir: Path, seed: int, family_flags: list | None = None):
     """Returns (survivors, rejects, causes) where survivor rows carry the proposal +
-    reached, reject rows carry seed_cx/cy/reached/cause/child_occ."""
+    reached, reject rows carry seed_cx/cy/reached/cause/child_occ. `family_flags` thread
+    the active family's grammar into the depth-2 probe (c-plane families only; a --julia
+    probe surfaces the engine's own "--seed-list is c-plane-only" error — see step 5)."""
     cloud = np.array([[p["seed_cx"], p["seed_cy"]] for p in props], float)
     fw = np.array([p["fw"] for p in props], float)
-    scr = prescreen.prescreen(cloud, fw, workdir, NODE_WIDTH, OCC_FLOOR, BLACK_CAP, seed)
+    scr = prescreen.prescreen(cloud, fw, workdir, NODE_WIDTH, OCC_FLOOR, BLACK_CAP, seed,
+                              extra_flags=family_flags)
     reached = scr["reached"]
     # per-seed cause + chosen-child occupancy from the probe's own walks.jsonl (row
     # order == proposal order). child_occ is the engine's OWN depth-2 admission-point
@@ -389,8 +528,10 @@ def depth2_probe(props: list[dict], workdir: Path, seed: int):
 # Full walks + k3 best-frame reward (reuse step0_reanalysis primitives) + outcome
 # center + 1280-D penultimate feature.
 # =========================================================================== #
-def run_full_walks(survivors: list[dict], workdir: Path, seed: int):
-    """One --seed-list --per-walk-rng production walk run over the survivors."""
+def run_full_walks(survivors: list[dict], workdir: Path, seed: int,
+                   family_flags: list | None = None):
+    """One --seed-list --per-walk-rng production walk run over the survivors, on the active
+    family (c-plane families only — see the depth-2 probe / step 5 note)."""
     workdir.mkdir(parents=True, exist_ok=True)
     seed_in = workdir / "survivor_seeds.jsonl"
     prescreen.write_seed_list(seed_in, [s["seed_cx"] for s in survivors],
@@ -404,7 +545,7 @@ def run_full_walks(survivors: list[dict], workdir: Path, seed: int):
         "--descent-occ-floor", str(OCC_FLOOR), "--descent-black-cap", str(BLACK_CAP),
         "--preview-width", "48", "--cols", "40",
         "--out-dir", str(pool),
-    ]
+    ] + (list(family_flags) if family_flags else [])
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"full walk run failed:\n{r.stderr[-2000:]}")
@@ -422,13 +563,18 @@ def _chosen_probs(res) -> tuple[float, float]:
     return 0.0, 0.0
 
 
-def harvest_walk_reward(scorer, wid, frames, workers, scratch):
+def harvest_walk_reward(scorer, wid, frames, workers, scratch, loc_of=_mand_location):
     """k3 best-frame reward for one walk, composing the step0_reanalysis primitives
-    (raw_screen_walk / reframe_location / _mand_location / KRAW),
+    (raw_screen_walk / reframe_location / KRAW),
     plus the raw-top3 list, the k3-winner's reframed outcome geometry, and the winner's
-    CORN (p_notbad, p_good) for the hard-class decode."""
+    CORN (p_notbad, p_good) for the hard-class decode.
+
+    `loc_of(cx, cy, fw) -> reframe.Location` is the active family's location factory
+    (default `_mand_location`, byte-identical for Mandelbrot); it routes both the
+    raw-screen render AND the top-3 reframe through the correct fractal so a multibrot /
+    Julia walk's reward is scored on its own frames, not Mandelbrot crops."""
     sr.SCRATCH = scratch
-    raws = raw_screen_walk(scorer, wid, frames, workers)
+    raws = raw_screen_walk(scorer, wid, frames, workers, loc_of=loc_of)
     # Run-scoped guard observability (pure read of the raw scores — changes nothing):
     # a raw frame that scored GUARD_SENTINEL was pushed out of top-3 contention as
     # degenerate. `frames_gated` counts them; the salvage-breakdown classifier uses it.
@@ -441,7 +587,7 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch):
     reward_k1 = None
     for rank, i in enumerate(topk):
         fr = frames[i]
-        loc = _mand_location(fr["cx"], fr["cy"], fr["fw"])
+        loc = loc_of(fr["cx"], fr["cy"], fr["fw"])
         wd = scratch / f"walk_{wid:04d}" / f"reframe_top{rank}"
         res = reframe_location(loc, scorer=scorer, seed=0, workdir=wd, workers=workers)
         # monotone-non-decreasing by construction (the x1.0 rung is in the search space).
@@ -465,10 +611,11 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch):
     }
 
 
-def outcome_feature(scorer, cx, cy, fw, tile: Path) -> np.ndarray:
+def outcome_feature(scorer, cx, cy, fw, tile: Path, *, family="mandelbrot", c=None) -> np.ndarray:
     """Render the k3 winner's reframed crop once at deploy search fidelity (640x360 ss2,
-    twilight_shifted) and forward it through the v5 penultimate hook -> 1280-D."""
-    ok, err = prescreen._render(cx, cy, fw, tile)
+    twilight_shifted) on the active `family`/`c` and forward it through the v5 penultimate
+    hook -> 1280-D. Default (mandelbrot, no c) is byte-identical to the historical call."""
+    ok, err = prescreen._render(cx, cy, fw, tile, family=family, c=c)
     if not ok:
         raise SystemExit(f"outcome tile render failed [{tile.name}]: {err}")
     return prescreen.embed_paths(scorer, [tile])[0]
@@ -509,7 +656,7 @@ def build_contact_sheet(distinct_tiles, dup_tiles, out_png: Path, title: str):
 # =========================================================================== #
 # Orchestration
 # =========================================================================== #
-def _run(args):
+def _run(args, fam: FamilyResolved):
     smoke = args.smoke
     run_ts = time.strftime("%Y%m%d_%H%M%S")
     run_dir = RUNS_DIR / run_ts
@@ -528,6 +675,11 @@ def _run(args):
     budget_min = args.budget if args.budget is not None else (0 if smoke else WALLCLOCK_BUDGET_MIN)
 
     print(f"=== atlas production seeder ({'SMOKE' if smoke else 'RUN'}) ts={run_ts} ===")
+    print(f"family: {fam.partition}  (descend flags: {' '.join(fam.flags) or '(none: native mandelbrot)'}"
+          f"; render family {fam.render_family})")
+    if fam.julia:
+        print("  NOTE: --julia is PLUMBED, not validated — rides borrowed/untuned Mandelbrot "
+              "bands, and the seed-list probe/walk steps are c-plane-only (engine will reject).")
     print(f"coverage: q3-density REJECTION  radius={REJECT_RADIUS} cap={Q3_DENSITY_CAP} "
           f"max_redraws={MAX_SEED_REDRAWS} dedup_k={DEDUP_K}  batch={batch_seeds} budget={budget_min}min")
     print(f"walk cfg: node={NODE_WIDTH} sigma={SIGMA_BAND} depth[{DEPTH_MIN},{DEPTH_MAX}] "
@@ -548,16 +700,19 @@ def _run(args):
     # No historical backfill (by design): rows predating the decoded_class field don't
     # enter the q3 cloud; the cross-run coverage cloud rebuilds from rows the new pipeline
     # logs going forward.
-    cloud = build_cloud(ledgers.rows)
-    diag = cloud_diagnostic(ledgers.rows, cloud)
-    print(f"ledgers: {diag['total_rows']} rows, {diag['guard_pass']} guard_pass "
+    cloud = build_cloud(ledgers.rows, fam.partition)
+    diag = cloud_diagnostic(ledgers.rows, cloud, fam.partition)
+    print(f"ledgers: {diag['total_rows']} rows ({diag['partition_rows']} in partition "
+          f"'{fam.partition}'), {diag['guard_pass']} guard_pass "
           f"({diag['guard_clean_decoded']} decoded; class1/2/3="
           f"{diag['class_split'][1]}/{diag['class_split'][2]}/{diag['class_split'][3]}; "
           f"{diag['undecoded_guard_pass']} pre-decode rows excluded)"
           f"  | q3 cloud {diag['cloud_size']} distinct places")
 
     rng = np.random.default_rng(args.seed)
-    native = NativeSeeder(args.seed, scratch, rng)
+    native = NativeSeeder(args.seed, scratch, rng, fam.flags)
+    # active family's reward-render factory (raw-screen + reframe route through this).
+    loc_of = make_loc_of(fam.render_family, fam.c)
 
     totals = {"proposed": 0, "probe_rejected": 0, "walked": 0,
               "harvested_distinct": 0, "q3_dup": 0, "not_q3": 0, "guarded": 0}
@@ -587,7 +742,7 @@ def _run(args):
 
         # 2. depth-2 descendability probe (survivors reached>=2).
         pw = scratch / f"batch_{batch_i:03d}" / "probe"
-        survivors, rejects, pcauses = depth2_probe(props, pw, args.seed)
+        survivors, rejects, pcauses = depth2_probe(props, pw, args.seed, fam.flags)
         append_probe_rejects(rejects)
         totals["probe_rejected"] += len(rejects)
         if not survivors:
@@ -603,7 +758,7 @@ def _run(args):
 
         # 3. full production walks over survivors.
         ww = scratch / f"batch_{batch_i:03d}" / "walks"
-        pool = run_full_walks(survivors, ww, args.seed)
+        pool = run_full_walks(survivors, ww, args.seed, fam.flags)
         by_walk = load_frames_by_walk(pool)
         totals["walked"] += len(by_walk)
 
@@ -611,7 +766,8 @@ def _run(args):
         b_distinct = b_q3dup = b_notq3 = b_guarded = 0
         for wid in sorted(by_walk):
             frames = by_walk[wid]
-            rew = harvest_walk_reward(scorer, wid, frames, WORKERS, scratch / f"reward_b{batch_i:03d}")
+            rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
+                                      scratch / f"reward_b{batch_i:03d}", loc_of)
             sv = survivors[wid] if wid < len(survivors) else survivors[-1]
             # Guard verdict: k3 collapses to the sentinel iff EVERY framing of the top-3
             # failed the guard. A guarded outcome carries decoded_class=None and can never
@@ -625,11 +781,15 @@ def _run(args):
             else:
                 distinct, dup_of = False, None
 
-            oid = f"m_{run_ts}_{seq:06d}"; seq += 1
+            oid = f"{fam.id_tag}_{run_ts}_{seq:06d}"; seq += 1
             tile = tiles_dir / f"{oid}.jpg"
-            feat = outcome_feature(scorer, rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"], tile)
+            feat = outcome_feature(scorer, rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"],
+                                   tile, family=fam.render_family, c=fam.c)
             row = {
-                "id": oid, "ts": run_ts, "family": "mandelbrot",
+                # `family` is the cloud partition discriminator (family+degree, +anchor for
+                # Julia). Recoverable, so — unlike decoded_class — no fresh-start is needed;
+                # existing rows lack it and default to "mandelbrot" in build_cloud.
+                "id": oid, "ts": run_ts, "family": fam.partition,
                 "mix_source": sv["mix_source"],
                 "seed_cx": sv["seed_cx"], "seed_cy": sv["seed_cy"],
                 "outcome_cx": rew["outcome_cx"], "outcome_cy": rew["outcome_cy"],
@@ -713,7 +873,8 @@ def _run(args):
     summary = {
         "ts": run_ts, "smoke": smoke, "wallclock_s": round(time.time() - t0, 1),
         "batches": batch_i, "batch_timings_s": [round(x, 1) for x in batch_timings],
-        "config": {"reject_radius": REJECT_RADIUS, "q3_density_cap": Q3_DENSITY_CAP,
+        "config": {"family": fam.partition, "family_flags": fam.flags,
+                   "reject_radius": REJECT_RADIUS, "q3_density_cap": Q3_DENSITY_CAP,
                    "max_seed_redraws": MAX_SEED_REDRAWS, "dedup_k": DEDUP_K,
                    "node_width": NODE_WIDTH, "sigma_band": SIGMA_BAND,
                    "depth": [DEPTH_MIN, DEPTH_MAX], "occ_floor": OCC_FLOOR, "black_cap": BLACK_CAP,
@@ -756,7 +917,10 @@ def _finalize(run_ts: str):
     rows = [r for r in all_rows if r.get("ts") == run_ts]
     if not rows:
         raise SystemExit(f"no outcome rows with ts={run_ts} in {OUTCOME_LEDGER}")
-    cloud = build_cloud(all_rows)
+    # A run is single-family; infer its partition from the rows so the reconstructed cloud
+    # is that family's (rows missing `family` are pre-grammar Mandelbrot).
+    partition = rows[0].get("family", "mandelbrot")
+    cloud = build_cloud(all_rows, partition)
     distinct = [r for r in rows if r.get("distinct")]
     dup = [r for r in rows if not r.get("distinct")]
     totals = {"walked": len(rows), "harvested_distinct": len(distinct),
@@ -765,9 +929,10 @@ def _finalize(run_ts: str):
               "not_q3": sum(1 for r in rows if r.get("guard_pass", True)
                             and r.get("decoded_class") not in (None, 3)),
               "guarded": sum(1 for r in rows if not r.get("guard_pass", True))}
-    summary = {"ts": run_ts, "finalized_from_ledger": True, "totals": totals,
+    summary = {"ts": run_ts, "finalized_from_ledger": True, "family": partition, "totals": totals,
                "cumulative": {"q3_cloud_size": len(cloud), "scored_rows": len(all_rows)},
-               "config": {"reject_radius": REJECT_RADIUS, "q3_density_cap": Q3_DENSITY_CAP,
+               "config": {"family": partition, "reject_radius": REJECT_RADIUS,
+                          "q3_density_cap": Q3_DENSITY_CAP,
                           "dedup_k": DEDUP_K, "scorer": SCORER_PATH}}
     run_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
@@ -783,13 +948,13 @@ def _finalize(run_ts: str):
     return summary
 
 
-def _time_only(args):
+def _time_only(args, fam: FamilyResolved):
     """Project per-batch wallclock from one native-gen + one small batch."""
     args.smoke = True
     args.batch = args.batch or 12
     print("(--time-only: running one smoke batch to project per-batch cost)")
     t = time.time()
-    _run(args)
+    _run(args, fam)
     print(f"\n  one smoke batch (native-gen + probe + walks + reward) took {time.time()-t:.0f}s")
     print(f"  a 30-min run fits ~{int(30*60/max(1,(time.time()-t))):d} batches of this size "
           f"(minus one-time native-gen).")
@@ -806,13 +971,26 @@ def main():
     ap.add_argument("--seed", type=int, default=0, help="rng + engine seed")
     ap.add_argument("--batch", type=int, default=0, help="seeds per batch (0 = default)")
     ap.add_argument("--budget", type=float, default=None, help="wallclock budget minutes override")
+    # --- family grammar (mirrors render_one / guided_descend; see resolve_family) ---
+    ap.add_argument("--family", default="mandelbrot",
+                    choices=["mandelbrot", "multibrot3", "multibrot4", "multibrot5"],
+                    help="parameter-plane escape family (default mandelbrot). Multibrot 3/4/5 "
+                         "ride the engine's per-degree bands + degree_bbox flat-box.")
+    ap.add_argument("--julia", action="store_true",
+                    help="dynamical z-plane at a fixed c (requires --c; pairs with mandelbrot or "
+                         "multibrot{d}; PLUMBED, not yet validated). Rejected with --phoenix.")
+    ap.add_argument("--c", nargs=2, metavar=("RE", "IM"), default=None,
+                    help=f"fixed dynamical parameter (Julia). Shakeout anchor: {JULIA_C[0]} {JULIA_C[1]}")
+    ap.add_argument("--phoenix", action="store_true",
+                    help="recognized but rejected: Phoenix is a single fixed location with no "
+                         "parameter plane to prospect (descend it directly via guided-descend).")
     args = ap.parse_args()
     if args.finalize:
         _finalize(args.finalize)
     elif args.time_only:
-        _time_only(args)
+        _time_only(args, resolve_family(args))
     elif args.smoke or args.run:
-        _run(args)
+        _run(args, resolve_family(args))
     else:
         ap.print_help()
 
