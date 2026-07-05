@@ -181,6 +181,17 @@ def recolor(fld, cfg, lib, prep):
     return cm.render_candidate(fld, cfg, lib, prep=prep)
 
 
+def score_recolor(fld, cfg, lib, prep, coarse):
+    """The beam's SCORING recolor for one candidate. `coarse` is a `cm.CoarseField`
+    (coarse_score path) or None (full ss2 path). SCORING-ONLY — the throwaway image fed
+    to pref-v2, never a keeper. Keeper re-renders (build_bootstrap.render_label_crop,
+    the strata picks) go through the full `cm.render_candidate` on the label field and
+    are untouched by this. See the coarse-path fence in colormap.py."""
+    if coarse is not None:
+        return cm.render_candidate_coarse(coarse, cfg, lib)
+    return cm.render_candidate(fld, cfg, lib, prep=prep)
+
+
 # ===========================================================================
 # gen-0 palette draw — feature-space farthest-point over the 777 pool.
 # ===========================================================================
@@ -220,7 +231,8 @@ def gen0_spread(sel_names, all_names, D):
 # The per-location run: gen-0 -> beam -> swept refinement.
 # ===========================================================================
 
-def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False):
+def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False,
+                 coarse_score=False):
     """Per-location gen-0 -> beam -> swept refinement.
 
     `retain_all` (opt-in; default False leaves the validated return untouched) adds
@@ -229,16 +241,25 @@ def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False
     `{palette, palette_type, gen, lineage, score, survivor, config}` (`config` is the
     live `cm.CandidateConfig`; `gen` 0 == gen-0, r == refinement round r; `lineage` ==
     the palette, which is lineage-distinct). This is the full within-location pref-v2
-    gradient the wallpaper-quality bootstrap strata-samples over — no images retained."""
+    gradient the wallpaper-quality bootstrap strata-samples over — no images retained.
+
+    `coarse_score` (opt-in; default False = the validated full-res path) routes every
+    beam SCORING recolor through the coarse scoring grid (colormap.render_candidate_coarse)
+    — the throwaway pref-v2 inputs only. Ranking-parity-validated (validate_coarse_score.py),
+    ~20x faster per candidate. The stored lineage images (used only for the diagnostic
+    sheets / render-space movement in the standalone driver) become coarse too; the
+    bootstrap driver ignores them and re-renders its picks on the full label path, so its
+    keepers are unaffected. Do NOT enable this for a run whose lineage images are eyeballed."""
     stem = aq._field_key(ref)
     fld, _ = aq.ensure_field(ref)
     prep = cm.stretch_field(fld)
+    coarse = cm.coarse_field(prep) if coarse_score else None
     rng = np.random.default_rng(int(hashlib.sha1(f"{stem}|{seed}".encode()).hexdigest()[:16], 16))
 
     # --- Stage 0: gen-0 (60 palettes FP + one random param each) ---
     pal_names, all_names, Dfeat = gen0_palettes(sampler, N_GEN0)
     gen0_cfgs = [qs.sample_candidate(ref, rng, sampler, palette=p, canonical=False) for p in pal_names]
-    gen0_imgs = [recolor(fld, c, lib, prep) for c in gen0_cfgs]
+    gen0_imgs = [score_recolor(fld, c, lib, prep, coarse) for c in gen0_cfgs]
     gen0_scores = P.score_frames(model, gen0_imgs, device)
 
     # --- Stage 1: beam -> top-18 lineages ---
@@ -279,7 +300,7 @@ def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False
         for l in active:
             for _ in range(K_VARIANTS):
                 cfg = perturb(l["best_cfg"], l["ptype"], rng, scale)
-                variants.append((l, cfg, recolor(fld, cfg, lib, prep)))
+                variants.append((l, cfg, score_recolor(fld, cfg, lib, prep, coarse)))
         if variants:
             vscores = P.score_frames(model, [v[2] for v in variants], device)
             if retain_all:

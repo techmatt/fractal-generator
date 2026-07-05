@@ -627,6 +627,130 @@ def render_candidate(field, config, library, prep=None):
     return downsample(linear, field.supersample, config.filter)
 
 
+# ===========================================================================
+# COARSE SCORING-RECOLOR PATH — SCORING-ONLY. DO NOT USE FOR KEEPERS.
+#
+# This is a *distinct* coloring path used ONLY to feed the beam's throwaway pref
+# scoring images (sample_location.run_location, coarse_score=True). It colors a
+# small field pre-downsampled to ~the scorer's input geometry, skipping the ss2
+# LUT gather (36% of recolor) AND the ss2->eval AA downsample (29%) — the two hot
+# stages — at the cost of the ss2 anti-aliasing (acceptable: the image is a
+# throwaway scorer input, never a keeper).
+#
+# CORRECTNESS FENCE: `render_candidate` / `render_corpus_crop` / the label-crop and
+# wallpaper emitters are the ONLY keeper paths and MUST stay on the full-res tail.
+# `coarse_field` / `render_candidate_coarse` are reachable ONLY from the scoring
+# loop. Do NOT call them from any render that becomes a stored crop. The two paths
+# differ (average-field-then-color vs color-then-average-field), so crossing this
+# boundary silently degrades real output.
+#
+# Faithfulness to the full path: the coarse image is emitted at the SAME 16:9 eval
+# aspect the scorer always consumes, so the scorer's own bicubic squash-to-224 is
+# byte-identical between the two paths — the ONLY thing that changed is the coloring
+# resolution and the (field-space, not color-space) area average.
+# ===========================================================================
+
+# Coarse scoring grid (16:9, a small margin above the scorer's 224 input so its
+# bicubic squash still has real content to filter). Colored per candidate; the
+# scorer resizes it to 224x224. Validated for ranking-parity against the full path
+# (see tools/queries/validate_coarse_score.py).
+SCORE_COARSE_W = 512
+SCORE_COARSE_H = 288
+
+# Module-level area-resample matrix memo. The (dst_len, src_len) box/area matrix is a
+# pure function of the two lengths (both constant across every location — src is always
+# EVAL*SS, dst is the fixed coarse grid), so one build per (dst,src) serves the process.
+_AREA_MAT_MEMO = {}
+
+
+def _area_matrix(dst_len, src_len):
+    """Dense (dst_len, src_len) box/area resample matrix for a 1-D src->dst resize (any
+    ratio). Dest pixel d integrates the source over [d*s,(d+1)*s), s=src/dst, weighted by
+    overlap length; rows are normalized to sum 1. Memoized on (dst_len, src_len)."""
+    key = (dst_len, src_len)
+    cached = _AREA_MAT_MEMO.get(key)
+    if cached is not None:
+        return cached
+    s = src_len / dst_len
+    M = np.zeros((dst_len, src_len), dtype=np.float64)
+    for d in range(dst_len):
+        a, b = d * s, (d + 1) * s
+        i0 = int(math.floor(a))
+        i1 = int(math.ceil(b))
+        for sx in range(i0, min(i1, src_len)):
+            lo = max(a, float(sx))
+            hi = min(b, float(sx + 1))
+            if hi > lo:
+                M[d, sx] = hi - lo
+        rs = M[d].sum()
+        if rs > 0.0:
+            M[d] /= rs
+    _AREA_MAT_MEMO[key] = M
+    return M
+
+
+def _area_downsample(a, out_h, out_w):
+    """Separable box/area resize of a 2-D array (H,W) -> (out_h,out_w) via the cached
+    row/col area matrices: out = Mv @ a @ Mh.T (each an area-weighted mean)."""
+    H, W = a.shape
+    Mv = _area_matrix(out_h, H)
+    Mh = _area_matrix(out_w, W)
+    return Mv @ a @ Mh.T
+
+
+@dataclass
+class CoarseField:
+    """SCORING-ONLY location-invariant, colormap-independent coarse prefix (analogue of
+    `StretchedField`, cached once per location). Built by area-downsampling the ss2
+    stretched field to the coarse scoring grid:
+
+      xmean  (h,w)  exterior area-mean of the stretched value in [0,1] (0 where fully
+                    interior); the input to the per-candidate transform+LUT.
+      vfrac  (h,w)  exterior area-fraction in [0,1] — the interior-boundary blend weight
+                    (a coarse pixel straddling the interior gets its color scaled toward
+                    interior_color by 1-vfrac, mirroring the linear-light boundary blend).
+    """
+    xmean: np.ndarray
+    vfrac: np.ndarray
+
+
+def coarse_field(prep, out_w=SCORE_COARSE_W, out_h=SCORE_COARSE_H):
+    """(StretchedField) -> CoarseField at the coarse scoring grid. SCORING-ONLY.
+
+    Area-downsamples the ss2 stretched field. `prep.x` is 0 at interior pixels, so its
+    area-mean is the interior-as-0 mean; dividing by the exterior fraction `vfrac`
+    recovers the exterior-only mean `xmean`. Location-invariant / colormap-independent —
+    cache it like `prep` and reuse across all of a location's candidates."""
+    v = prep.valid.astype(np.float64)
+    vfrac = _area_downsample(v, out_h, out_w)          # exterior area-fraction
+    xsum = _area_downsample(prep.x, out_h, out_w)      # interior-as-0 area-mean
+    xmean = np.zeros_like(xsum)
+    m = vfrac > 1e-9
+    xmean[m] = np.clip(xsum[m] / vfrac[m], 0.0, 1.0)
+    return CoarseField(xmean=xmean, vfrac=vfrac)
+
+
+def render_candidate_coarse(coarse, config, library):
+    """(CoarseField, CandidateConfig, PaletteLibrary) -> (h,w,3) uint8 sRGB. SCORING-ONLY.
+
+    The coloring tail (transform+gamma -> n_cycles/phase -> OKLab LUT -> interior blend)
+    run on the small pre-downsampled field, at its native resolution — NO supersample,
+    NO AA downsample. Numerically identical to `render_candidate`'s per-pixel color math;
+    it differs from the keeper path ONLY in that the area-average happened on the scalar
+    field (before color) instead of on the colors (after). MUST NOT feed a stored crop —
+    see the fence above."""
+    validate_config(config, library)
+    gray = apply_transform(coarse.xmean, config.log_premap, config.gamma)
+    t = np.mod(gray * config.n_cycles, 1.0)
+    t = np.mod(t + config.phase, 1.0)
+    lut = library.lut(config.palette, reverse=config.reverse)
+    linear = lookup_linear(lut, t)                     # (h,w,3) linear RGB
+    ic = np.asarray(config.interior_color, dtype=np.float64)
+    vf = coarse.vfrac[..., None]                        # interior-boundary blend
+    linear = linear * vf + ic[None, None, :] * (1.0 - vf)
+    return _encode_srgb8(linear)
+
+
 if __name__ == "__main__":
     import argparse
     from PIL import Image

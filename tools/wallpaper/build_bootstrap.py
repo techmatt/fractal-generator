@@ -464,8 +464,13 @@ def main():
         loc = to_location(spec, srow)
         t_loc = time.time()
         # --- beam with full-trajectory retention ---
+        # NOTE: coarse_score stays OFF here. The coarse scoring-recolor path
+        # (colormap.render_candidate_coarse) is ~13x faster but FAILED the ranking-parity
+        # gate under the existing pref-v2 — beam winners shifted 3/5 locations, gen-0
+        # top-18 Jaccard ~0.60 (tools/queries/validate_coarse_score.py). Do not enable
+        # until pref-v2 is retrained on coarse-colored inputs (separate follow-up).
         res = SL.run_location(f"{cls}_{li:03d}", loc, lib, sampler, model, device,
-                              args.seed, retain_all=True)
+                              args.seed, retain_all=True, coarse_score=False)
         rng = np.random.default_rng(args.seed + li)
         picks = strata_sample(res["all_candidates"], rng)
 
