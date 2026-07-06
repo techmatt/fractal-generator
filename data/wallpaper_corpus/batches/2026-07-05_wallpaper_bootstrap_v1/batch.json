@@ -1,0 +1,108 @@
+{
+  "created": "2026-07-05T21:22:01",
+  "labeler": null,
+  "generator_version": "wallpaper_bootstrap_v1",
+  "schema_note": "NEW wallpaper-quality namespace; reuses the location-corpus row format. Coloring params (gamma/phase/reverse/n_cycles) live in provenance.params \u2014 the crop is a pure function of render + provenance.params (render.palette alone is insufficient here).",
+  "source_run": "data/discovery/gather/<class>/outcome_ledger.jsonl (v5 decodes)",
+  "sampling_metaparameters": {
+    "beam": {
+      "N_GEN0": 60,
+      "TOP_KEEP": 18,
+      "K_VARIANTS": 8,
+      "R_MAX": 2,
+      "seed": 7
+    },
+    "picks_per_loc": 8,
+    "strata_plan": [
+      3,
+      2,
+      3
+    ],
+    "per_class_target": 7,
+    "q2_per_class": 2,
+    "dedup_frac": 0.5,
+    "scorer": "data/queries/scorer/v2 (within-location pref-v2 utility)",
+    "maxiter_policy": "auto_maxiter(fw) \u2014 native fw-dependent"
+  },
+  "present_gates": {
+    "note": "NONE applied \u2014 the batch must span the full quality range including bad renders (no black/occupancy gate)."
+  },
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 4,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "composition": "center",
+    "render_path": "render-one --dump-field + colormap.render_candidate (NOT enrich --mode render \u2014 see schema_note)"
+  },
+  "source_report": {
+    "mandelbrot": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 65,
+      "q2_avail": 260
+    },
+    "multibrot3": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 38,
+      "q2_avail": 80
+    },
+    "multibrot4": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 28,
+      "q2_avail": 75
+    },
+    "multibrot5": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 22,
+      "q2_avail": 78
+    },
+    "phoenix": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 69,
+      "q2_avail": 14
+    },
+    "julia:mandelbrot": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 73,
+      "q2_avail": 36
+    },
+    "julia:multibrot3": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 50,
+      "q2_avail": 22
+    },
+    "julia:multibrot4": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 50,
+      "q2_avail": 14
+    },
+    "julia:multibrot5": {
+      "q3_core": 5,
+      "q2_marginal": 2,
+      "q3_avail": 35,
+      "q2_avail": 8
+    }
+  },
+  "classes": [
+    "mandelbrot",
+    "multibrot3",
+    "multibrot4",
+    "multibrot5",
+    "phoenix",
+    "julia:mandelbrot",
+    "julia:multibrot3",
+    "julia:multibrot4",
+    "julia:multibrot5"
+  ],
+  "n_rows": 504,
+  "wall_seconds": 15415.679995059967
+}
