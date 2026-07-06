@@ -50,7 +50,7 @@ for _p in (ROOT, ROOT / "tools", ROOT / "tools" / "corpus",
         sys.path.insert(0, sp)
 
 import location as loc_mod                               # noqa: E402
-from probe import auto_maxiter, BIN, make_scorer          # noqa: E402
+from probe import auto_maxiter, BIN, make_scorer, ACTIVE_CKPT  # noqa: E402
 from colormap import load_field                           # noqa: E402
 
 # =========================================================================== #
@@ -65,8 +65,9 @@ GUARD_SENTINEL = -1.0     # returned score for a failing crop (< any real E[ord]
 GUARD_W, GUARD_H, GUARD_SS = 640, 360, 2
 GUARD_STAT_RES = f"{GUARD_W}x{GUARD_H} ss{GUARD_SS} 16:9"
 
-# The v5 location-quality classifier the guard wraps. Explicit; NEVER a default.
-SCORER_PATH = "data/classifier/v5/model_best.pt"
+# The location-quality classifier the guard wraps. Resolved from the single source of
+# truth (probe.ACTIVE_CKPT — currently v6); explicit, NEVER a bare default scorer.
+SCORER_PATH = ACTIVE_CKPT
 
 
 # =========================================================================== #

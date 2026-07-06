@@ -92,7 +92,7 @@ import reframe  # noqa: E402  (reframe_location + the DUMP_GUARD_FIELD hook)
 from reframe import reframe_location  # noqa: E402
 import guard  # noqa: E402  (degenerate-outcome guard: make_guarded_scorer + the field gate)
 from score_lib import corn_decode  # noqa: E402  (canonical v5 CORN hard-class decode)
-from probe import make_scorer as make_raw_scorer  # noqa: E402  (UNGUARDED v5 — gather mode)
+from probe import make_scorer as make_raw_scorer, ACTIVE_CKPT  # noqa: E402  (UNGUARDED raw — gather mode; ACTIVE_CKPT = single-source live checkpoint)
 
 # =========================================================================== #
 # Config (top-of-file constants — the experiment knobs)
@@ -116,7 +116,12 @@ PER_WALK_RNG = True          # ON for all walk + probe runs
 
 # --- probe / scorer ---
 PROBE_DEPTH = 2              # --depth-min 2 --depth-max 2, keep reached>=2
-SCORER_PATH = "data/classifier/v5/model_best.pt"   # explicit; NEVER a default scorer
+SCORER_PATH = ACTIVE_CKPT   # single source of truth (probe.ACTIVE_CKPT — currently v6); explicit, NEVER a default scorer
+# Provenance stamp for new outcome rows: the classifier version dir ("v6") parsed off the
+# active checkpoint path, so it tracks ACTIVE_CKPT automatically. Stamped by both ledger
+# writers (append_outcome + GatherLedger.append) so post-deploy rows are distinguishable
+# from v5-era rows in the ledger and the q3 cloud.
+SCORER_VERSION = Path(SCORER_PATH).parent.name   # "v6"
 
 # --- run ---
 WALLCLOCK_BUDGET_MIN = 30
@@ -371,6 +376,7 @@ class Ledgers:
 
     # --- outcome append (jsonl) + feature store (npz) ---
     def append_outcome(self, row: dict, feat: np.ndarray | None):
+        row.setdefault("scorer_version", SCORER_VERSION)   # which classifier produced this row
         OUTCOME_LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with open(OUTCOME_LEDGER, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
@@ -789,6 +795,7 @@ class GatherLedger:
                     self.rows.append(json.loads(line))
 
     def append(self, row: dict):
+        row.setdefault("scorer_version", SCORER_VERSION)   # which classifier produced this row
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
@@ -895,14 +902,15 @@ def _run(args, fam: FamilyResolved):
     print(f"walk cfg: node={NODE_WIDTH} sigma={SIGMA_BAND} depth[{DEPTH_MIN},{DEPTH_MAX}] "
           f"occ={OCC_FLOOR} black={BLACK_CAP} per_walk_rng={PER_WALK_RNG}")
 
-    # Guarded v5 scorer: raw-frame scoring, reframe candidate scoring, and the k3
-    # reward all inherit the model-free field guard (degenerate crops -> GUARD_SENTINEL).
+    # Guarded scorer (SCORER_PATH = probe.ACTIVE_CKPT): raw-frame scoring, reframe candidate
+    # scoring, and the k3 reward all inherit the model-free field guard (degenerate crops
+    # -> GUARD_SENTINEL).
     assert reframe.GUARD_FIELD_SUFFIX == guard.FIELD_SIDECAR_SUFFIX, (
         f"guard field suffix drift: reframe {reframe.GUARD_FIELD_SUFFIX!r} != "
         f"guard {guard.FIELD_SIDECAR_SUFFIX!r}")
     reframe.DUMP_GUARD_FIELD = True
     scorer = guard.make_guarded_scorer(SCORER_PATH)
-    print(f"scorer: GUARDED v5 CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}  "
+    print(f"scorer: GUARDED CORN ({SCORER_PATH}, {SCORER_VERSION})  geometry={scorer.cfg.get('geometry')}  "
           f"guard: interior_frac>={guard.INTERIOR_CAP} | field_std<{guard.FIELD_STD_FLOOR} "
           f"@ {guard.GUARD_STAT_RES}")
 
@@ -1256,7 +1264,7 @@ def _gather(args, fam: FamilyResolved):
     # The reframe guard-field hook stays OFF (raw scorer ignores sidecars; skip the cost).
     reframe.DUMP_GUARD_FIELD = False
     scorer = make_raw_scorer(SCORER_PATH)
-    print(f"scorer: RAW v5 CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}  (guard OFF)")
+    print(f"scorer: RAW CORN ({SCORER_PATH}, {SCORER_VERSION})  geometry={scorer.cfg.get('geometry')}  (guard OFF)")
     print(f"guard-verdict prior (logged, NOT gated): interior_frac>={guard.INTERIOR_CAP} | "
           f"field_std<{guard.FIELD_STD_FLOOR} @ {guard.GUARD_STAT_RES}")
 
@@ -1504,7 +1512,7 @@ def _gather_phoenix(args):
 
     reframe.DUMP_GUARD_FIELD = False
     scorer = make_raw_scorer(SCORER_PATH)
-    print(f"scorer: RAW v5 CORN ({SCORER_PATH})  (guard OFF; verdict logged as prior)")
+    print(f"scorer: RAW CORN ({SCORER_PATH}, {SCORER_VERSION})  (guard OFF; verdict logged as prior)")
 
     ledger = GatherLedger(class_dir)
     loc_of = make_loc_of("phoenix", None)

@@ -76,13 +76,13 @@ sys.path.insert(0, str(ROOT / "tools" / "mining"))
 
 # Classifier native paths reused verbatim (same imports speed.py uses).
 from probe import (  # noqa: E402
-    BIN, PALETTE, JPG_Q, auto_maxiter, make_scorer, _unique_score3_locations,
+    BIN, PALETTE, JPG_Q, auto_maxiter, make_scorer, _unique_score3_locations, ACTIVE_CKPT,
 )
 import location as loc_mod  # noqa: E402  (the one render-one flag builder + family_params)
 
 OUT_DIR = ROOT / "out" / "reframe"
 SPEED_DIR = ROOT / "out" / "reframe_speed"    # source of the V1 reference picks
-DEFAULT_MODEL = "data/classifier/v5/model_best.pt"
+DEFAULT_MODEL = ACTIVE_CKPT   # single source of truth (probe.ACTIVE_CKPT — currently v6)
 
 # --- degenerate-outcome guard hook (opt-in; OFF => byte-identical to today) ---
 # When DUMP_GUARD_FIELD is set, `_render` ALSO dumps the raw smooth field co-located

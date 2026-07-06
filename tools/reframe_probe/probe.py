@@ -48,7 +48,15 @@ sys.path.insert(0, str(ROOT / "tools" / "mining"))
 BIN = ROOT / "target" / "release" / "fractal-generator.exe"
 OUT_DIR = ROOT / "out" / "reframe_probe"
 PALETTE = "twilight_shifted"           # v4/v5 deploy-canonical palette
-DEFAULT_MODEL = "data/classifier/v5/model_best.pt"  # unified Julia location-quality model
+# --- Active discovery/guard/reframe classifier checkpoint (SINGLE SOURCE OF TRUTH) ---
+# Every discovery-path scorer (production_seeder, guard, reframe) resolves the live
+# checkpoint from here. Flip ACTIVE_CKPT and the whole gate moves; nothing else hardcodes
+# a version. The load path is version-agnostic (score_lib.Scorer reads mean/std/head from
+# the checkpoint's own config), so only this string changes between versions.
+ACTIVE_CKPT = "data/classifier/v6/model_best.pt"    # v6 multi-family location classifier (LIVE)
+# Rollback: point ACTIVE_CKPT back at this to restore the v5 gate (one-line revert).
+V5_CKPT_ROLLBACK = "data/classifier/v5/model_best.pt"
+DEFAULT_MODEL = ACTIVE_CKPT             # unified location-quality model (== ACTIVE_CKPT)
 JPG_Q = 90                              # match corpus crop quality
 DEFAULT_SS = 4                          # ss4 = v4/v5 deploy-canonical antialiased view
 

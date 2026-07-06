@@ -60,7 +60,7 @@ import reframe  # noqa: E402  (reframe_location + DUMP_GUARD_FIELD hook + Locati
 from reframe import reframe_location, Location, _tile_name, RENDER_W, RENDER_H, RENDER_SS  # noqa: E402
 import step0_reanalysis as sr  # noqa: E402  (module-global SCRATCH holds the raw tiles)
 from step0_reanalysis import load_frames_by_walk, raw_screen_walk, KRAW  # noqa: E402
-from probe import auto_maxiter, PALETTE, JPG_Q  # noqa: E402
+from probe import auto_maxiter, PALETTE, JPG_Q, ACTIVE_CKPT  # noqa: E402
 import location as loc_mod  # noqa: E402  (render_one_flags for the microbench)
 import guard  # noqa: E402
 
@@ -75,7 +75,7 @@ DEPTH_MAX = 14
 OCC_FLOOR = 0.321
 BLACK_CAP = 0.30
 WORKERS = 4                # project rule: max 4
-SCORER_PATH = "data/classifier/v5/model_best.pt"
+SCORER_PATH = ACTIVE_CKPT  # single source of truth (probe.ACTIVE_CKPT — currently v6)
 
 FAMILIES = [
     # (key, guided-descend extra flags, reframe-Location family, (c_re,c_im)|None)
@@ -249,7 +249,7 @@ def main():
     reframe.DUMP_GUARD_FIELD = True
     scorer = guard.make_guarded_scorer(SCORER_PATH)
     print(f"=== cross-family shakeout ({args.walks} walks/family) ===")
-    print(f"scorer: GUARDED v5 CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}")
+    print(f"scorer: GUARDED CORN ({SCORER_PATH})  geometry={scorer.cfg.get('geometry')}")
     print(f"walk cfg: node={NODE_WIDTH} sigma={SIGMA_BAND} depth[{DEPTH_MIN},{DEPTH_MAX}] "
           f"occ={OCC_FLOOR} black={BLACK_CAP} workers={WORKERS}")
     print(f"guard: interior_frac>={guard.INTERIOR_CAP} | field_std<{guard.FIELD_STD_FLOOR} "
