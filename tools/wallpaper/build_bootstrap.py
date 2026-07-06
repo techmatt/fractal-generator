@@ -19,7 +19,7 @@ Pipeline:
      (gen-0 + refinement variants) with its (palette, params, gen, lineage, pref-v2).
   3. Strata-sample ~8 distinct-palette renders across the location's pref-v2 range
      (~3 low / 2 mid / 3 high). pref-v2 is within-location, exactly right here.
-  4. Re-render ONLY the ~480 picks at the label-crop spec: 1280x720, ss4 Lanczos-3,
+  4. Re-render ONLY the ~480 picks at the label-crop spec: 1280x720, ss2 Lanczos-3,
      q90 JPG, center, interior=black. The candidate coloring carries arbitrary
      params (gamma/phase/reverse/n_cycles) across multibrot/phoenix families, which
      `enrich --mode render` cannot express (named palette + mandelbrot point-trap
@@ -98,7 +98,14 @@ PICKS_PER_LOC = 8
 STRATA_PLAN = (3, 2, 3)    # (low, mid, high) across the pref-v2 score RANGE
 
 # --- label-crop spec (LOCKED — the canonical wallpaper label geometry) -----
-LABEL_W, LABEL_H, LABEL_SS = 1280, 720, 4
+# ss2 (was ss4): unified with build_humanq3's LABEL_SS so the two batches union
+# homogeneously — otherwise ss-level correlates with tier (bootstrap is almost all
+# low-tier), landing a batch-effect confound on the tier-3/4 axis. The ss2/ss4
+# difference is washed out by the q90 JPEG + 384x224 training stretch and never flips
+# a human tier label. NOTE: this constant and humanq3's are still SEPARATE module-level
+# definitions (each build script duplicates the label-crop spec + render_label_crop);
+# they now agree by value, not by a shared source of truth.
+LABEL_W, LABEL_H, LABEL_SS = 1280, 720, 2
 LABEL_FILTER = "lanczos3"
 JPG_Q = 90
 

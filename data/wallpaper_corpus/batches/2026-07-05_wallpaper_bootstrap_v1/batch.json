@@ -30,7 +30,7 @@
   "render_defaults": {
     "width": 1280,
     "height": 720,
-    "ss": 4,
+    "ss": 2,
     "filter": "lanczos3",
     "interior_mode": "black",
     "composition": "center",
