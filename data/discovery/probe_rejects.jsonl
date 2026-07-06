@@ -117,3 +117,18 @@
 {"seed_cx": -0.165740966796875, "seed_cy": 0.678253173828125, "seed_cell": 135, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
 {"seed_cx": -0.983489990234375, "seed_cy": -0.280487060546875, "seed_cell": 60, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
 {"seed_cx": 0.5785984101134847, "seed_cy": 0.4853763247031486, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": -1.632049560546875, "seed_cy": -0.026702880859375, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -1.237274169921875, "seed_cy": 0.396270751953125, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": 0.398223876953125, "seed_cy": 0.368072509765625, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": -1.293670654296875, "seed_cy": 0.339874267578125, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -1.237274169921875, "seed_cy": 0.396270751953125, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -1.237274169921875, "seed_cy": 0.396270751953125, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -1.434661865234375, "seed_cy": -0.167694091796875, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -1.265472412109375, "seed_cy": 0.339874267578125, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -0.137542724609375, "seed_cy": -0.985443115234375, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": 0.5785984101134847, "seed_cy": 0.4853763247031486, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": 0.5785984101134847, "seed_cy": 0.4853763247031486, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": -0.06939866358324998, "seed_cy": 1.2178947558385878, "mix_source": "native", "reached": 1, "cause": "degenerate", "child_occ": null}
+{"seed_cx": -0.22756093572075864, "seed_cy": 0.4457093753168142, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": -0.13451101939589405, "seed_cy": -0.6520583702918743, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}
+{"seed_cx": 0.41748029625270267, "seed_cy": 0.6657213860778812, "mix_source": "native", "reached": 1, "cause": "black_cap", "child_occ": null}

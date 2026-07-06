@@ -204,6 +204,30 @@ def julia_partition(fam: str) -> str:
     return f"julia:{fam}"
 
 
+# =========================================================================== #
+# Per-degree q3 operating point (t_good), keyed on the ledger `family` partition.
+# The v6 threshold sweep (tools/v6/threshold_sweep.py, on the labeled eval split) found
+# the deg-2 slice — where the classifier is actually POWERED — has a knee at p_good=0.24:
+# ~2.5x the baseline q3 recall at equal precision. High-degree families are unpowered on
+# the eval (near-noise good-counts), so lowering there could over-call with no evidence it
+# helps; they are HELD at the baseline 0.50. Wired as a lookup even where value==baseline so
+# retuning any family later is a value change, not a code round-trip. Stamped per outcome
+# row (`t_good`) so the ledger self-describes across the 0.50-era / 0.24-era mix.
+# =========================================================================== #
+T_GOOD_DEG2 = 0.24        # sweep knee — 2.5x baseline recall at equal precision
+T_GOOD_BASELINE = 0.50    # conservative default for every unpowered / high-degree family
+# The degree-2 partitions the eval actually powered: the c-plane quadratic Mandelbrot and
+# its dynamical twin. Phoenix (also degree-2, but seeder-exempt and NOT in the swept eval)
+# and every multibrot{d}/julia:multibrot{d} fall through to the baseline.
+DEG2_PARTITIONS = frozenset({"mandelbrot", "julia:mandelbrot"})
+
+
+def t_good_for(partition: str) -> float:
+    """q3 p_good threshold for a cloud partition (family+degree). deg-2 (mandelbrot /
+    julia:mandelbrot) -> 0.24; everything else -> 0.50 (baseline). See the block above."""
+    return T_GOOD_DEG2 if partition in DEG2_PARTITIONS else T_GOOD_BASELINE
+
+
 # flags        : extra guided-descend CLI flags (family/julia grammar; [] for mandelbrot).
 # partition    : ledger `family` discriminator keying the q3 cloud (family+degree; Julia
 #                is degree-only `julia:{fam}`, c is a coordinate). "mandelbrot" for the
@@ -698,6 +722,9 @@ def harvest_walk_reward(scorer, wid, frames, workers, scratch, loc_of=_mand_loca
     # Parent gate for the Julia sub-descent hook: decode the RAW frames (un-reframed —
     # the frames raw_screen_walk already scored; no new render/forward) and surface the
     # counts. Harmless to compute for Julia sub-walks too; only read on parents.
+    # DELIBERATELY at the baseline t_good=0.5 (default): this is a hook-FIRING heuristic on
+    # the parent's raw frames, not a q3 ADMISSION decode, so it stays byte-identical and
+    # is not routed through the per-degree t_good (which gates only the committed outcome).
     n_frames_q2plus = sum(1 for (_, nb, g) in triples if corn_decode(nb, g) >= 2)
     n_frames_q3 = sum(1 for (_, nb, g) in triples if corn_decode(nb, g) == 3)
     # Run-scoped guard observability (pure read of the raw scores — changes nothing):
@@ -1011,7 +1038,8 @@ def _run(args, fam: FamilyResolved):
             # failed the guard. A guarded outcome carries decoded_class=None and can never
             # be a q3 cloud member.
             guard_pass = rew["reward_k3"] > guard.GUARD_SENTINEL + 1e-6
-            decoded = corn_decode(rew["p_notbad"], rew["p_good"]) if guard_pass else None
+            t_good = t_good_for(fam.partition)   # per-degree q3 operating point
+            decoded = corn_decode(rew["p_notbad"], rew["p_good"], t_good) if guard_pass else None
             is_q3 = guard_pass and decoded == 3
             if is_q3:
                 distinct, dup_of = is_distinct(rew["outcome_cx"], rew["outcome_cy"],
@@ -1035,9 +1063,13 @@ def _run(args, fam: FamilyResolved):
                 "probe_child_occ": sv.get("probe_child_occ"), "probe_reached": sv.get("probe_reached"),
                 "probe_cause": sv.get("probe_cause"), "reached_depth": rew["reached_depth"],
                 # decoded_class: the CORN hard class of the k3-winning frame (None if guarded).
-                # This is the ONLY schema addition — cross-run cloud reconstruction is then a
-                # direct filter (guard_pass && decoded_class == 3) with no re-decode.
+                # cross-run cloud reconstruction is then a direct filter (guard_pass &&
+                # decoded_class == 3) with no re-decode.
                 "decoded_class": decoded,
+                # CORN cumulative probs of the k3 winner + the per-degree t_good used to
+                # decode them. Stamped so the ledger self-describes (mixed-era decodes) and
+                # the harvest-monitor can build the p_good/p_notbad histograms.
+                "p_notbad": rew["p_notbad"], "p_good": rew["p_good"], "t_good": t_good,
                 "distinct": distinct, "dup_of": dup_of,
                 "guard_pass": guard_pass, "guard_fail": None if guard_pass else "sentinel",
             }
@@ -1094,7 +1126,8 @@ def _run(args, fam: FamilyResolved):
                             scratch / f"jreward_b{batch_i:03d}_w{wid:04d}", jloc_of)
                         # guard verdict / decode / q3 — EXACTLY as the parent loop does.
                         jguard_pass = jrew["reward_k3"] > guard.GUARD_SENTINEL + 1e-6
-                        jdecoded = corn_decode(jrew["p_notbad"], jrew["p_good"]) if jguard_pass else None
+                        jt_good = t_good_for(julia_part)   # per-degree q3 operating point
+                        jdecoded = corn_decode(jrew["p_notbad"], jrew["p_good"], jt_good) if jguard_pass else None
                         jis_q3 = jguard_pass and jdecoded == 3
                         # distinctness is on `c` (the parameter), NOT the z-plane spot:
                         # multiple q3 walks at the same c collapse to one found-point.
@@ -1122,6 +1155,8 @@ def _run(args, fam: FamilyResolved):
                             "k3": jrew["reward_k3"], "raw_top3": jrew["raw_top3"],
                             "reached_depth": jrew["reached_depth"],
                             "decoded_class": jdecoded,
+                            "p_notbad": jrew["p_notbad"], "p_good": jrew["p_good"],
+                            "t_good": jt_good,
                             "distinct": jdistinct, "dup_of": jdup_of,
                             "guard_pass": jguard_pass,
                             "guard_fail": None if jguard_pass else "sentinel",
@@ -1346,7 +1381,8 @@ def _gather(args, fam: FamilyResolved):
             frames = by_walk[wid]
             rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
                                       scratch / f"reward_b{batch_i:03d}", loc_of)
-            decoded = corn_decode(rew["p_notbad"], rew["p_good"])
+            t_good = t_good_for(fam.partition)   # per-degree q3 operating point
+            decoded = corn_decode(rew["p_notbad"], rew["p_good"], t_good)
             oid = f"{fam.id_tag}_{run_ts}_{seq:06d}"; seq += 1
             verdict, gstats = outcome_guard_verdict(
                 rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"],
@@ -1364,6 +1400,7 @@ def _gather(args, fam: FamilyResolved):
                 "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"],
                 "raw_top3": rew["raw_top3"], "reached_depth": rew["reached_depth"],
                 "decoded_class": decoded,
+                "p_notbad": rew["p_notbad"], "p_good": rew["p_good"], "t_good": t_good,
                 # guard would-pass verdict — a recorded PRIOR, never a gate in gather.
                 "guard_verdict": verdict, "guard_pass": verdict == "pass",
                 "interior_frac": gstats.interior_frac, "field_std": gstats.field_std,
@@ -1399,7 +1436,8 @@ def _gather(args, fam: FamilyResolved):
                         jrew = harvest_walk_reward(
                             scorer, jwid, jframes, WORKERS,
                             scratch / f"jreward_b{batch_i:03d}_w{wid:04d}", jloc_of)
-                        jdecoded = corn_decode(jrew["p_notbad"], jrew["p_good"])
+                        jt_good = t_good_for(julia_part)   # per-degree q3 operating point
+                        jdecoded = corn_decode(jrew["p_notbad"], jrew["p_good"], jt_good)
                         joid = f"j{fam.id_tag}_{run_ts}_{seq:06d}"; seq += 1
                         jverdict, jgstats = outcome_guard_verdict(
                             jrew["outcome_cx"], jrew["outcome_cy"], jrew["outcome_fw"],
@@ -1417,6 +1455,8 @@ def _gather(args, fam: FamilyResolved):
                             "julia_z_fw": jrew["outcome_fw"],
                             "k3": jrew["reward_k3"], "raw_top3": jrew["raw_top3"],
                             "reached_depth": jrew["reached_depth"], "decoded_class": jdecoded,
+                            "p_notbad": jrew["p_notbad"], "p_good": jrew["p_good"],
+                            "t_good": jt_good,
                             "guard_verdict": jverdict, "guard_pass": jverdict == "pass",
                             "interior_frac": jgstats.interior_frac, "field_std": jgstats.field_std,
                             "distinct": jdistinct, "dup_of": jdup_of,
@@ -1543,7 +1583,8 @@ def _gather_phoenix(args):
             frames = by_walk[wid]
             rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
                                       scratch / f"reward_r{rnd:03d}", loc_of)
-            decoded = corn_decode(rew["p_notbad"], rew["p_good"])
+            t_good = t_good_for("phoenix")   # phoenix -> baseline (not in the swept eval)
+            decoded = corn_decode(rew["p_notbad"], rew["p_good"], t_good)
             oid = f"ph_{run_ts}_{seq:06d}"; seq += 1
             verdict, gstats = outcome_guard_verdict(
                 rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"],
@@ -1555,6 +1596,7 @@ def _gather_phoenix(args):
                 "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"],
                 "raw_top3": rew["raw_top3"], "reached_depth": rew["reached_depth"],
                 "decoded_class": decoded,
+                "p_notbad": rew["p_notbad"], "p_good": rew["p_good"], "t_good": t_good,
                 "guard_verdict": verdict, "guard_pass": verdict == "pass",
                 "interior_frac": gstats.interior_frac, "field_std": gstats.field_std,
             }

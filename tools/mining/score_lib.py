@@ -53,17 +53,27 @@ def pick_device(device: str | None = None) -> str:
         "mps" if torch.backends.mps.is_available() else "cpu")
 
 
-def corn_decode(p_notbad: float, p_good: float) -> int:
+def corn_decode(p_notbad: float, p_good: float, t_good: float = 0.5) -> int:
     """Canonical v5 CORN hard-class decode -> {1, 2, 3} (bad / okay / good).
 
     The two ordinal sigmoids are the cumulative rank probabilities
     ``p_notbad = sigma(l0) = P(class >= 2)`` and ``p_good = sigma(l1) = P(class >= 3)``.
-    Rank-consistent hard class = ``1 + #{cumulative probs >= 0.5}``. This is NOT
+    Rank-consistent hard class = ``1 + #{cumulative probs >= threshold}``. This is NOT
     recoverable from the summed ``E[ord] = p_notbad + p_good`` scalar (two frames with
     equal E[ord] can decode to different classes), so callers pass the two
     probabilities and MUST NOT threshold the score. Single source of truth for the
-    decode; reuse it, don't reimplement the >= 0.5 counting inline."""
-    return 1 + int(p_notbad >= 0.5) + int(p_good >= 0.5)
+    decode; reuse it, don't reimplement the >= threshold counting inline.
+
+    ``t_good`` is the q3 (rank-3) operating point on ``p_good``. It defaults to 0.5,
+    which is BYTE-IDENTICAL to the historical decode — every existing caller stays put.
+    Discovery sites opt in to a lower per-degree threshold (the v6 sweep knee) by
+    passing ``t_good`` explicitly. The rank-2 gate on ``p_notbad`` stays fixed at 0.5:
+    a class-3 outcome must still be not-bad, so lowering ``t_good`` below 0.5 can only
+    turn a would-be class-2 into class-3, never resurrect a class-1 (the AND rule holds
+    because ``p_notbad >= p_good`` is not guaranteed — see the monotonicity check in
+    tools/v6/threshold_sweep.py — but a class-1 has ``p_notbad < 0.5`` and is capped at
+    ``1 + 0 + 1 = 2`` regardless, i.e. it can reach class-2 but not class-3)."""
+    return 1 + int(p_notbad >= 0.5) + int(p_good >= t_good)
 
 
 class Scorer:
