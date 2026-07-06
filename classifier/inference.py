@@ -60,7 +60,8 @@ def load_scorer(ckpt_path: str | Path, device: str | None = None) -> Scorer:
     cfg = ckpt["config"]
     target = cfg["target"]
     model = build_model(target=target, drop_rate=cfg.get("drop_rate", 0.2),
-                        drop_path_rate=cfg.get("drop_path_rate", 0.1), pretrained=False)
+                        drop_path_rate=cfg.get("drop_path_rate", 0.1), pretrained=False,
+                        num_classes=cfg.get("num_classes", 3))  # 3 for v1..v6, 4 for wallpaper head
     model.load_state_dict(ckpt["state_dict"])
     transform = Transform(
         geometry=cfg["geometry"], interp=cfg["interpolation"],

@@ -21,8 +21,11 @@ BACKBONE = "mobilenetv4_conv_medium.e250_r384_in12k"
 
 
 def build_model(target: str = "ordinal", drop_rate: float = 0.2,
-                drop_path_rate: float = 0.1, pretrained: bool = True):
-    n_out = 2 if target == "ordinal" else 1  # K-1=2 ordinal logits, else 1 binary logit
+                drop_path_rate: float = 0.1, pretrained: bool = True,
+                num_classes: int = 3):
+    # ordinal CORN emits K-1 logits (num_classes=3 -> 2, the v1..v6 default; the
+    # wallpaper head passes num_classes=4 -> 3). binary is always a single logit.
+    n_out = (num_classes - 1) if target == "ordinal" else 1
     model = timm.create_model(
         BACKBONE, pretrained=pretrained, num_classes=n_out,
         drop_rate=drop_rate, drop_path_rate=drop_path_rate,
