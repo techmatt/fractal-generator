@@ -1,0 +1,89 @@
+{
+  "created": "2026-07-06T12:28:44",
+  "labeler": null,
+  "generator_version": "wallpaper_humanq3_v1",
+  "schema_note": "Primary wallpaper-quality training payload: human-q3 locations, top-7 by pref-v2 emission pool per location. Coloring params (gamma/phase/reverse/n_cycles) live in provenance.params \u2014 the crop is a pure function of render + provenance.params.",
+  "source_run": "data/label_corpus/batches/<batch>/images.jsonl (human max-over-crops label.score == 3)",
+  "sampling_metaparameters": {
+    "beam": {
+      "N_GEN0": 60,
+      "TOP_KEEP": 18,
+      "K_VARIANTS": 8,
+      "R_MAX": 2,
+      "seed": 7
+    },
+    "pool_K": 7,
+    "pool_rule": "top-K by pref-v2 over best-per-palette reps (distinct palettes; refined winners at rank-1)",
+    "scorer": "data/queries/scorer/v2 (within-location pref-v2 utility)",
+    "maxiter_policy": "auto_maxiter(fw) \u2014 native fw-dependent (bootstrap parity)",
+    "render_budget": 1000,
+    "seed": 7
+  },
+  "present_gates": {
+    "note": "NONE applied \u2014 human-q3 locations, in-distribution top-7 pool (some picks are human-bad hard negatives)."
+  },
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "composition": "center",
+    "render_path": "render-one --dump-field + colormap.render_candidate (byte-parity with the bootstrap label path)"
+  },
+  "composition_report": {
+    "budget": 1000,
+    "K": 7,
+    "v6_q3_locations": 61,
+    "prev6_q3_raw_predup": 99,
+    "prev6_q3_after_dedup": 99,
+    "prev6_q3_kept": 81,
+    "prev6_dropped_to_cap": 18,
+    "cap_applied": true,
+    "prev6_batch_available_predup": {
+      "2026-06-23_flat_generate_loose0_v3": 31,
+      "2026-06-24_guided_descend_rev4": 39,
+      "2026-06-24_guided_descend_rev4occfix_v2filtered": 29,
+      "2026-06-25_mining_v3guided_v1": 0,
+      "2026-06-25_scale_2x2_labelset": 0,
+      "2026-06-25_scale_controlled_2x2": 0,
+      "julia_ladder_j0": 0
+    },
+    "total_locations": 142,
+    "est_renders": 994,
+    "per_family": {
+      "mandelbrot": 88,
+      "multibrot3": 2,
+      "multibrot4": 6,
+      "multibrot5": 1,
+      "julia:mandelbrot": 25,
+      "julia:multibrot3": 1,
+      "julia:multibrot4": 8,
+      "julia:multibrot5": 4,
+      "phoenix": 7
+    },
+    "per_generation": {
+      "v6": 61,
+      "pre-v6": 81
+    },
+    "per_family_by_generation": {
+      "v6": {
+        "mandelbrot": 7,
+        "multibrot3": 2,
+        "multibrot4": 6,
+        "multibrot5": 1,
+        "julia:mandelbrot": 25,
+        "julia:multibrot3": 1,
+        "julia:multibrot4": 8,
+        "julia:multibrot5": 4,
+        "phoenix": 7
+      },
+      "pre-v6": {
+        "mandelbrot": 81
+      }
+    }
+  },
+  "reconstruct_failures": [],
+  "n_rows": 994,
+  "wall_seconds": 6076.853898763657
+}
