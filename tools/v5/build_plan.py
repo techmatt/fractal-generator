@@ -117,6 +117,10 @@ def main() -> None:
 
     # ---- RECIPE-PARITY GATE: regenerate Mandelbrot cm rows, assert == v4 ----
     mand_cm = []
+    # V4_CACHE_DIR is load-bearing, not superseded-v4 repro: this gate asserts the
+    # frozen Mandelbrot JPGs under data/v4/aug_cache are byte-identical to the recipe,
+    # and the unified cache manifest reuses them VERBATIM for every v5/v6 train. Deleting
+    # data/v4/aug_cache breaks every location-classifier build (.audit-keep sentinel'd).
     for loc_id, r in mand:
         assert loc_id < 3622, "Mandelbrot rows must occupy loc_ids 0..3621 (v4 cache order)"
         emit_location(loc_id, r, palettes, fam_of, angle_of, [], mand_cm,

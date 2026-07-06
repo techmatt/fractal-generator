@@ -130,6 +130,10 @@ def main() -> None:
 
     # ---- RECIPE-PARITY GATE: regenerate frozen v5 cm rows, assert == v5 cache ----
     frozen_cm = []
+    # V4_CACHE_DIR / V5_JULIA_CACHE_DIR are load-bearing, not superseded repro: this gate
+    # asserts the frozen Mandelbrot + J0 Julia JPGs are byte-identical to the recipe, and
+    # the unified cache manifest reuses them VERBATIM for the v6 train. Deleting those cache
+    # dirs breaks every location-classifier build (.audit-keep sentinel'd).
     for loc_id, r in frozen:
         cache_dir = V4_CACHE_DIR if loc_id < N_MANDEL else V5_JULIA_CACHE_DIR
         emit_location(loc_id, r, palettes, fam_of, angle_of, [], frozen_cm,
