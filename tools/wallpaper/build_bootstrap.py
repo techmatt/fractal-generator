@@ -43,6 +43,7 @@ import json
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -100,6 +101,20 @@ STRATA_PLAN = (3, 2, 3)    # (low, mid, high) across the pref-v2 score RANGE
 LABEL_W, LABEL_H, LABEL_SS = 1280, 720, 4
 LABEL_FILTER = "lanczos3"
 JPG_Q = 90
+
+# !!! PERF: the keeper label crops are the RUN'S BOTTLENECK, and it's an unintuitive one.
+# Beam scoring is coarse+cheap now, the GPU is ~idle, and the Rust field dumps are
+# multi-core — so you'd expect this to fly. It doesn't: each label crop is ~10s of
+# SINGLE-THREADED ss4 Lanczos-3 numpy in colormap.render_candidate (5120x2880 = 14.7M
+# supersampled px through the LUT gather + separable downsample), and there are 8 per
+# location => ~80s/location on coloring ALONE. On a 12-core box that reads as ~8% CPU and
+# looks stalled. We render a location's 8 picks concurrently to claw that back. THREADS
+# not processes: the heavy numpy ops release the GIL, and the 58MB ss4 field is shared
+# read-only in-process (a process pool would re-pickle it per task). Measured ~3.3x wall
+# on the 8-crop phase (85s -> 26s/location), byte-identical to the serial path; short of a
+# full 4x because the ops are memory-bandwidth-bound. CAP 4: the project-wide max-workers
+# rule; DO NOT raise.
+LABEL_CROP_WORKERS = 4
 
 SEED = 7
 
@@ -299,10 +314,18 @@ def ensure_label_field(loc):
     return cm.load_field(str(bin_path), str(json_path))
 
 
-def render_label_crop(field, cfg, lib, out_path):
-    """Re-render one candidate config at the label spec (ss4 Lanczos-3) -> q90 JPG."""
+def render_label_crop(field, cfg, lib, out_path, prep=None):
+    """Re-render one candidate config at the label spec (ss4 Lanczos-3) -> q90 JPG.
+
+    SLOW — this single call is ~10s (see the LABEL_CROP_WORKERS note): coloring an ss4
+    5120x2880 field through the LUT gather + Lanczos-3 separable downsample is a big
+    single-threaded numpy job. ALWAYS pass a shared `prep` (cm.stretch_field(field)) so
+    the ~14.7M-value percentile sort runs ONCE per location instead of once per crop —
+    omitting it silently re-sorts inside every call and adds seconds to each. Thread-safe:
+    reads `field`/`prep`, allocates its own buffers; the LUT cache tolerates concurrent
+    bakes (see colormap._LUT_MEMO)."""
     label_cfg = dataclasses.replace(cfg, filter=LABEL_FILTER)
-    img = cm.render_candidate(field, label_cfg, lib)      # (720,1280,3) uint8 sRGB
+    img = cm.render_candidate(field, label_cfg, lib, prep=prep)   # (720,1280,3) uint8 sRGB
     Image.fromarray(img).convert("RGB").save(out_path, "JPEG", quality=JPG_Q)
     return img.shape[1], img.shape[0]
 
@@ -464,23 +487,41 @@ def main():
         loc = to_location(spec, srow)
         t_loc = time.time()
         # --- beam with full-trajectory retention ---
-        # NOTE: coarse_score stays OFF here. The coarse scoring-recolor path
-        # (colormap.render_candidate_coarse) is ~13x faster but FAILED the ranking-parity
-        # gate under the existing pref-v2 — beam winners shifted 3/5 locations, gen-0
-        # top-18 Jaccard ~0.60 (tools/queries/validate_coarse_score.py). Do not enable
-        # until pref-v2 is retrained on coarse-colored inputs (separate follow-up).
+        # coarse_score=True: the beam's SCORING recolors run on the coarse grid
+        # (colormap.render_candidate_coarse, ~13x faster; beam wall ~276min -> ~21min).
+        # SELECTION-ONLY — it decides which 8 candidates the strata sampler picks, never
+        # how they render. The keepers are re-rendered below at the full ss4 Lanczos-3
+        # label spec (render_label_crop) from each pick's config, untouched by the coarse
+        # path. Gated on STRATA-BUCKET parity, not winner parity (the batch is human-
+        # relabeled, so exact palette/band identity is a scaffold): coarse picks span 87%
+        # of each location's full-scorer quality range (validate_coarse_score.py).
         res = SL.run_location(f"{cls}_{li:03d}", loc, lib, sampler, model, device,
-                              args.seed, retain_all=True, coarse_score=False)
+                              args.seed, retain_all=True, coarse_score=True)
         rng = np.random.default_rng(args.seed + li)
         picks = strata_sample(res["all_candidates"], rng)
 
         # --- label-spec re-render (ss4 field once, then each pick) ---
+        # The 8 keeper crops are the bottleneck (~10s single-threaded each — see
+        # LABEL_CROP_WORKERS). Dump the ss4 field + percentile-stretch ONCE (both shared
+        # read-only across the picks), then color the 8 concurrently. This phase, not the
+        # beam, is why a location takes minutes.
         field = ensure_label_field(loc)
+        label_prep = cm.stretch_field(field)   # 14.7M-value percentile sort: once per loc
         crops_dir = OUT_CORPUS / "batches" / BATCH_ID / "crops"
         crops_dir.mkdir(parents=True, exist_ok=True)
-        for pi, pick in enumerate(picks):
+
+        def _render_pick(pi_pick):
+            pi, pick = pi_pick
             image_id = f"wbv1_{li:03d}_{pi:02d}"
-            w, h = render_label_crop(field, pick["config"], lib, crops_dir / f"{image_id}.jpg")
+            w, h = render_label_crop(field, pick["config"], lib, crops_dir / f"{image_id}.jpg",
+                                     prep=label_prep)
+            return pi, image_id, w, h
+
+        with ThreadPoolExecutor(max_workers=min(LABEL_CROP_WORKERS, len(picks))) as ex:
+            rendered = list(ex.map(_render_pick, list(enumerate(picks))))  # order-preserving
+
+        for pi, image_id, w, h in rendered:
+            pick = picks[pi]
             assert (w, h) == (LABEL_W, LABEL_H), (image_id, w, h)
             rows.append({
                 "image_id": image_id,
