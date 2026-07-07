@@ -1,0 +1,1522 @@
+[
+  {
+    "name": "Ember Vault",
+    "mood": "cool teal ground climbing to an early warm cream glow, dropping through oxblood into a warm→cool cliff at petrol, then an olive lift on the descent",
+    "skeleton": "peak-early",
+    "axes": {
+      "value_key": "low",
+      "complexity": 3,
+      "temperature": "cool teal ground / warm cream-oxblood core, one warm→cool reversal at the mid cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 22, 46, 52 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.15,
+        "rgb": [ 58, 100, 110 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 242, 232, 208 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.46,
+        "rgb": [ 146, 58, 50 ],
+        "role": "anchor",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.6
+        }
+      },
+      {
+        "pos": 0.55,
+        "rgb": [ 58, 100, 116 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.74,
+        "rgb": [ 120, 122, 62 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.45
+        }
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 22, 46, 52 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Petrol Ambry",
+    "mood": "navy ground under an early cool bone glow, petrol anchor lifting to an ochre pop, then a warm→cool cliff back into petrol",
+    "skeleton": "peak-early",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 4,
+      "temperature": "navy ground / cool bone glow, ochre reversal then warm→cool mid cliff (two reversals)"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 34, 44, 72 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.14,
+        "rgb": [ 92, 104, 132 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 228, 224, 212 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.44,
+        "rgb": [ 46, 104, 118 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 186, 140, 58 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.66,
+        "rgb": [ 150, 64, 58 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.55
+        }
+      },
+      {
+        "pos": 0.74,
+        "rgb": [ 70, 100, 112 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.88,
+        "rgb": [ 50, 66, 92 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 34, 44, 72 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Plum Ossuary",
+    "mood": "deep teal ground to an early warm amber glow, a plum anchor snapping across an olive cliff, closing warm on rust",
+    "skeleton": "peak-early",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 3,
+      "temperature": "teal ground / warm amber glow, plum→olive cliff, warm core with two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 30, 54, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.17,
+        "rgb": [ 96, 92, 84 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.31,
+        "rgb": [ 238, 220, 180 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.47,
+        "rgb": [ 92, 52, 80 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 112, 114, 58 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.55
+        }
+      },
+      {
+        "pos": 0.74,
+        "rgb": [ 150, 84, 52 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.45
+        }
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 30, 54, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Ochre Descent",
+    "mood": "oxblood dark rising through petrol and a slate→umber cliff to an ochre crest, then a cool silver glow set late",
+    "skeleton": "peak-late",
+    "axes": {
+      "value_key": "low",
+      "complexity": 4,
+      "temperature": "oxblood ground / cool silver glow late, slate→umber mid cliff, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 56, 30, 34 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.14,
+        "rgb": [ 40, 88, 100 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 96, 104, 122 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.40,
+        "rgb": [ 72, 58, 44 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.56,
+        "rgb": [ 190, 144, 58 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.70,
+        "rgb": [ 120, 70, 58 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.82,
+        "rgb": [ 224, 222, 214 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.92,
+        "rgb": [ 104, 54, 48 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 56, 30, 34 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Teal Sepulchre",
+    "mood": "teal ground through petrol and an olive→oxblood cliff, warming into rust and a late warm cream glow",
+    "skeleton": "peak-late",
+    "axes": {
+      "value_key": "low",
+      "complexity": 3,
+      "temperature": "teal ground / warm cream glow late, olive→oxblood cliff, cool-to-warm"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 24, 52, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 42, 96, 104 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.34,
+        "rgb": [ 110, 116, 60 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.44,
+        "rgb": [ 138, 60, 50 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.60,
+        "rgb": [ 180, 120, 60 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.80,
+        "rgb": [ 244, 236, 216 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 24, 52, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Umber Chancel",
+    "mood": "slate ground, warm umber, a warm→cool umber→petrol cliff, ochre crest, then a cool pale-blue glow late",
+    "skeleton": "peak-late",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 4,
+      "temperature": "slate ground / cool pale-blue glow late, umber→petrol mid cliff, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 40, 50, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.14,
+        "rgb": [ 96, 72, 52 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 60, 96, 104 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.42,
+        "rgb": [ 128, 96, 52 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.54,
+        "rgb": [ 92, 58, 72 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.68,
+        "rgb": [ 176, 132, 62 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.82,
+        "rgb": [ 214, 220, 224 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.92,
+        "rgb": [ 96, 70, 54 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 40, 50, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Gilded Nave",
+    "mood": "navy ground, petrol, an oxblood→olive cliff at the mids, umber, then a late warm gold glow",
+    "skeleton": "peak-late",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 3,
+      "temperature": "navy ground / warm gold glow late, oxblood→olive cliff, cool-to-warm"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 46, 44, 66 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 56, 104, 116 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.34,
+        "rgb": [ 140, 54, 48 ],
+        "role": "anchor",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.55
+        }
+      },
+      {
+        "pos": 0.42,
+        "rgb": [ 108, 114, 58 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.60,
+        "rgb": [ 140, 100, 52 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.80,
+        "rgb": [ 226, 196, 110 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 46, 44, 66 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Twin Ember",
+    "mood": "oxblood ground with a cream peak and a later gold peak over a slate-plum trough, a slate→rust mid cliff between",
+    "skeleton": "double-peak",
+    "axes": {
+      "value_key": "low",
+      "complexity": 4,
+      "temperature": "oxblood ground, cream+gold twin peaks, slate→rust mid cliff, warm-dominant, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 40, 28, 36 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.14,
+        "rgb": [ 44, 92, 104 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.28,
+        "rgb": [ 240, 230, 206 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.42,
+        "rgb": [ 120, 52, 50 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.50,
+        "rgb": [ 70, 64, 88 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 150, 86, 54 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.72,
+        "rgb": [ 220, 188, 104 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 0.8
+        }
+      },
+      {
+        "pos": 0.88,
+        "rgb": [ 96, 50, 48 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 40, 28, 36 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Slate Diptych",
+    "mood": "slate ground with a bone peak and a pale-blue peak over a petrol trough, an oxblood→olive mid cliff between",
+    "skeleton": "double-peak",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 4,
+      "temperature": "slate ground, bone+pale-blue twin peaks, oxblood→olive mid cliff, cool-dominant, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 46, 52, 70 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.14,
+        "rgb": [ 96, 72, 54 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.28,
+        "rgb": [ 228, 224, 214 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.42,
+        "rgb": [ 58, 96, 108 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.50,
+        "rgb": [ 138, 60, 54 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 112, 116, 60 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.72,
+        "rgb": [ 212, 218, 222 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 0.85
+        }
+      },
+      {
+        "pos": 0.88,
+        "rgb": [ 70, 64, 86 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 46, 52, 70 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Rust Antiphon",
+    "mood": "plum ground with a cream peak and a gold peak straddling a petrol trough, warm-dominant, no cliff",
+    "skeleton": "double-peak",
+    "axes": {
+      "value_key": "low",
+      "complexity": 3,
+      "temperature": "plum ground, cream+gold twin peaks over a petrol trough, warm-dominant, no cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 36, 30, 40 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.20,
+        "rgb": [ 232, 214, 178 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.36,
+        "rgb": [ 48, 90, 100 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.52,
+        "rgb": [ 150, 72, 50 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.70,
+        "rgb": [ 220, 180, 96 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 0.85
+        }
+      },
+      {
+        "pos": 0.86,
+        "rgb": [ 86, 48, 52 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 36, 30, 40 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Petrol Crypt",
+    "mood": "teal ground and petrol into a foregrounded olive→oxblood cliff, ochre climb, then a cool bone glow",
+    "skeleton": "cliff-in-mids",
+    "axes": {
+      "value_key": "low",
+      "complexity": 4,
+      "temperature": "teal ground / cool bone glow, foregrounded olive→oxblood mid cliff, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 30, 46, 54 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 40, 92, 104 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.32,
+        "rgb": [ 122, 120, 58 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.7
+        }
+      },
+      {
+        "pos": 0.40,
+        "rgb": [ 150, 58, 50 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.56,
+        "rgb": [ 188, 142, 58 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.55
+        }
+      },
+      {
+        "pos": 0.72,
+        "rgb": [ 230, 226, 216 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.88,
+        "rgb": [ 58, 84, 94 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 30, 46, 54 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Wine Refectory",
+    "mood": "plum ground and petrol into a foregrounded ochre→wine cliff, rust, then a warm cream glow, closing on petrol",
+    "skeleton": "cliff-in-mids",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 4,
+      "temperature": "plum ground / warm cream glow, foregrounded ochre→wine mid cliff, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 50, 42, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.14,
+        "rgb": [ 54, 98, 110 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 156, 118, 58 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.7
+        }
+      },
+      {
+        "pos": 0.38,
+        "rgb": [ 120, 56, 66 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.54,
+        "rgb": [ 150, 82, 54 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.70,
+        "rgb": [ 244, 232, 208 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.86,
+        "rgb": [ 66, 92, 104 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 50, 42, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Verdant Ossuary",
+    "mood": "teal ground and petrol into a foregrounded oxblood→olive cliff, then a cool bone glow, closing petrol",
+    "skeleton": "cliff-in-mids",
+    "axes": {
+      "value_key": "low",
+      "complexity": 3,
+      "temperature": "teal ground / cool bone glow, foregrounded oxblood→olive mid cliff, cool-dominant"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 26, 48, 54 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.18,
+        "rgb": [ 56, 104, 114 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.34,
+        "rgb": [ 150, 60, 52 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.7
+        }
+      },
+      {
+        "pos": 0.42,
+        "rgb": [ 108, 114, 56 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.62,
+        "rgb": [ 222, 218, 208 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.82,
+        "rgb": [ 70, 86, 96 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 26, 48, 54 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Ochre Sacristy",
+    "mood": "navy ground and umber into a foregrounded petrol→ochre cliff, rust, then a warm cream glow",
+    "skeleton": "cliff-in-mids",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 3,
+      "temperature": "navy ground / warm cream glow, foregrounded petrol→ochre mid cliff, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 44, 48, 64 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 92, 70, 52 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.32,
+        "rgb": [ 58, 98, 108 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.7
+        }
+      },
+      {
+        "pos": 0.40,
+        "rgb": [ 176, 128, 54 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.60,
+        "rgb": [ 150, 80, 52 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.45
+        }
+      },
+      {
+        "pos": 0.80,
+        "rgb": [ 242, 230, 206 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 44, 48, 64 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Bone Vespers",
+    "mood": "high-key bone field with a single petrol jewel as the dark event, warm-sand and dusty-mauve masses, an ivory glow, no blacks",
+    "skeleton": "no-cliff",
+    "axes": {
+      "value_key": "high",
+      "complexity": 4,
+      "temperature": "high-key bone field, single petrol jewel anchor as the dark event, two reversals, no cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 226, 220, 210 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 200, 168, 120 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 46, 102, 116 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "shadow_drop",
+          "salience": 0.8
+        }
+      },
+      {
+        "pos": 0.44,
+        "rgb": [ 214, 190, 168 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 150, 110, 64 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.72,
+        "rgb": [ 232, 228, 220 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.86,
+        "rgb": [ 176, 150, 150 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 226, 220, 210 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Amber Triptych",
+    "mood": "slate ground with warm ochre and rust masses over a cool petrol field, resolved on a cool silver glow, no cliff",
+    "skeleton": "no-cliff",
+    "axes": {
+      "value_key": "mid",
+      "complexity": 4,
+      "temperature": "slate ground / cool silver glow, warm ochre & rust over cool field, two reversals, no cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 42, 52, 62 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 96, 74, 52 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 176, 132, 58 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.44,
+        "rgb": [ 70, 96, 108 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 150, 80, 56 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.45
+        }
+      },
+      {
+        "pos": 0.74,
+        "rgb": [ 214, 220, 222 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.88,
+        "rgb": [ 60, 74, 84 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 42, 52, 62 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Indigo Matins",
+    "mood": "navy ground, warm umber and a rust anchor over petrol, lifted by a cool pale-blue glow, no cliff",
+    "skeleton": "no-cliff",
+    "axes": {
+      "value_key": "low",
+      "complexity": 3,
+      "temperature": "navy ground / cool pale-blue glow, warm rust anchor over petrol, one reversal, no cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 26, 34, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.18,
+        "rgb": [ 90, 66, 50 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.34,
+        "rgb": [ 150, 70, 52 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.50,
+        "rgb": [ 50, 92, 104 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.70,
+        "rgb": [ 216, 220, 224 ],
+        "role": "glow",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "glow_band",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.86,
+        "rgb": [ 64, 80, 110 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 26, 34, 58 ],
+        "role": "ground",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Pale Sanctum",
+    "mood": "high-key cream field where an oxblood dark is the focal event, with a secondary wine dip, warm throughout, no cliff",
+    "skeleton": "inverted-arc",
+    "axes": {
+      "value_key": "high",
+      "complexity": 3,
+      "temperature": "high-key cream field, oxblood dark as focal event plus a wine secondary, warm, no cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 242, 230, 208 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 150, 72, 52 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.30,
+        "rgb": [ 88, 42, 46 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "shadow_drop",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.44,
+        "rgb": [ 206, 168, 140 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 96, 54, 66 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "shadow_drop",
+          "salience": 0.6
+        }
+      },
+      {
+        "pos": 0.74,
+        "rgb": [ 222, 190, 158 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 242, 230, 208 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Ashen Vigil",
+    "mood": "high-key bone field, a navy dark as the focal event, a terracotta→petrol mid cliff on the way down",
+    "skeleton": "inverted-arc",
+    "axes": {
+      "value_key": "high",
+      "complexity": 4,
+      "temperature": "high-key bone field, navy dark as focal event, terracotta→petrol mid cliff, two reversals"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 226, 224, 216 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.16,
+        "rgb": [ 150, 118, 146 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.28,
+        "rgb": [ 200, 176, 150 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.40,
+        "rgb": [ 176, 92, 70 ],
+        "role": "mid",
+        "segment": "cliff",
+        "keypoint": {
+          "type": "hue_flip",
+          "salience": 0.6
+        }
+      },
+      {
+        "pos": 0.48,
+        "rgb": [ 58, 96, 110 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.58,
+        "rgb": [ 36, 56, 84 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "shadow_drop",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.70,
+        "rgb": [ 168, 86, 64 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.82,
+        "rgb": [ 216, 198, 182 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 226, 224, 216 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  },
+  {
+    "name": "Cream Sanctum",
+    "mood": "high-key cream field with a cool deep-teal dark as the focal event and a wine secondary, warm field, no cliff",
+    "skeleton": "inverted-arc",
+    "axes": {
+      "value_key": "high",
+      "complexity": 3,
+      "temperature": "high-key cream field, deep-teal dark as focal event plus a wine secondary, warm field, no cliff"
+    },
+    "cycle": "cyclic",
+    "stops": [
+      {
+        "pos": 0.00,
+        "rgb": [ 244, 234, 214 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.20,
+        "rgb": [ 150, 82, 54 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 0.34,
+        "rgb": [ 32, 62, 72 ],
+        "role": "anchor",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "shadow_drop",
+          "salience": 1.0
+        }
+      },
+      {
+        "pos": 0.48,
+        "rgb": [ 190, 146, 68 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.5
+        }
+      },
+      {
+        "pos": 0.62,
+        "rgb": [ 110, 54, 64 ],
+        "role": "accent",
+        "segment": "smooth",
+        "keypoint": {
+          "type": "shadow_drop",
+          "salience": 0.55
+        }
+      },
+      {
+        "pos": 0.80,
+        "rgb": [ 220, 190, 156 ],
+        "role": "mid",
+        "segment": "smooth",
+        "keypoint": null
+      },
+      {
+        "pos": 1.00,
+        "rgb": [ 244, 234, 214 ],
+        "role": "field",
+        "segment": "smooth",
+        "keypoint": null
+      }
+    ]
+  }
+]

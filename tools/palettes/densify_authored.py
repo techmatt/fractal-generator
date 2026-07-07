@@ -74,7 +74,11 @@ def densify_palette(stops: list[dict], dense: int = 512,
     """
     pos = np.array([s["pos"] for s in stops], dtype=np.float64)
     rgb = np.array([s["rgb"] for s in stops], dtype=np.float64) / 255.0
-    seg = [s.get("segment", "smooth") for s in stops]
+    # `cliff` (v2 authored schema) is an alias for `hard`. A per-stop optional
+    # `width` overrides the global soft_cliff ramp width for that cliff only.
+    seg = [("hard" if s.get("segment") == "cliff" else s.get("segment", "smooth"))
+           for s in stops]
+    widths = [s.get("width", None) for s in stops]
     if pos[0] != 0.0 or pos[-1] != 1.0:
         raise ValueError(f"stops must span [0,1] exactly, got [{pos[0]}, {pos[-1]}]")
     if segments_override not in (None, "smooth"):
@@ -105,10 +109,13 @@ def densify_palette(stops: list[dict], dense: int = 512,
         for i in range(len(pos) - 1):
             if seg[i] != "hard":
                 continue
+            w = soft_cliff if widths[i] is None else float(widths[i])
+            if w <= 0:
+                continue  # per-stop hard snap
             p = pos[i + 1]
             c_before, c_after = lab[i], lab[i + 1]
-            win = (t >= p - soft_cliff) & (t < p)
-            u = (t[win] - (p - soft_cliff)) / soft_cliff  # 0 at ramp start, ->1 at p
+            win = (t >= p - w) & (t < p)
+            u = (t[win] - (p - w)) / w  # 0 at ramp start, ->1 at p
             s = _smoothstep(u)[:, None]
             out_lab[win] = (1.0 - s) * c_before + s * c_after
 
