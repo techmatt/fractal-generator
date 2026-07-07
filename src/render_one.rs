@@ -215,7 +215,8 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     let palette =
         Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, false, cm.mirror_needed);
 
-    let params = color_params();
+    let mut params = color_params();
+    params.density *= args.n_cycles; // n_cycles = palette band-repeat multiplier
     let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
@@ -331,6 +332,11 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         (None, true) => None,
         (None, false) => Some(ColoringParams::beautiful(render_modes::Field::Smooth)),
     };
+    // n_cycles also multiplies the beautiful path's gradient wraps.
+    let coloring_params = coloring_params.map(|mut cp| {
+        cp.palette_cycles *= args.n_cycles;
+        cp
+    });
 
     let mode = match family {
         Family::Mandelbrot => "mandelbrot".to_string(),
@@ -673,6 +679,14 @@ pub struct RenderOneArgs {
     /// SplitMix64 seed (consumed only by `--pattern jitter`).
     #[arg(long, default_value_t = 0)]
     pub seed: u64,
+
+    /// Palette **cycle count**: the number of times the gradient wraps across the
+    /// escape range (band-repeat multiplier). `1.0` = the single-pass default we've
+    /// always previewed; `N` tiles the palette `N` times, producing concentric
+    /// bands. Location-profile path scales the smooth `density`; the beautiful path
+    /// scales `palette_cycles`. Cyclic (endpoint-matched) palettes tile seamlessly.
+    #[arg(long = "n-cycles", default_value_t = 1.0)]
+    pub n_cycles: f64,
 
     /// JPEG quality (1..=100) used only when `--out` ends in `.jpg`/`.jpeg`.
     /// Ignored for PNG output. q95 keeps cache renders clean enough that the

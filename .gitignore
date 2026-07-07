@@ -126,3 +126,4 @@ __pycache__/
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*
 !/data_large/README.md
+/dramatic_palettes/artist-fractals
