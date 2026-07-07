@@ -2,7 +2,8 @@
 
 An authored palette is a small set of hand-placed stops with per-segment
 transition semantics (smooth / hard / ease), authored for readability, not for
-the render path. The Rust colorer wants a dense, even-spaced `[pos, [r,g,b]]`
+the render path. Stop color is read as ``oklch`` = ``[L, C, H°]`` (v2.2 schema)
+when present, else ``rgb`` sRGB8 (v1/v2 batches) — see ``_stop_to_oklab``. The Rust colorer wants a dense, even-spaced `[pos, [r,g,b]]`
 stop list (sRGB8) it can bake into its OKLab LUT. This util is that bridge and is
 intended to be reusable in production (not just the preview harness).
 
@@ -49,6 +50,25 @@ def _smoothstep(u: np.ndarray) -> np.ndarray:
 DEFAULT_SOFT_CLIFF = 0.08  # default hard-cliff ramp width (cycle-position units)
 
 
+def _stop_to_oklab(s: dict) -> np.ndarray:
+    """One authored stop -> OKLab (L, a, b), the space the densifier interpolates in.
+
+    Prefers ``oklch`` = ``[L, C, H°]`` (v2.2 authored schema): ``a = C·cos(H)``,
+    ``b = C·sin(H)`` — a pure cylindrical->Cartesian unpack, no color-space hop.
+    Falls back to ``rgb`` (sRGB8) for the already-generated v1/v2 batches. The
+    emit side may occasionally push chroma past sRGB gamut; interpolation stays
+    in OKLab and the final ``oklab_to_srgb`` per-channel clamp lands it on the
+    nearest displayable sRGB.
+    """
+    oklch = s.get("oklch")
+    if oklch is not None:
+        L, ch, h = float(oklch[0]), float(oklch[1]), float(oklch[2])
+        hr = np.deg2rad(h)
+        return np.array([L, ch * np.cos(hr), ch * np.sin(hr)], dtype=np.float64)
+    rgb = np.asarray(s["rgb"], dtype=np.float64) / 255.0
+    return C.srgb_to_oklab(rgb)
+
+
 def densify_palette(stops: list[dict], dense: int = 512,
                     segments_override: str | None = None,
                     soft_cliff: float = DEFAULT_SOFT_CLIFF) -> list[list]:
@@ -73,7 +93,6 @@ def densify_palette(stops: list[dict], dense: int = 512,
         behavior, kept for comparison. Ignored when ``segments_override`` is set.
     """
     pos = np.array([s["pos"] for s in stops], dtype=np.float64)
-    rgb = np.array([s["rgb"] for s in stops], dtype=np.float64) / 255.0
     # `cliff` (v2 authored schema) is an alias for `hard`. A per-stop optional
     # `width` overrides the global soft_cliff ramp width for that cliff only.
     seg = [("hard" if s.get("segment") == "cliff" else s.get("segment", "smooth"))
@@ -84,7 +103,7 @@ def densify_palette(stops: list[dict], dense: int = 512,
     if segments_override not in (None, "smooth"):
         raise ValueError(f"segments_override must be None or 'smooth', got {segments_override!r}")
 
-    lab = C.srgb_to_oklab(rgb)  # (n,3)
+    lab = np.array([_stop_to_oklab(s) for s in stops], dtype=np.float64)  # (n,3)
     t = np.linspace(0.0, 1.0, dense)  # even-spaced, endpoints inclusive
     # Segment index for each t: last stop whose pos <= t (clamped so t==1 -> last span).
     idx = np.clip(np.searchsorted(pos, t, side="right") - 1, 0, len(pos) - 2)
