@@ -21,6 +21,9 @@ target
 #.idea/
 
 
+# Cygwin/Git-bash crash dumps (e.g. du.exe.stackdump)
+*.stackdump
+
 # Added by cargo
 
 /target
