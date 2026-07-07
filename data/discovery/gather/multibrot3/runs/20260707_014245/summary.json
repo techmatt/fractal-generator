@@ -1,0 +1,73 @@
+{
+  "ts": "20260707_014245",
+  "mode": "gather",
+  "smoke": false,
+  "family": "multibrot3",
+  "wallclock_s": 1003.3,
+  "batches": 3,
+  "config": {
+    "family": "multibrot3",
+    "family_flags": [
+      "--family",
+      "multibrot3"
+    ],
+    "reject_radius": 0.2,
+    "q3_density_cap": 5,
+    "dedup_k": 1.5,
+    "depth": [
+      4,
+      14
+    ],
+    "batch_seeds": 24,
+    "budget_min": 12.0,
+    "scorer": "data/classifier/v6/model_best.pt",
+    "guard": "OFF (verdict logged as prior)",
+    "julia_hook": true,
+    "julia_bands": [
+      2.0,
+      10.0
+    ]
+  },
+  "totals": {
+    "outcomes": 69,
+    "decoded": {
+      "1": 58,
+      "2": 11,
+      "3": 0
+    },
+    "q3_distinct": 0,
+    "walk_errors": 0,
+    "guard": {
+      "pass": 56,
+      "interior": 9,
+      "flat": 4,
+      "both": 0,
+      "render_error": 0
+    },
+    "julia_descents": 2,
+    "julia_outcomes": 6,
+    "julia_q3": 0,
+    "julia_distinct": 0,
+    "julia_guard": {
+      "pass": 6,
+      "interior": 0,
+      "flat": 0,
+      "both": 0,
+      "render_error": 0
+    }
+  },
+  "seeds": {
+    "draws": 92,
+    "rejected": 20,
+    "saturation": false
+  },
+  "cumulative": {
+    "ledger_rows": 1069,
+    "q3_cloud_size": 43
+  },
+  "julia": {
+    "partition": "julia:multibrot3",
+    "cloud_size": 53,
+    "distinct_added": 0
+  }
+}
