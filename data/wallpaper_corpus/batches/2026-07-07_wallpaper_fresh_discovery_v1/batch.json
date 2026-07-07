@@ -1,0 +1,61 @@
+{
+  "created": "2026-07-07T09:41:33",
+  "labeler": null,
+  "generator_version": "wallpaper_fresh_discovery_v1",
+  "schema_note": "Fresh-discovery HONEST-emit pool: UNSEEN machine-q3 locations (not in the wallpaper head's bootstrap \u222a humanq3 corpus), top-7 by pref-v2 \u2014 the SAME pool rule/format as the humanq3 emission pool, so emit_v1 --pool runs unchanged. Coloring params live in provenance.params (crop = pure function of render + params).",
+  "source_run": "data/discovery/outcome_ledger.jsonl (v6-scored production seeder; decoded_class==3 & guard_pass & deg-2)",
+  "sampling_metaparameters": {
+    "beam": {
+      "N_GEN0": 60,
+      "TOP_KEEP": 18,
+      "K_VARIANTS": 8,
+      "R_MAX": 2,
+      "seed": 7
+    },
+    "pool_K": 7,
+    "pool_rule": "top-K by pref-v2 over best-per-palette reps (build_humanq3.top_k_pool \u2014 verbatim)",
+    "scorer": "data/queries/scorer/v2 (within-location pref-v2 utility)",
+    "maxiter_policy": "auto_maxiter(fw) \u2014 native fw-dependent (bootstrap parity)",
+    "pilot_count": 20,
+    "dedup_frac": 0.5,
+    "seed": 7
+  },
+  "unseen_contract": {
+    "excluded": "bootstrap \u222a humanq3 (all rows, train+eval)",
+    "method": "location_key exact-match OR same-family spatial proximity (< 0.5*fw)",
+    "note": "the head vouches for these locations blind \u2014 this is the honest emit precision vs humanq3's optimistic ~0.60."
+  },
+  "present_gates": {
+    "note": "NONE at build time \u2014 emit_v1's v2 gate is the filter."
+  },
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "composition": "center",
+    "render_path": "render-one --dump-field + colormap.render_candidate (byte-parity with the humanq3 label path)"
+  },
+  "selection_report": {
+    "source_ledger": "data\\discovery\\outcome_ledger.jsonl",
+    "filter": "scorer_version==v6 & decoded_class==3 & guard_pass & family\u2208{mandelbrot,julia:mandelbrot}",
+    "raw_matches": 62,
+    "within_set_dups_dropped": 10,
+    "excluded_head_corpus_by_key": 0,
+    "excluded_head_corpus_by_proximity": 0,
+    "unseen_available": 52,
+    "pilot_count": 20,
+    "per_family_chosen": {
+      "julia:mandelbrot": 10,
+      "mandelbrot": 10
+    },
+    "head_corpus_batches": [
+      "2026-07-05_wallpaper_bootstrap_v1",
+      "2026-07-05_wallpaper_humanq3_v1"
+    ],
+    "head_corpus_distinct_keys": 202
+  },
+  "n_rows": 140,
+  "wall_seconds": 1048.8178062438965
+}
