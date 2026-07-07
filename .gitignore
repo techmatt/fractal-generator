@@ -128,3 +128,5 @@ __pycache__/
 !/data_large/README.md
 /dramatic_palettes/artist-fractals
 /dramatic_palettes/viz_render/
+/dramatic_palettes/densified/
+/dramatic_palettes/viz/
