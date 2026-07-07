@@ -23,17 +23,12 @@ location (field invariance) and its picks recolored.
 from __future__ import annotations
 
 import argparse
-import dataclasses
-import hashlib
 import json
-import subprocess
 import sys
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -42,18 +37,21 @@ sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import query_sampler as qs            # noqa: E402  (load_pool_library)
-import colormap as cm                 # noqa: E402  (CandidateConfig, load_field, render_candidate)
+import colormap as cm                 # noqa: E402  (CandidateConfig, load_field, stretch_field)
 import location as loc_mod            # noqa: E402  (from_render_block + render_one_flags)
+from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
+    LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER, JPG_Q,
+    ensure_label_field, render_label_crop,
+)
 
-EXE = ROOT / "target" / "release" / "fractal-generator.exe"
 BATCH_ID = "2026-07-05_wallpaper_bootstrap_v1"
 BATCH_DIR = ROOT / "data" / "wallpaper_corpus" / "batches" / BATCH_ID
-OUT_FIELDS = ROOT / "out" / "wallpaper_fields_ss2"   # ss2 label-spec field cache (disposable)
+OUT_FIELDS = ROOT / "out" / "wallpaper_fields_ss2"   # ss2 label-spec field cache (disposable);
+                                                     # separate dir keeps ss2 stems clear of the
+                                                     # bootstrap build's out/wallpaper_fields cache.
 
-# --- label-crop spec (must match build_bootstrap after the ss2 edit) -------
-LABEL_W, LABEL_H, LABEL_SS = 1280, 720, 2
-LABEL_FILTER = "lanczos3"
-JPG_Q = 90
+# The label-crop spec (LABEL_W/H/SS, LABEL_FILTER, JPG_Q) + ensure_label_field +
+# render_label_crop are the shared canonical wallpaper label geometry (label_crop.py).
 LABEL_CROP_WORKERS = 4    # project-wide max-workers cap — DO NOT raise
 
 
@@ -63,28 +61,6 @@ def read_rows():
         if line.strip():
             rows.append(json.loads(line))
     return rows
-
-
-def ensure_field(loc):
-    """Dump (or reuse) the ss2 label-geometry smooth field for `loc` -> FieldData.
-    maxiter is the manifest's stored value (defines the pixels) — not recomputed."""
-    OUT_FIELDS.mkdir(parents=True, exist_ok=True)
-    h = hashlib.sha1(f"{loc.key()}|{LABEL_W}x{LABEL_H}ss{LABEL_SS}|{loc.maxiter}".encode()).hexdigest()[:16]
-    stem = f"{loc.family}_{h}_{LABEL_W}x{LABEL_H}ss{LABEL_SS}"
-    bin_path = OUT_FIELDS / f"{stem}.bin"
-    json_path = OUT_FIELDS / f"{stem}.json"
-    if not (bin_path.exists() and json_path.exists()):
-        cmd = [str(EXE), "render-one",
-               "--cx", loc.cx, "--cy", loc.cy, "--fw", loc.fw,
-               "--width", str(LABEL_W), "--height", str(LABEL_H),
-               "--supersample", str(LABEL_SS),
-               "--maxiter", str(loc.maxiter),
-               "--dump-field", str(bin_path)]
-        cmd += loc_mod.render_one_flags(loc)
-        r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"label dump-field failed for {stem}:\n{r.stderr[-500:]}")
-    return cm.load_field(str(bin_path), str(json_path))
 
 
 def config_from_row(row):
@@ -152,15 +128,14 @@ def main():
 
     for li, (loc, grp) in enumerate(items):
         t_loc = time.time()
-        field = ensure_field(loc)
+        field = ensure_label_field(loc, fields_dir=OUT_FIELDS)   # ss2 cache dir (separate)
         prep = cm.stretch_field(field)
 
         def _render(row):
             cfg = config_from_row(row)
             out_path = crops_dir / f"{row['image_id']}.jpg"
-            img = cm.render_candidate(field, cfg, lib, prep=prep)   # (720,1280,3) uint8 sRGB
-            assert img.shape == (LABEL_H, LABEL_W, 3), (row["image_id"], img.shape)
-            Image.fromarray(img).convert("RGB").save(out_path, "JPEG", quality=JPG_Q)
+            w, h = render_label_crop(field, cfg, lib, out_path, prep=prep)
+            assert (w, h) == (LABEL_W, LABEL_H), (row["image_id"], w, h)
             return row["image_id"]
 
         with ThreadPoolExecutor(max_workers=min(LABEL_CROP_WORKERS, len(grp))) as ex:

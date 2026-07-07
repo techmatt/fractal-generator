@@ -37,10 +37,7 @@ Pipeline:
 from __future__ import annotations
 
 import argparse
-import dataclasses
-import hashlib
 import json
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,7 +45,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -61,11 +57,13 @@ import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteS
 import colormap as cm                 # noqa: E402  (CandidateConfig, load_field, render_candidate)
 import location as loc_mod            # noqa: E402  (canonical Location + render_one_flags)
 from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
+from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
+    LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER, JPG_Q,
+    ensure_label_field, render_label_crop,
+)
 
-EXE = ROOT / "target" / "release" / "fractal-generator.exe"
 GATHER_DIR = ROOT / "data" / "discovery" / "gather"
 OUT_CORPUS = ROOT / "data" / "wallpaper_corpus"
-OUT_FIELDS = ROOT / "out" / "wallpaper_fields"     # ss4 label-spec field cache (disposable)
 
 BATCH_ID = "2026-07-05_wallpaper_bootstrap_v1"
 GENERATOR_VERSION = "wallpaper_bootstrap_v1"
@@ -97,30 +95,23 @@ DEDUP_FRAC = 0.5           # two coords within DEDUP_FRAC*fw of each other are t
 PICKS_PER_LOC = 8
 STRATA_PLAN = (3, 2, 3)    # (low, mid, high) across the pref-v2 score RANGE
 
-# --- label-crop spec (LOCKED — the canonical wallpaper label geometry) -----
-# ss2 (was ss4): unified with build_humanq3's LABEL_SS so the two batches union
-# homogeneously — otherwise ss-level correlates with tier (bootstrap is almost all
-# low-tier), landing a batch-effect confound on the tier-3/4 axis. The ss2/ss4
-# difference is washed out by the q90 JPEG + 384x224 training stretch and never flips
-# a human tier label. NOTE: this constant and humanq3's are still SEPARATE module-level
-# definitions (each build script duplicates the label-crop spec + render_label_crop);
-# they now agree by value, not by a shared source of truth.
-LABEL_W, LABEL_H, LABEL_SS = 1280, 720, 2
-LABEL_FILTER = "lanczos3"
-JPG_Q = 90
+# The label-crop spec (LABEL_W/H/SS, LABEL_FILTER, JPG_Q) + ensure_label_field +
+# render_label_crop are the shared canonical wallpaper label geometry (label_crop.py),
+# unioned across all wallpaper batches so ss-level never correlates with tier.
 
 # !!! PERF: the keeper label crops are the RUN'S BOTTLENECK, and it's an unintuitive one.
 # Beam scoring is coarse+cheap now, the GPU is ~idle, and the Rust field dumps are
-# multi-core — so you'd expect this to fly. It doesn't: each label crop is ~10s of
-# SINGLE-THREADED ss4 Lanczos-3 numpy in colormap.render_candidate (5120x2880 = 14.7M
+# multi-core — so you'd expect this to fly. It doesn't: each label crop is several seconds
+# of SINGLE-THREADED ss2 Lanczos-3 numpy in colormap.render_candidate (2560x1440 = 3.69M
 # supersampled px through the LUT gather + separable downsample), and there are 8 per
-# location => ~80s/location on coloring ALONE. On a 12-core box that reads as ~8% CPU and
-# looks stalled. We render a location's 8 picks concurrently to claw that back. THREADS
-# not processes: the heavy numpy ops release the GIL, and the 58MB ss4 field is shared
-# read-only in-process (a process pool would re-pickle it per task). Measured ~3.3x wall
-# on the 8-crop phase (85s -> 26s/location), byte-identical to the serial path; short of a
-# full 4x because the ops are memory-bandwidth-bound. CAP 4: the project-wide max-workers
-# rule; DO NOT raise.
+# location => tens of seconds/location on coloring ALONE. On a 12-core box that reads as
+# ~8% CPU and looks stalled. We render a location's 8 picks concurrently to claw that back.
+# THREADS not processes: the heavy numpy ops release the GIL, and the ~15MB ss2 field is
+# shared read-only in-process (a process pool would re-pickle it per task). The ~3.3x wall
+# speedup on the 8-crop phase was measured byte-identical to the serial path at the original
+# ss4 spec (85s -> 26s/location); ss2 ~halves the absolute per-crop cost but the structure
+# is unchanged and it stays short of a full 4x because the ops are memory-bandwidth-bound.
+# CAP 4: the project-wide max-workers rule; DO NOT raise.
 LABEL_CROP_WORKERS = 4
 
 SEED = 7
@@ -295,47 +286,9 @@ def strata_sample(all_candidates, rng):
 
 
 # ===========================================================================
-# 4. Label-spec re-render (field-dump + colormap tail).
+# 4. Label-spec re-render — ensure_label_field + render_label_crop are the shared
+#    Recipe-2 tail (tools/wallpaper/label_crop.py).
 # ===========================================================================
-
-def ensure_label_field(loc):
-    """Dump (or reuse) the ss4 label-geometry smooth field for `loc`. Returns FieldData.
-    This is the expensive Rust pass — one per location, shared by that location's ~8
-    picks (coloring-independent)."""
-    OUT_FIELDS.mkdir(parents=True, exist_ok=True)
-    h = hashlib.sha1(f"{loc.key()}|{LABEL_W}x{LABEL_H}ss{LABEL_SS}|{loc.maxiter}".encode()).hexdigest()[:16]
-    stem = f"{loc.family}_{h}_{LABEL_W}x{LABEL_H}ss{LABEL_SS}"
-    bin_path = OUT_FIELDS / f"{stem}.bin"
-    json_path = OUT_FIELDS / f"{stem}.json"
-    if not (bin_path.exists() and json_path.exists()):
-        cmd = [str(EXE), "render-one",
-               "--cx", loc.cx, "--cy", loc.cy, "--fw", loc.fw,
-               "--width", str(LABEL_W), "--height", str(LABEL_H),
-               "--supersample", str(LABEL_SS),
-               "--maxiter", str(loc.maxiter),
-               "--dump-field", str(bin_path)]
-        cmd += loc_mod.render_one_flags(loc)
-        r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"label dump-field failed for {stem}:\n{r.stderr[-500:]}")
-    return cm.load_field(str(bin_path), str(json_path))
-
-
-def render_label_crop(field, cfg, lib, out_path, prep=None):
-    """Re-render one candidate config at the label spec (ss4 Lanczos-3) -> q90 JPG.
-
-    SLOW — this single call is ~10s (see the LABEL_CROP_WORKERS note): coloring an ss4
-    5120x2880 field through the LUT gather + Lanczos-3 separable downsample is a big
-    single-threaded numpy job. ALWAYS pass a shared `prep` (cm.stretch_field(field)) so
-    the ~14.7M-value percentile sort runs ONCE per location instead of once per crop —
-    omitting it silently re-sorts inside every call and adds seconds to each. Thread-safe:
-    reads `field`/`prep`, allocates its own buffers; the LUT cache tolerates concurrent
-    bakes (see colormap._LUT_MEMO)."""
-    label_cfg = dataclasses.replace(cfg, filter=LABEL_FILTER)
-    img = cm.render_candidate(field, label_cfg, lib, prep=prep)   # (720,1280,3) uint8 sRGB
-    Image.fromarray(img).convert("RGB").save(out_path, "JPEG", quality=JPG_Q)
-    return img.shape[1], img.shape[0]
-
 
 # ===========================================================================
 # 5. Batch emission.
@@ -472,7 +425,7 @@ def main():
     per_loc_recolors = SL.N_GEN0 + SL.R_MAX * SL.TOP_KEEP * SL.K_VARIANTS
     print(f"[wallpaper] est: {len(sources)} eval-field dumps (ss2) + "
           f"<= {len(sources)*per_loc_recolors} beam recolors + "
-          f"{len(sources)} label-field dumps (ss4 5120x2880) + ~{est_picks} label recolors "
+          f"{len(sources)} label-field dumps (ss2 2560x1440) + ~{est_picks} label recolors "
           f"-> ~{est_picks} crops")
     if args.estimate:
         return
@@ -497,7 +450,7 @@ def main():
         # coarse_score=True: the beam's SCORING recolors run on the coarse grid
         # (colormap.render_candidate_coarse, ~13x faster; beam wall ~276min -> ~21min).
         # SELECTION-ONLY — it decides which 8 candidates the strata sampler picks, never
-        # how they render. The keepers are re-rendered below at the full ss4 Lanczos-3
+        # how they render. The keepers are re-rendered below at the full ss2 Lanczos-3
         # label spec (render_label_crop) from each pick's config, untouched by the coarse
         # path. Gated on STRATA-BUCKET parity, not winner parity (the batch is human-
         # relabeled, so exact palette/band identity is a scaffold): coarse picks span 87%
@@ -507,13 +460,13 @@ def main():
         rng = np.random.default_rng(args.seed + li)
         picks = strata_sample(res["all_candidates"], rng)
 
-        # --- label-spec re-render (ss4 field once, then each pick) ---
-        # The 8 keeper crops are the bottleneck (~10s single-threaded each — see
-        # LABEL_CROP_WORKERS). Dump the ss4 field + percentile-stretch ONCE (both shared
+        # --- label-spec re-render (ss2 field once, then each pick) ---
+        # The 8 keeper crops are the bottleneck (several seconds single-threaded each — see
+        # LABEL_CROP_WORKERS). Dump the ss2 field + percentile-stretch ONCE (both shared
         # read-only across the picks), then color the 8 concurrently. This phase, not the
         # beam, is why a location takes minutes.
         field = ensure_label_field(loc)
-        label_prep = cm.stretch_field(field)   # 14.7M-value percentile sort: once per loc
+        label_prep = cm.stretch_field(field)   # 3.69M-value percentile sort: once per loc
         crops_dir = OUT_CORPUS / "batches" / BATCH_ID / "crops"
         crops_dir.mkdir(parents=True, exist_ok=True)
 

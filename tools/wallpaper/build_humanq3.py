@@ -13,9 +13,10 @@ Difference from the bootstrap (tools/wallpaper/build_bootstrap.py):
     best-scoring candidate; the refined winners land at rank-1 by construction) — the
     emission pool itself, no strata sub-sampling. Serving-consistency pin: K=7 is also
     the emission pool depth, so the head trains on top-7 and serves on top-7.
-  * Everything else — the beam (retain_all + coarse_score), the ss4 label field dump,
-    the render_candidate label-crop tail, the LOCKED 1280x720 ss4 Lanczos-3 q90 spec —
-    is byte-for-byte the bootstrap path, so the two batches union cleanly at train time.
+  * Everything else — the beam (retain_all + coarse_score), the ss2 label field dump,
+    the render_candidate label-crop tail, the LOCKED 1280x720 ss2 Lanczos-3 q90 spec
+    (shared via label_crop.py) — is byte-for-byte the bootstrap path, so the two batches
+    union cleanly at train time.
 
 Composition (see the prompt wallpaper_humanq3_trainset_k7.md):
   1. All human-q3 from gather_v6 (mandatory — carries the new-family coverage).
@@ -32,9 +33,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import hashlib
 import json
-import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -43,7 +42,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -56,11 +54,13 @@ import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteS
 import colormap as cm                 # noqa: E402  (load_field, stretch_field, render_candidate)
 import location as loc_mod            # noqa: E402  (canonical Location + render_one_flags)
 from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
+from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
+    LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER, JPG_Q,
+    ensure_label_field, render_label_crop,
+)
 
-EXE = ROOT / "target" / "release" / "fractal-generator.exe"
 LABEL_CORPUS = ROOT / "data" / "label_corpus"
 OUT_CORPUS = ROOT / "data" / "wallpaper_corpus"
-OUT_FIELDS = ROOT / "out" / "wallpaper_fields"     # ss4 label-spec field cache (shared w/ bootstrap)
 
 BATCH_ID = "2026-07-05_wallpaper_humanq3_v1"
 GENERATOR_VERSION = "wallpaper_humanq3_v1"
@@ -73,13 +73,8 @@ V6_BATCH = "2026-07-05_gather_v6"
 K = 7                      # emission pool depth == serving pool depth (PINNED, see docstring)
 RENDER_BUDGET = 1000       # hard cap on total label crops
 
-# --- label-crop spec -------------------------------------------------------
-# ss2 (was ss4): the ss2/ss4 difference is washed out by the q90 JPEG + 384x224
-# training stretch and never flips a human tier label, and ss2 ~halves render time.
-# Deliberate divergence from the bootstrap (still ss4) — no ss-parity assertion.
-LABEL_W, LABEL_H, LABEL_SS = 1280, 720, 2
-LABEL_FILTER = "lanczos3"
-JPG_Q = 90
+# The label-crop spec (LABEL_W/H/SS, LABEL_FILTER, JPG_Q) + ensure_label_field +
+# render_label_crop are the shared canonical wallpaper label geometry (label_crop.py).
 LABEL_CROP_WORKERS = 4     # project-wide max-workers cap — DO NOT raise (see build_bootstrap note)
 
 SEED = 7
@@ -265,39 +260,9 @@ def top_k_pool(all_candidates, k=K):
 
 
 # ===========================================================================
-# 3. Label-spec re-render (field-dump + colormap tail) — identical to the bootstrap.
+# 3. Label-spec re-render — ensure_label_field + render_label_crop are the shared
+#    Recipe-2 tail (tools/wallpaper/label_crop.py); the bootstrap uses the same path.
 # ===========================================================================
-
-def ensure_label_field(loc):
-    """Dump (or reuse) the ss4 label-geometry smooth field for `loc`. Shared cache with
-    the bootstrap (same stem hash) so a location present in both re-uses the field."""
-    OUT_FIELDS.mkdir(parents=True, exist_ok=True)
-    h = hashlib.sha1(f"{loc.key()}|{LABEL_W}x{LABEL_H}ss{LABEL_SS}|{loc.maxiter}".encode()).hexdigest()[:16]
-    stem = f"{loc.family}_{h}_{LABEL_W}x{LABEL_H}ss{LABEL_SS}"
-    bin_path = OUT_FIELDS / f"{stem}.bin"
-    json_path = OUT_FIELDS / f"{stem}.json"
-    if not (bin_path.exists() and json_path.exists()):
-        cmd = [str(EXE), "render-one",
-               "--cx", loc.cx, "--cy", loc.cy, "--fw", loc.fw,
-               "--width", str(LABEL_W), "--height", str(LABEL_H),
-               "--supersample", str(LABEL_SS),
-               "--maxiter", str(loc.maxiter),
-               "--dump-field", str(bin_path)]
-        cmd += loc_mod.render_one_flags(loc)
-        r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"label dump-field failed for {stem}:\n{r.stderr[-500:]}")
-    return cm.load_field(str(bin_path), str(json_path))
-
-
-def render_label_crop(field, cfg, lib, out_path, prep=None):
-    """One candidate config at the label spec (ss4 Lanczos-3) -> q90 JPG. ALWAYS pass a
-    shared `prep` (cm.stretch_field(field)) so the percentile sort runs once per loc."""
-    label_cfg = dataclasses.replace(cfg, filter=LABEL_FILTER)
-    img = cm.render_candidate(field, label_cfg, lib, prep=prep)   # (720,1280,3) uint8 sRGB
-    Image.fromarray(img).convert("RGB").save(out_path, "JPEG", quality=JPG_Q)
-    return img.shape[1], img.shape[0]
-
 
 # ===========================================================================
 # 4. Batch emission.
@@ -469,12 +434,12 @@ def main():
         cls = src["family"]
         t_loc = time.time()
         # Beam with full-trajectory retention; coarse scoring (SELECTION-ONLY — keepers
-        # are re-rendered below on the full ss4 label path, untouched by the coarse grid).
+        # are re-rendered below on the full ss2 label path, untouched by the coarse grid).
         res = SL.run_location(f"{cls}_{li:03d}", loc, lib, sampler, model, device,
                               args.seed, retain_all=True, coarse_score=True)
         pool = top_k_pool(res["all_candidates"], K)
 
-        # Label-spec re-render: ss4 field once, percentile-stretch once, then the K picks
+        # Label-spec re-render: ss2 field once, percentile-stretch once, then the K picks
         # concurrently (heavy single-threaded numpy per crop; cap 4).
         field = ensure_label_field(loc)
         label_prep = cm.stretch_field(field)
