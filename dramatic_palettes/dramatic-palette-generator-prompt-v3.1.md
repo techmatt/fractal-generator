@@ -19,9 +19,6 @@
 > be **big and saturated**; **saturated/complementary cliffs are banned** (they render as a dirty seam —
 > big hue jumps route through black or white instead); and the **vivid register gets pure hues plus true
 > black and true white** at full strength.
->
-> Earlier: `oklch` stops (densifier converts); `cliff` soft-ramp (W=0.08); `skeleton` axis; jewel-earth is
-> a default, not a law; three calibration images.
 
 ---
 
@@ -29,10 +26,15 @@
 
 ```
 BATCH SIZE:      20              # ignored for 6-ultra — that band emits ~6 by design
-MOOD FAMILY:     fire-ice        # one name from the roster below, or "span" to vary across the batch
+MOOD FAMILY:     antique-faded        # one name from the roster below, or "span" to vary across the batch
 COMPLEXITY BAND: 3-4             # one of: 1-2 / 3-4 / 5 / 6-ultra
 VALUE KEY:       span            # one of: low / mid / high / span
 ```
+
+The output json you emit should follow the following naming convention:
+fire-ice_c3-4_v3_1.json
+atmospheric-deep_c5_v3_1.json
+etc.
 
 Run across a grid of (mood × complexity × value) to accumulate a large set. **Skeletons and architectures
 are distributed automatically within each batch — they are not run knobs.**

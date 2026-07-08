@@ -1,0 +1,345 @@
+[
+  {
+    "name": "Oxblood & Petrol Seam",
+    "mood": "pure deep petrol and oxblood over true black, flared to white; the two hues never touch — they route through the white glow and the black ground",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.06, 0.01, 240], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.42, 0.13, 195], "role": "anchor"},
+      {"pos": 0.34, "oklch": [0.95, 0.012, 200], "role": "glow"},
+      {"pos": 0.5,  "oklch": [0.55, 0.15, 30], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.66, "oklch": [0.30, 0.10, 25], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.06, 0.01, 240], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Rust to Petrol Flare",
+    "mood": "oxblood-rust warm mass against a petrol cool mass, the two poles separated by a dark neutral dip and a late white flare",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.14, 0.06, 28], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.34, 0.13, 28], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.16, 0.03, 32], "role": "mid"},
+      {"pos": 0.46, "oklch": [0.40, 0.12, 195], "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.30, 0.09, 198], "role": "mid"},
+      {"pos": 0.8,  "oklch": [0.93, 0.015, 205], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.14, 0.06, 28], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Twin Mineral Peaks",
+    "mood": "a light petrol peak and a light rust-oxblood peak with a dark neutral trough between; two saturated hues, no blend",
+    "architecture": "duotone-plus",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.09, 0.02, 200], "role": "ground"},
+      {"pos": 0.12, "oklch": [0.40, 0.10, 195], "role": "field"},
+      {"pos": 0.24, "oklch": [0.68, 0.12, 193], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.16, 0.03, 60], "role": "mid"},
+      {"pos": 0.6,  "oklch": [0.63, 0.14, 40], "role": "anchor"},
+      {"pos": 0.8,  "oklch": [0.30, 0.10, 32], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.09, 0.02, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ember Ramp",
+    "mood": "a single warm heat sweep — black to deep oxblood to rust to ochre to a cream flare; no cool reversal, pure warm value+chroma climb",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.05, 0.01, 40], "role": "ground"},
+      {"pos": 0.2,  "oklch": [0.30, 0.12, 32], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.52, 0.16, 55], "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.70, 0.14, 80], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.95, 0.02, 90], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.05, 0.01, 40], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Deep Verdigris Sweep",
+    "mood": "a single cool sweep — black to deep teal to petrol to pale foam; one temperature, a clean mineral climb with no warm note",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.05, 0.01, 200], "role": "ground"},
+      {"pos": 0.22, "oklch": [0.30, 0.10, 200], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.50, 0.13, 195], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.72, 0.10, 190], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.93, 0.02, 180], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.05, 0.01, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Kiln Glow",
+    "mood": "a warm ramp that flares to cream early then settles down through rust into deep oxblood; all heat, no cool, peak up front",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.20, 0.06, 50], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.55, 0.14, 60], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.90, 0.03, 80], "role": "glow"},
+      {"pos": 0.48, "oklch": [0.62, 0.15, 55], "role": "anchor"},
+      {"pos": 0.64, "oklch": [0.42, 0.14, 45], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.26, 0.10, 35], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.20, 0.06, 50], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Rust Against Petrol",
+    "mood": "a light rust peak and a light petrol peak in real temperature tension, bridged by a dark muted neutral rather than a seam",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.14, 0.05, 45], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.45, 0.12, 52], "role": "anchor"},
+      {"pos": 0.26, "oklch": [0.72, 0.13, 58], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.28, 0.035, 95], "role": "mid"},
+      {"pos": 0.62, "oklch": [0.70, 0.12, 193], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.36, 0.10, 200], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.14, 0.05, 45], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Forge and Frost",
+    "mood": "deep petrol cool against deep rust warm over black, bridged by a cream glow; temperature tension carried at full chroma",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.06, 0.01, 200], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.44, 0.13, 195], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.14, 0.03, 210], "role": "mid"},
+      {"pos": 0.5,  "oklch": [0.90, 0.02, 85], "role": "glow"},
+      {"pos": 0.66, "oklch": [0.56, 0.16, 48], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.26, 0.10, 36], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.06, 0.01, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Petrol Dawn",
+    "mood": "petrol rises to a bone flare early, then the warm rust mass takes over below; a cool-to-warm tension with the light up front",
+    "architecture": "complementary-tension",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.18, 0.06, 198], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.66, 0.13, 193], "role": "anchor"},
+      {"pos": 0.28, "oklch": [0.92, 0.02, 150], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.40, 0.05, 95], "role": "mid"},
+      {"pos": 0.58, "oklch": [0.60, 0.14, 52], "role": "anchor"},
+      {"pos": 0.74, "oklch": [0.32, 0.11, 42], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.18, 0.06, 198], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Copper on Slate",
+    "mood": "petrol cool and rust warm bridged by cream, with one small crisp step deepening the rust; muted tension with a filigree accent",
+    "architecture": "complementary-tension",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.05, 200], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.52, 0.14, 193], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.90, 0.02, 85], "role": "glow"},
+      {"pos": 0.46, "oklch": [0.56, 0.16, 52], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.58, "oklch": [0.36, 0.12, 45], "role": "mid"},
+      {"pos": 0.78, "oklch": [0.24, 0.08, 40], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.16, 0.05, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ochre Walk",
+    "mood": "a warm hue walk from oxblood through rust and ochre to olive over black, no complement — drama from the value climb and the drift",
+    "architecture": "analogous-drift",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.06, 0.01, 40], "role": "ground"},
+      {"pos": 0.12, "oklch": [0.34, 0.12, 28], "role": "anchor"},
+      {"pos": 0.24, "oklch": [0.20, 0.06, 40], "role": "mid"},
+      {"pos": 0.38, "oklch": [0.56, 0.14, 58], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.74, 0.13, 85], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.93, 0.02, 105], "role": "glow"},
+      {"pos": 0.82, "oklch": [0.52, 0.13, 118], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.06, 0.01, 40], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Indigo Tideline",
+    "mood": "a cool walk from slate-blue through petrol to teal, rising to a pale foam late; neighboring hues, no warm reversal",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.20, 0.06, 255], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.40, 0.11, 225], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.26, 0.06, 235], "role": "mid"},
+      {"pos": 0.48, "oklch": [0.52, 0.12, 198], "role": "anchor"},
+      {"pos": 0.64, "oklch": [0.66, 0.11, 182], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.92, 0.03, 170], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.20, 0.06, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Bone Field, Oxblood Well",
+    "mood": "a pale amber field carrying rust and ochre, dropping to a single deep oxblood well as the focal event; no blacks",
+    "architecture": "analogous-drift",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 90], "role": "field"},
+      {"pos": 0.16, "oklch": [0.80, 0.08, 80], "role": "field"},
+      {"pos": 0.32, "oklch": [0.70, 0.11, 70], "role": "anchor"},
+      {"pos": 0.46, "oklch": [0.52, 0.10, 55], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.28, 0.13, 40], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.55, 0.10, 60], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.82, 0.06, 80], "role": "field"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 90], "role": "field"}
+    ]
+  },
+  {
+    "name": "Olive Turn",
+    "mood": "a warm drift from oxblood up through rust to a cream flare early, then descending across ochre into deep olive",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.18, 0.06, 32], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.55, 0.14, 45], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.90, 0.03, 70], "role": "glow"},
+      {"pos": 0.48, "oklch": [0.62, 0.13, 85], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.44, 0.12, 105], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.30, 0.09, 120], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.18, 0.06, 32], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Oxblood, Ochre, Petrol",
+    "mood": "three mineral hues held in balance — an oxblood peak, an ochre peak, a petrol note — each separated by black or white so none muddies",
+    "architecture": "triad",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.12, 0.03, 90], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.60, 0.16, 32], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.90, 0.02, 90], "role": "glow"},
+      {"pos": 0.46, "oklch": [0.58, 0.13, 195], "role": "anchor"},
+      {"pos": 0.6,  "oklch": [0.28, 0.03, 120], "role": "mid"},
+      {"pos": 0.74, "oklch": [0.56, 0.14, 88], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.30, 0.10, 95], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.12, 0.03, 90], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Three Minerals on Coal",
+    "mood": "oxblood, ochre and petrol taken full-strength over true black, each routed through black or a pale flare; polychromatic breadth",
+    "architecture": "triad",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.06, 0.01, 30], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.50, 0.16, 28], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.16, 0.03, 60], "role": "mid"},
+      {"pos": 0.44, "oklch": [0.60, 0.14, 88], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.92, 0.02, 120], "role": "glow"},
+      {"pos": 0.74, "oklch": [0.50, 0.13, 195], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.26, 0.09, 205], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.06, 0.01, 30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Faded Triad, Teal Well",
+    "mood": "a cream field tinted with rust and ochre, dropping to a single deep teal well; three hues in a high-key arc, the cool one as the event",
+    "architecture": "triad",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.87, 0.04, 85], "role": "field"},
+      {"pos": 0.14, "oklch": [0.70, 0.12, 40], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.90, 0.03, 120], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.66, 0.12, 90], "role": "anchor"},
+      {"pos": 0.56, "oklch": [0.80, 0.03, 150], "role": "field"},
+      {"pos": 0.68, "oklch": [0.28, 0.12, 200], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.74, 0.035, 110], "role": "field"},
+      {"pos": 1.0,  "oklch": [0.87, 0.04, 85], "role": "field"}
+    ]
+  },
+  {
+    "name": "Ochre Field, Teal Spark",
+    "mood": "a pale ochre field across the full value range with a single deep teal spark as the dark event; near-monochrome plus one cool jewel",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 88], "role": "field"},
+      {"pos": 0.2,  "oklch": [0.72, 0.10, 85], "role": "anchor"},
+      {"pos": 0.4,  "oklch": [0.55, 0.12, 82], "role": "anchor"},
+      {"pos": 0.5,  "oklch": [0.42, 0.035, 110], "role": "field"},
+      {"pos": 0.6,  "oklch": [0.26, 0.13, 195], "role": "accent"},
+      {"pos": 0.76, "oklch": [0.64, 0.035, 100], "role": "field"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 88], "role": "field"}
+    ]
+  },
+  {
+    "name": "Petrol Depths, Ember Spark",
+    "mood": "a petrol family from black to pale foam with an early flare, punctuated by one warm rust spark that falls back to black",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.06, 0.01, 200], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.44, 0.12, 198], "role": "anchor"},
+      {"pos": 0.28, "oklch": [0.93, 0.02, 190], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.60, 0.12, 195], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.18, 0.03, 205], "role": "mid"},
+      {"pos": 0.7,  "oklch": [0.52, 0.14, 52], "role": "accent"},
+      {"pos": 0.84, "oklch": [0.24, 0.06, 40], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.06, 0.01, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Rust Ledger, Teal Mark",
+    "mood": "an oxblood-rust-amber family with one crisp small step in the mids and a single deep teal mark; tonal warmth plus one cool spark",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.05, 35], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.56, 0.14, 45], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.74, 0.12, 55], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.44, "oklch": [0.58, 0.10, 48], "role": "mid"},
+      {"pos": 0.6,  "oklch": [0.18, 0.07, 195], "role": "accent"},
+      {"pos": 0.78, "oklch": [0.40, 0.10, 40], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.16, 0.05, 35], "role": "ground"}
+    ]
+  }
+]
