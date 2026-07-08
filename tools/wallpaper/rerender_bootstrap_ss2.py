@@ -78,6 +78,8 @@ def config_from_row(row):
         gamma=p["gamma"],
         phase=p["phase"],
         n_cycles=p["n_cycles"],
+        transfer=p.get("transfer", "pct"),
+        transfer_gamma=float(p.get("transfer_gamma", 0.0)),
         interior_color=tuple(p["interior_color"]),
         filter=LABEL_FILTER,
     )

@@ -291,6 +291,7 @@ def provenance_block(src, loc, pick):
         "palette": cfg.palette, "palette_type": pick["palette_type"],
         "reverse": cfg.reverse, "log_premap": cfg.log_premap, "gamma": cfg.gamma,
         "phase": cfg.phase, "n_cycles": cfg.n_cycles,
+        "transfer": cfg.transfer, "transfer_gamma": cfg.transfer_gamma,
         "interior_color": list(cfg.interior_color),
         "eval_filter": cfg.filter,   # sampler scoring filter (box); the crop is lanczos3
     }

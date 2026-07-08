@@ -53,6 +53,7 @@ import json
 import math
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -89,7 +90,17 @@ ANNEAL = 0.5
 GAMMA_LOG_SIGMA0 = 0.40   # 1-sigma log-gamma step at round 1 (exp(0.4)~=1.49, ~+-50% gamma)
 PHASE_SIGMA0 = 0.20       # cyclic phase gaussian step, round 1
 REV_FLIP_P0 = 0.30        # non-cyclic reverse flip prob, round 1
-NCYC_FLIP_P0 = 0.30       # cyclic n_cycles {1<->2} flip prob, round 1
+NCYC_FLIP_P0 = 0.30       # cyclic n_cycles +-1 step prob (within N_CYCLES), round 1
+
+# --- gradient-transfer + widened-n_cycles sweep (STOCHASTIC integration) -----
+# The structure-aware gradient transfer (colormap.render_candidate transfer='grad') is
+# swept ALONGSIDE n_cycles by folding it into the gen-0 param draw + the perturbation
+# jitter, NOT as a grid multiply — so the candidate COUNT is unchanged (delta 0) and the
+# pct-stretch path (transfer_gamma=0) keeps being sampled as one of the transfer options.
+# transfer_gamma is drawn from {pct}∪TRANSFER_GAMMAS; n_cycles widens {1,2} -> N_CYCLES.
+TRANSFER_GAMMAS = [0.25, 0.5, 1.0, 2.0]   # prompt's GAMMAS (the gradient-transfer exponent)
+N_CYCLES = [1, 2, 3, 4, 5]                 # cyclic band-repeat multipliers (was {1,2})
+TRANSFER_REDRAW_P0 = 0.30                  # per-round prob of re-drawing transfer in perturb, round 1
 
 # --- the four test locations ----------------------------------------------
 # Stored test anchor: label-3 Julia (c fixed; cx/cy/fw is the z-plane viewport). maxiter
@@ -150,46 +161,74 @@ def select_locations(pool, seed):
 # Candidate config + perturbation.
 # ===========================================================================
 
-def _cfg(ref, palette, reverse, log_premap, gamma, phase, n_cycles):
+def _cfg(ref, palette, reverse, log_premap, gamma, phase, n_cycles,
+         transfer="pct", transfer_gamma=0.0):
     return cm.CandidateConfig(
         palette=palette, location=qs.loc_mod.to_location_ref(ref),
         eval_width=qs.EVAL_WIDTH, eval_height=qs.EVAL_HEIGHT,
         reverse=reverse, log_premap=log_premap, gamma=gamma,
         phase=phase, n_cycles=n_cycles, filter=qs.CANDIDATE_FILTER,
+        transfer=transfer, transfer_gamma=transfer_gamma,
     )
+
+
+def draw_transfer(rng):
+    """Draw one transfer setting uniform over {pct} ∪ TRANSFER_GAMMAS: ('pct', 0.0) keeps
+    the plain percentile-stretch (gamma=0 edge) sampled; ('grad', g) is the gradient
+    transfer at exponent g."""
+    k = int(rng.integers(len(TRANSFER_GAMMAS) + 1))
+    return ("pct", 0.0) if k == 0 else ("grad", float(TRANSFER_GAMMAS[k - 1]))
+
+
+def sweep_gen0(cfg, ptype, rng):
+    """Overlay the stochastic transfer + widened-n_cycles sweep onto a gen-0 candidate.
+    transfer applies to every palette (field-only, pre-LUT); the wider n_cycles draw is
+    cyclic-only (n_cycles is a no-op / disallowed on non-cyclic)."""
+    transfer, transfer_gamma = draw_transfer(rng)
+    n_cycles = int(N_CYCLES[rng.integers(len(N_CYCLES))]) if ptype == "cyclic" else cfg.n_cycles
+    return replace(cfg, transfer=transfer, transfer_gamma=transfer_gamma, n_cycles=n_cycles)
 
 
 def perturb(cfg, ptype, rng, scale):
     """Draw one param variant around `cfg` within its fixed palette. gamma perturbed in
-    log space; cyclic gets phase/n_cycles jitter, non-cyclic gets reverse flips. All
-    clamped to valid ranges. `scale` anneals the widths across rounds."""
+    log space; cyclic gets phase/n_cycles jitter, non-cyclic gets reverse flips; BOTH get
+    an occasional transfer re-draw (the transfer is palette-type-agnostic). All clamped to
+    valid ranges. `scale` anneals the widths across rounds."""
     gamma = cfg.gamma * math.exp(rng.normal(0.0, GAMMA_LOG_SIGMA0 * scale))
     gamma = float(min(max(gamma, qs.GAMMA_LO), qs.GAMMA_HI))
+    transfer, transfer_gamma = cfg.transfer, cfg.transfer_gamma
+    if rng.random() < TRANSFER_REDRAW_P0 * scale:
+        transfer, transfer_gamma = draw_transfer(rng)
     if ptype == "cyclic":
         phase = float((cfg.phase + rng.normal(0.0, PHASE_SIGMA0 * scale)) % 1.0)
         n_cycles = cfg.n_cycles
-        if rng.random() < NCYC_FLIP_P0 * scale:
-            n_cycles = 2 if cfg.n_cycles == 1 else 1
-        return _cfg(cfg.location, cfg.palette, False, cfg.log_premap, gamma, phase, n_cycles)
+        if rng.random() < NCYC_FLIP_P0 * scale:            # +-1 step within N_CYCLES
+            step = 1 if rng.random() < 0.5 else -1
+            n_cycles = int(min(max(cfg.n_cycles + step, N_CYCLES[0]), N_CYCLES[-1]))
+        return _cfg(cfg.location, cfg.palette, False, cfg.log_premap, gamma, phase, n_cycles,
+                    transfer, transfer_gamma)
     reverse = cfg.reverse
     if rng.random() < REV_FLIP_P0 * scale:
         reverse = not cfg.reverse
-    return _cfg(cfg.location, cfg.palette, reverse, cfg.log_premap, gamma, 0.0, 1)
+    return _cfg(cfg.location, cfg.palette, reverse, cfg.log_premap, gamma, 0.0, 1,
+                transfer, transfer_gamma)
 
 
-def recolor(fld, cfg, lib, prep):
-    return cm.render_candidate(fld, cfg, lib, prep=prep)
+def recolor(fld, cfg, lib, prep, profile=None):
+    return cm.render_candidate(fld, cfg, lib, prep=prep, profile=profile)
 
 
-def score_recolor(fld, cfg, lib, prep, coarse):
+def score_recolor(fld, cfg, lib, prep, coarse, profile=None):
     """The beam's SCORING recolor for one candidate. `coarse` is a `cm.CoarseField`
-    (coarse_score path) or None (full ss2 path). SCORING-ONLY — the throwaway image fed
-    to pref-v2, never a keeper. Keeper re-renders (build_bootstrap.render_label_crop,
-    the strata picks) go through the full `cm.render_candidate` on the label field and
-    are untouched by this. See the coarse-path fence in colormap.py."""
+    (coarse_score path) or None (full ss2 path). `profile` is the location's cached
+    `cm.GradientTransferProfile` (needed for transfer='grad'). SCORING-ONLY — the
+    throwaway image fed to pref-v2, never a keeper. Keeper re-renders
+    (build_bootstrap.render_label_crop, the strata picks) go through the full
+    `cm.render_candidate` on the label field and are untouched by this. See the
+    coarse-path fence in colormap.py."""
     if coarse is not None:
-        return cm.render_candidate_coarse(coarse, cfg, lib)
-    return cm.render_candidate(fld, cfg, lib, prep=prep)
+        return cm.render_candidate_coarse(coarse, cfg, lib, profile=profile)
+    return cm.render_candidate(fld, cfg, lib, prep=prep, profile=profile)
 
 
 # ===========================================================================
@@ -253,13 +292,15 @@ def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False
     stem = aq._field_key(ref)
     fld, _ = aq.ensure_field(ref)
     prep = cm.stretch_field(fld)
+    profile = cm.gradient_transfer_profile(fld, prep)   # field-only w(v); ONCE per location
     coarse = cm.coarse_field(prep) if coarse_score else None
     rng = np.random.default_rng(int(hashlib.sha1(f"{stem}|{seed}".encode()).hexdigest()[:16], 16))
 
-    # --- Stage 0: gen-0 (60 palettes FP + one random param each) ---
+    # --- Stage 0: gen-0 (60 palettes FP + one random param each, + transfer/n_cycles sweep) ---
     pal_names, all_names, Dfeat = gen0_palettes(sampler, N_GEN0)
     gen0_cfgs = [qs.sample_candidate(ref, rng, sampler, palette=p, canonical=False) for p in pal_names]
-    gen0_imgs = [score_recolor(fld, c, lib, prep, coarse) for c in gen0_cfgs]
+    gen0_cfgs = [sweep_gen0(c, lib.palette_type(c.palette), rng) for c in gen0_cfgs]
+    gen0_imgs = [score_recolor(fld, c, lib, prep, coarse, profile) for c in gen0_cfgs]
     gen0_scores = P.score_frames(model, gen0_imgs, device)
 
     # --- Stage 1: beam -> top-18 lineages ---
@@ -300,7 +341,7 @@ def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False
         for l in active:
             for _ in range(K_VARIANTS):
                 cfg = perturb(l["best_cfg"], l["ptype"], rng, scale)
-                variants.append((l, cfg, score_recolor(fld, cfg, lib, prep, coarse)))
+                variants.append((l, cfg, score_recolor(fld, cfg, lib, prep, coarse, profile)))
         if variants:
             vscores = P.score_frames(model, [v[2] for v in variants], device)
             if retain_all:
@@ -412,7 +453,9 @@ def contact_18(res, path, tw=300, pad=6, bar=30, head=22, cols=6):
         draw.text((x + 2, y + th + 2), f"#{i+1} {l['palette'][:22]}", fill=(220, 220, 160))
         sub = (f"s={l['best_score']:.3f} g{cfg.gamma:.2f}"
                f"{' ph%.2f' % cfg.phase if l['ptype']=='cyclic' else ''}"
-               f"{' n2' if cfg.n_cycles==2 else ''}{' rev' if cfg.reverse else ''}")
+               f"{' n%d' % cfg.n_cycles if cfg.n_cycles > 1 else ''}"
+               f"{' T%.2f' % cfg.transfer_gamma if cfg.transfer == 'grad' else ''}"
+               f"{' rev' if cfg.reverse else ''}")
         draw.text((x + 2, y + th + 15), sub, fill=(160, 200, 230))
     path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(path)
@@ -433,7 +476,8 @@ def write_records(res, out_loc, seed):
                      "family_params": qs.loc_mod.params_of(res["ref"])},
         "constants": {"N_GEN0": N_GEN0, "TOP_KEEP": TOP_KEEP, "K_VARIANTS": K_VARIANTS,
                       "R_MAX": R_MAX, "seed": seed, "eval": [qs.EVAL_WIDTH, qs.EVAL_HEIGHT],
-                      "ss": qs.CANDIDATE_SS},
+                      "ss": qs.CANDIDATE_SS,
+                      "transfer_gammas": TRANSFER_GAMMAS, "n_cycles_set": N_CYCLES},
         "gen0_spread": res["spread"],
         "lift": lift_table(res),
         "pool_R2_ranked": [rec(l, l["best_score"], l["best_cfg"]) for l in r2_ranked],
@@ -486,6 +530,7 @@ def paired_before_after(records_path, out_path, lib, tw=260, pad=6, bar=44, head
     ref = _ref_from_records(rec)
     fld, _ = aq.ensure_field(ref)                      # cache hit -> 0s
     prep = cm.stretch_field(fld)
+    profile = cm.gradient_transfer_profile(fld, prep)  # for any transfer='grad' configs
 
     r0 = {e["palette"]: e for e in rec["pool_R0_ranked"]}
     lines = []                                          # per lineage: joined gen-0 + R2
@@ -494,8 +539,8 @@ def paired_before_after(records_path, out_path, lib, tw=260, pad=6, bar=44, head
         e0 = r0[pal]
         cfg0 = cm.CandidateConfig.from_json(json.dumps(e0["config"]))
         cfg2 = cm.CandidateConfig.from_json(json.dumps(e2["config"]))
-        img0 = recolor(fld, cfg0, lib, prep)
-        img2 = recolor(fld, cfg2, lib, prep)
+        img0 = recolor(fld, cfg0, lib, prep, profile)
+        img2 = recolor(fld, cfg2, lib, prep, profile)
         de = float(rc.render_space_dmat([rc.thumb_lab(img0), rc.thumb_lab(img2)])[0, 1])
         lines.append({"palette": pal, "s0": e0["score"], "s2": e2["score"], "de": de,
                       "cfg2": cfg2, "ptype": e2["palette_type"], "img0": img0, "img2": img2})
@@ -539,7 +584,9 @@ def paired_before_after(records_path, out_path, lib, tw=260, pad=6, bar=44, head
         cfg = l["cfg2"]
         knob = (f"g{cfg.gamma:.2f}"
                 f"{' ph%.2f' % cfg.phase if l['ptype'] == 'cyclic' else ''}"
-                f"{' n2' if cfg.n_cycles == 2 else ''}{' rev' if cfg.reverse else ''}")
+                f"{' n%d' % cfg.n_cycles if cfg.n_cycles > 1 else ''}"
+                f"{' T%.2f' % cfg.transfer_gamma if cfg.transfer == 'grad' else ''}"
+                f"{' rev' if cfg.reverse else ''}")
         yC = yB + th + 2
         draw.text((x + 2, yC), l["palette"][:24], fill=(220, 220, 160))
         draw.text((x + 2, yC + 12), f"s {l['s0']:.2f} -> {l['s2']:.2f}  dE{l['de']:.1f}",
@@ -628,6 +675,10 @@ def main():
     model, epoch = load_v2(device)
     print(f"[sampler] {pool.report()}")
     print(f"[sampler] loaded v2 model_best.pt (epoch {epoch}) on {device.type}  seed={seed}")
+    per_loc = N_GEN0 + R_MAX * TOP_KEEP * K_VARIANTS
+    print(f"[sampler] transfer sweep folded STOCHASTICALLY into the draw+perturb: "
+          f"candidate count/loc unchanged (<= {per_loc}, delta 0); param space widened "
+          f"to transfer_gamma in {{pct}}+{TRANSFER_GAMMAS} and n_cycles in {N_CYCLES}.")
 
     locs = select_locations(pool, seed)
     print(f"[sampler] locations ({len(locs)}):")

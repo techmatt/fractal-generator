@@ -234,6 +234,14 @@ def lookup_linear(lut, t):
 PCT_LO = 0.5
 PCT_HI = 99.5
 
+# Gradient-weighted transfer (structure-aware field->palette-index remap). A field-only
+# alternative to the plain percentile-stretch: it concentrates palette movement where the
+# field has high spatial gradient (edges), so palette transitions align with geometric
+# transitions instead of arbitrary isovalues. Reduces to the pct-stretch behavior EXACTLY
+# at transfer_gamma=0. See `gradient_transfer_profile` / `_apply_transfer`.
+N_TRANSFER_BINS = 200
+TRANSFER_EPS = 0.02
+
 
 def percentile_nearest(sorted_vals, p):
     """p-th percentile (p in [0,100]) via Rust nearest-rank: idx=round((p/100)*(n-1)).
@@ -476,9 +484,13 @@ class CandidateConfig:
       log_premap    'none' | 'log'      pre-map before gamma
       gamma         power u = t**gamma
       phase         cyclic-only: t -> (t+phase) mod 1
-      n_cycles      cyclic-only, {1,2}: t -> (t*n_cycles) mod 1
+      n_cycles      cyclic-only, positive int: t -> (t*n_cycles) mod 1
       interior_color linear-RGB fill for NaN pixels (default black, = Rust)
       filter        'box' | 'mitchell' | 'lanczos3'
+      transfer      'pct' | 'grad'   value->index map. 'pct' (default) is the plain
+                    percentile-stretch (BIT-IDENTICAL to the pre-transfer path);
+                    'grad' is the gradient-weighted transfer at `transfer_gamma`.
+      transfer_gamma  grad only: gradient-weight exponent. 0 == pct (the family's edge).
     """
     palette: str
     location: LocationRef
@@ -491,6 +503,8 @@ class CandidateConfig:
     n_cycles: int = 1
     interior_color: tuple = (0.0, 0.0, 0.0)
     filter: str = "box"
+    transfer: str = "pct"
+    transfer_gamma: float = 0.0
 
     def to_json(self):
         d = asdict(self)
@@ -561,12 +575,16 @@ def validate_config(config, library):
         raise ValueError(
             f"phase/n_cycles apply only to cyclic palettes; '{config.palette}' is {ptype}"
         )
-    if config.n_cycles not in (1, 2):
-        raise ValueError(f"n_cycles must be 1 or 2, got {config.n_cycles}")
+    if not isinstance(config.n_cycles, int) or config.n_cycles < 1:
+        raise ValueError(f"n_cycles must be a positive integer, got {config.n_cycles}")
     if config.log_premap not in ("none", "log"):
         raise ValueError(f"log_premap must be none|log, got {config.log_premap}")
     if config.filter not in ("box", "mitchell", "lanczos3"):
         raise ValueError(f"filter must be box|mitchell|lanczos3, got {config.filter}")
+    if config.transfer not in ("pct", "grad"):
+        raise ValueError(f"transfer must be pct|grad, got {config.transfer}")
+    if config.transfer_gamma < 0.0:
+        raise ValueError(f"transfer_gamma must be >= 0, got {config.transfer_gamma}")
 
 
 # ---------------------------------------------------------------------------
@@ -594,14 +612,91 @@ def stretch_field(field):
     return StretchedField(x=x, valid=valid)
 
 
-def render_candidate(field, config, library, prep=None):
+# ---------------------------------------------------------------------------
+# Gradient-weighted transfer — a structure-aware value->palette-index remap.
+#
+# The plain pct-stretch spends palette arc by field VALUE, so transitions land on
+# arbitrary isovalues. This transfer spends arc by spatial GRADIENT, so transitions
+# align with geometric edges. It is a PURE function of the raw field (no palette / gamma
+# dependence) up to the `w(v)` profile, which is therefore computed ONCE per field and
+# reused across every recolor AND every transfer_gamma — the same once-per-field cache
+# seam as `StretchedField`. The per-gamma curve `g` is derived cheaply from the cached
+# `w`. transfer_gamma=0 => weight≡1 => g linear => bit-identical to the pct-stretch.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class GradientTransferProfile:
+    """Field-only gradient-weight profile `w(v)` for the gradient transfer.
+
+    `w[b]` = mean spatial |∇field| over EXTERIOR pixels whose percentile-stretched value
+    falls in value-bin `b` (N_TRANSFER_BINS bins over the pct-stretch's [lo, lo+span]
+    anchors), normalized to max 1. Independent of palette / gamma / n_cycles /
+    transfer_gamma, so compute it ONCE per dumped field and reuse."""
+    w: np.ndarray   # (N_TRANSFER_BINS,) float64 in [0,1]
+
+
+def gradient_transfer_profile(field, prep):
+    """(FieldData, StretchedField) -> GradientTransferProfile. Field-only; cache it.
+
+    Steps 1-3 of the transfer: |∇field| by forward finite differences over exterior
+    pixels (interior NaN excluded; nan-safe — a partial toward an interior / off-grid
+    neighbor drops to 0), binned by the stretched value into N_TRANSFER_BINS bins, mean
+    |∇field| per bin, normalized to max 1. Reuses the same [lo,span] anchors as
+    `prep` (via `prep.x`, already the clipped stretched value in [0,1])."""
+    raw = field.values
+    gx = np.zeros_like(raw)
+    gy = np.zeros_like(raw)
+    fx = np.zeros(raw.shape, dtype=bool)     # x-partial available (both endpoints finite)
+    fy = np.zeros(raw.shape, dtype=bool)
+    dx = raw[:, 1:] - raw[:, :-1]
+    dy = raw[1:, :] - raw[:-1, :]
+    mx = np.isfinite(dx)
+    my = np.isfinite(dy)
+    gx[:, :-1] = np.where(mx, dx, 0.0)
+    gy[:-1, :] = np.where(my, dy, 0.0)
+    fx[:, :-1] = mx
+    fy[:-1, :] = my
+    gm = np.sqrt(gx * gx + gy * gy)
+    inc = prep.valid & (fx | fy)             # exterior pixel with >=1 finite partial
+    b = np.clip((prep.x[inc] * N_TRANSFER_BINS).astype(np.int64), 0, N_TRANSFER_BINS - 1)
+    counts = np.bincount(b, minlength=N_TRANSFER_BINS).astype(np.float64)
+    sums = np.bincount(b, weights=gm[inc], minlength=N_TRANSFER_BINS)
+    w = np.zeros(N_TRANSFER_BINS, dtype=np.float64)
+    nz = counts > 0.0
+    w[nz] = sums[nz] / counts[nz]
+    mxw = w.max()
+    if mxw > 0.0:
+        w = w / mxw
+    return GradientTransferProfile(w=w)
+
+
+def _apply_transfer(x, profile, gamma):
+    """Remap stretched value `x`∈[0,1] through the gradient-weighted CDF at `gamma`.
+
+    `weight = (w+eps)**gamma`; `g = cumsum(weight)` normalized to [0,1] at the N+1 bin
+    edges; `base = interp(g at x)`. gamma=0 => weight≡1 => g linear => returns `x`
+    bit-identically (the pct-stretch edge of the family)."""
+    w = profile.w
+    n = w.shape[0]
+    weight = (w + TRANSFER_EPS) ** gamma
+    csum = np.concatenate(([0.0], np.cumsum(weight)))     # (n+1,) at bin edges
+    total = csum[-1]
+    g = csum / total if total > 0.0 else np.linspace(0.0, 1.0, n + 1)
+    edges = np.arange(n + 1, dtype=np.float64) / n        # value-axis edges in [0,1]
+    return np.interp(x, edges, g)
+
+
+def render_candidate(field, config, library, prep=None, profile=None):
     """(FieldData, CandidateConfig, PaletteLibrary) -> (H_out, W_out, 3) uint8 sRGB.
 
     The full coloring tail, in the Rust-pinned order. `field.values` is the raw
     super-res smooth field with NaN interior; never recomputes field math. `prep`
     (a `StretchedField` from `stretch_field`) skips the config-independent
     percentile-stretch prefix — pass it to recolor a cached field cheaply; when None
-    it is computed here, so the single-call contract is unchanged."""
+    it is computed here, so the single-call contract is unchanged. `profile` (a
+    `GradientTransferProfile`) is the field-only gradient-weight profile, needed ONLY
+    for `transfer='grad'`; pass the cached one to avoid recomputing it per candidate
+    (it is built lazily here when None)."""
     validate_config(config, library)
     if prep is None:
         prep = stretch_field(field)
@@ -609,8 +704,19 @@ def render_candidate(field, config, library, prep=None):
 
     # 1. percentile-stretch on the RAW field -> x in [0,1] (done in `prep`).
 
+    # 1b. optional gradient-weighted transfer: remap the stretched value so palette arc
+    #     concentrates on high-gradient (edge) isovalues. 'pct' (default) SKIPS this ->
+    #     bit-identical to the pre-transfer path; 'grad' at transfer_gamma=0 is the same
+    #     identity edge. Field-only; interior pixels keep x=0 (overwritten below anyway).
+    if config.transfer == "grad":
+        if profile is None:
+            profile = gradient_transfer_profile(field, prep)
+        base = _apply_transfer(x, profile, config.transfer_gamma)
+    else:
+        base = x
+
     # 2. transform curve + gamma.
-    gray = apply_transform(x, config.log_premap, config.gamma)
+    gray = apply_transform(base, config.log_premap, config.gamma)
 
     # 3. LUT stage: n_cycles, phase (Rust: gray*cycles+offset). Cyclic-only knobs;
     #    non_cyclic palettes leave gray untouched (n_cycles=1, phase=0).
@@ -730,7 +836,7 @@ def coarse_field(prep, out_w=SCORE_COARSE_W, out_h=SCORE_COARSE_H):
     return CoarseField(xmean=xmean, vfrac=vfrac)
 
 
-def render_candidate_coarse(coarse, config, library):
+def render_candidate_coarse(coarse, config, library, profile=None):
     """(CoarseField, CandidateConfig, PaletteLibrary) -> (h,w,3) uint8 sRGB. SCORING-ONLY.
 
     The coloring tail (transform+gamma -> n_cycles/phase -> OKLab LUT -> interior blend)
@@ -738,9 +844,19 @@ def render_candidate_coarse(coarse, config, library):
     NO AA downsample. Numerically identical to `render_candidate`'s per-pixel color math;
     it differs from the keeper path ONLY in that the area-average happened on the scalar
     field (before color) instead of on the colors (after). MUST NOT feed a stored crop —
-    see the fence above."""
+    see the fence above.
+
+    For `transfer='grad'` a `profile` (GradientTransferProfile, built once per location
+    from the full-res field/prep) is REQUIRED — there is no field here to derive it. The
+    transfer is applied to the area-mean stretched value; like the coarse path itself
+    that is an average-then-map approximation of the keeper path, acceptable for scoring."""
     validate_config(config, library)
-    gray = apply_transform(coarse.xmean, config.log_premap, config.gamma)
+    xin = coarse.xmean
+    if config.transfer == "grad":
+        if profile is None:
+            raise ValueError("render_candidate_coarse needs a GradientTransferProfile for transfer='grad'")
+        xin = _apply_transfer(coarse.xmean, profile, config.transfer_gamma)
+    gray = apply_transform(xin, config.log_premap, config.gamma)
     t = np.mod(gray * config.n_cycles, 1.0)
     t = np.mod(t + config.phase, 1.0)
     lut = library.lut(config.palette, reverse=config.reverse)
@@ -765,6 +881,8 @@ if __name__ == "__main__":
     ap.add_argument("--reverse", action="store_true")
     ap.add_argument("--phase", type=float, default=0.0)
     ap.add_argument("--n-cycles", type=int, default=1)
+    ap.add_argument("--transfer", default="pct", choices=["pct", "grad"])
+    ap.add_argument("--transfer-gamma", type=float, default=0.0)
     ap.add_argument("--colormaps", default=DEFAULT_COLORMAPS)
     ap.add_argument("--features", default=DEFAULT_FEATURES)
     args = ap.parse_args()
@@ -776,6 +894,7 @@ if __name__ == "__main__":
         palette=args.palette, location=fld.location, eval_width=ow, eval_height=oh,
         reverse=args.reverse, log_premap=args.log_premap, gamma=args.gamma,
         phase=args.phase, n_cycles=args.n_cycles, filter=args.filter,
+        transfer=args.transfer, transfer_gamma=args.transfer_gamma,
     )
     img = render_candidate(fld, cfg, lib)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

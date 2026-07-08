@@ -241,6 +241,8 @@ def config_from_params(params: dict, loc) -> cm.CandidateConfig:
         gamma=float(params.get("gamma", 1.0)),
         phase=float(params.get("phase", 0.0)),
         n_cycles=int(params.get("n_cycles", 1)),
+        transfer=params.get("transfer", "pct"),
+        transfer_gamma=float(params.get("transfer_gamma", 0.0)),
         interior_color=tuple(params.get("interior_color", (0.0, 0.0, 0.0))),
         filter=EMIT_FILTER,
     )
