@@ -1,0 +1,140 @@
+[
+  {
+    "name": "Cobalt Furnace",
+    "mood": "pure cobalt and pure orange against true black and white; cobalt climbs to a white flare, the flare drops into fresh amber, amber falls into black — two hues, the jump routed through white, a small orange value-cliff for filigree",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 6,
+    "stops": [
+      {"pos": 0.00, "oklch": [0.06, 0.01, 255], "role": "ground"},
+      {"pos": 0.07, "oklch": [0.24, 0.10, 256], "role": "anchor"},
+      {"pos": 0.15, "oklch": [0.46, 0.17, 254], "role": "anchor"},
+      {"pos": 0.23, "oklch": [0.66, 0.14, 250], "role": "anchor"},
+      {"pos": 0.31, "oklch": [0.97, 0.005, 250], "role": "glow"},
+      {"pos": 0.40, "oklch": [0.72, 0.13, 62], "role": "anchor"},
+      {"pos": 0.48, "oklch": [0.60, 0.18, 55], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.56, "oklch": [0.46, 0.17, 50], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.30, 0.12, 45], "role": "mid"},
+      {"pos": 0.78, "oklch": [0.16, 0.06, 40], "role": "mid"},
+      {"pos": 0.90, "oklch": [0.08, 0.02, 260], "role": "ground"},
+      {"pos": 1.00, "oklch": [0.06, 0.01, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ember Ladder",
+    "mood": "a single pure heat ramp with no cool reversal — black up through oxblood, blood-rust, ember and amber to a late gold-cream flare, then back to black; warm glow, drama is the pure value-and-chroma sweep",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 6,
+    "stops": [
+      {"pos": 0.00, "oklch": [0.05, 0.01, 30], "role": "ground"},
+      {"pos": 0.08, "oklch": [0.15, 0.06, 28], "role": "mid"},
+      {"pos": 0.17, "oklch": [0.27, 0.11, 30], "role": "anchor"},
+      {"pos": 0.27, "oklch": [0.39, 0.15, 42], "role": "anchor"},
+      {"pos": 0.37, "oklch": [0.49, 0.17, 52], "role": "anchor"},
+      {"pos": 0.47, "oklch": [0.57, 0.16, 62], "role": "anchor"},
+      {"pos": 0.57, "oklch": [0.65, 0.15, 72], "role": "anchor"},
+      {"pos": 0.67, "oklch": [0.74, 0.13, 82], "role": "anchor"},
+      {"pos": 0.77, "oklch": [0.85, 0.10, 88], "role": "anchor"},
+      {"pos": 0.85, "oklch": [0.96, 0.02, 90], "role": "glow"},
+      {"pos": 0.92, "oklch": [0.52, 0.14, 55], "role": "anchor"},
+      {"pos": 0.97, "oklch": [0.18, 0.06, 34], "role": "mid"},
+      {"pos": 1.00, "oklch": [0.05, 0.01, 30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Petrol & Coral",
+    "mood": "muted temperature tension done for real — steel petrol-teal held against warm coral, chroma kept across the swing so it never greys; a cool foam peak and a warm cream peak bracket a coral trough, both hue crossings routed through near-white",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 6,
+    "stops": [
+      {"pos": 0.00, "oklch": [0.34, 0.06, 200], "role": "field"},
+      {"pos": 0.09, "oklch": [0.24, 0.08, 196], "role": "anchor"},
+      {"pos": 0.18, "oklch": [0.46, 0.11, 192], "role": "anchor"},
+      {"pos": 0.26, "oklch": [0.68, 0.06, 188], "role": "field"},
+      {"pos": 0.32, "oklch": [0.93, 0.02, 185], "role": "glow"},
+      {"pos": 0.42, "oklch": [0.55, 0.09, 42], "role": "anchor"},
+      {"pos": 0.50, "oklch": [0.40, 0.11, 32], "role": "anchor"},
+      {"pos": 0.56, "oklch": [0.30, 0.10, 28], "role": "anchor"},
+      {"pos": 0.64, "oklch": [0.52, 0.12, 36], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.72, 0.10, 48], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.91, 0.03, 60], "role": "glow"},
+      {"pos": 0.90, "oklch": [0.55, 0.06, 190], "role": "field"},
+      {"pos": 1.00, "oklch": [0.34, 0.06, 200], "role": "field"}
+    ]
+  },
+  {
+    "name": "Twilight Orchid Walk",
+    "mood": "an all-smooth analogous walk through deep indigo, violet, plum and magenta — no complement, no temperature reversal; the drama is value plus the hue drift, lifting once to a warm blush-cream glow before sinking back to indigo-black",
+    "architecture": "analogous-drift",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 6,
+    "stops": [
+      {"pos": 0.00, "oklch": [0.07, 0.03, 278], "role": "ground"},
+      {"pos": 0.08, "oklch": [0.20, 0.09, 280], "role": "anchor"},
+      {"pos": 0.16, "oklch": [0.36, 0.14, 286], "role": "anchor"},
+      {"pos": 0.24, "oklch": [0.28, 0.13, 293], "role": "anchor"},
+      {"pos": 0.33, "oklch": [0.48, 0.16, 300], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.38, 0.15, 312], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.58, 0.16, 322], "role": "anchor"},
+      {"pos": 0.60, "oklch": [0.50, 0.15, 332], "role": "anchor"},
+      {"pos": 0.68, "oklch": [0.66, 0.13, 340], "role": "anchor"},
+      {"pos": 0.78, "oklch": [0.93, 0.02, 350], "role": "glow"},
+      {"pos": 0.87, "oklch": [0.42, 0.12, 302], "role": "anchor"},
+      {"pos": 0.94, "oklch": [0.18, 0.07, 286], "role": "mid"},
+      {"pos": 1.00, "oklch": [0.07, 0.03, 278], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Opal Field, Sapphire Spark",
+    "mood": "a pale opalescent field of warm cream, apricot and gold with a cool bone highlight, no blacks — the whole image runs high except one plunge to a deep sapphire jewel, the dark itself the event; both crossings to the spark route through near-white",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 6,
+    "stops": [
+      {"pos": 0.00, "oklch": [0.90, 0.04, 70], "role": "field"},
+      {"pos": 0.09, "oklch": [0.85, 0.06, 60], "role": "field"},
+      {"pos": 0.18, "oklch": [0.78, 0.08, 50], "role": "anchor"},
+      {"pos": 0.27, "oklch": [0.88, 0.05, 80], "role": "field"},
+      {"pos": 0.36, "oklch": [0.95, 0.012, 235], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.93, 0.02, 90], "role": "field"},
+      {"pos": 0.50, "oklch": [0.55, 0.08, 250], "role": "accent"},
+      {"pos": 0.55, "oklch": [0.24, 0.14, 260], "role": "accent"},
+      {"pos": 0.60, "oklch": [0.55, 0.08, 255], "role": "accent"},
+      {"pos": 0.66, "oklch": [0.93, 0.02, 100], "role": "field"},
+      {"pos": 0.75, "oklch": [0.86, 0.06, 75], "role": "field"},
+      {"pos": 0.85, "oklch": [0.80, 0.08, 55], "role": "anchor"},
+      {"pos": 0.93, "oklch": [0.88, 0.05, 65], "role": "field"},
+      {"pos": 1.00, "oklch": [0.90, 0.04, 70], "role": "field"}
+    ]
+  },
+  {
+    "name": "Mineral Triad",
+    "mood": "three muted mineral hues held in balance — oxblood, ochre-gold and petrol-teal — with an early cream-gold peak; hue crossings between the well-separated stations route through a near-white glow or a deep shadow, never a grey blend",
+    "architecture": "triad",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 6,
+    "stops": [
+      {"pos": 0.00, "oklch": [0.38, 0.09, 28], "role": "anchor"},
+      {"pos": 0.08, "oklch": [0.30, 0.11, 26], "role": "anchor"},
+      {"pos": 0.16, "oklch": [0.50, 0.10, 40], "role": "anchor"},
+      {"pos": 0.25, "oklch": [0.72, 0.07, 70], "role": "field"},
+      {"pos": 0.32, "oklch": [0.90, 0.03, 85], "role": "glow"},
+      {"pos": 0.42, "oklch": [0.60, 0.11, 88], "role": "anchor"},
+      {"pos": 0.50, "oklch": [0.44, 0.10, 92], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.15, 0.04, 150], "role": "mid"},
+      {"pos": 0.66, "oklch": [0.34, 0.10, 190], "role": "anchor"},
+      {"pos": 0.74, "oklch": [0.48, 0.11, 195], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.36, 0.09, 200], "role": "anchor"},
+      {"pos": 0.90, "oklch": [0.17, 0.05, 210], "role": "mid"},
+      {"pos": 1.00, "oklch": [0.38, 0.09, 28], "role": "anchor"}
+    ]
+  }
+]

@@ -1,33 +1,11 @@
 # Dramatic Fractal Palette Generator — v3.1
 
-> Paste this whole file into claude.ai, attach **three** example fractal renders **and
-> `validate_palettes.py`**, fill in the **Run conditioning** block, and send. Claude returns a JSON array
-> of palettes.
->
-> **v3.0 → v3.1:** **terser output** (dropped `cycle`, `temperature`, the `axes` wrapper; `segment` and
-> `keypoint` are optional — omit them at their defaults) so a 20-palette batch fits in one response. And a
-> **mechanical validator** (`validate_palettes.py`) is attached and part of the workflow — the model runs
-> it on its own output and fixes errors instead of hand-tracing the rules (which bloated reasoning and
-> still missed things). The validator is the **authoritative** source for the mechanical thresholds; the
-> numbers restated in this prompt are for your reasoning.
->
-> **v2.x → v3.0 (the big one):** palettes were converging on a single flavor — two complementary hues
-> bridged by a glow over a hued dark — because every drama rule pushed toward that one attractor. v3 adds a
-> **color-architecture** axis (six distinct color ideas) distributed across the batch like skeletons, so
-> the 20 palettes span six *different* color architectures instead of one repeated six ways. Consequences:
-> temperature tension is now **one** architecture among six (not a universal rule), and when used it must
-> be **big and saturated**; **saturated/complementary cliffs are banned** (they render as a dirty seam —
-> big hue jumps route through black or white instead); and the **vivid register gets pure hues plus true
-> black and true white** at full strength.
-
----
-
 ## Run conditioning (edit these four lines each run)
 
 ```
 BATCH SIZE:      20              # ignored for 6-ultra — that band emits ~6 by design
-MOOD FAMILY:     antique-faded        # one name from the roster below, or "span" to vary across the batch
-COMPLEXITY BAND: 3-4             # one of: 1-2 / 3-4 / 5 / 6-ultra
+MOOD FAMILY:     span        # one name from the roster below, or "span" to vary across the batch
+COMPLEXITY BAND: 6-ultra             # one of: 1-2 / 3-4 / 5 / 6-ultra
 VALUE KEY:       span            # one of: low / mid / high / span
 ```
 
@@ -214,6 +192,8 @@ The **lightness-arc** axis (orthogonal to architecture). Spread ~3–4 each; tag
 - **verdigris-copper** — oxide teal-green vs warm copper and cream.
 - **ember-in-ash** — smoke and charcoal with one fierce warm event.
 - **tonal-restrained** — one hue family, wide value, one temperature-shifted accent.
+- **sapphire-rose** — inky navy, sapphire, indigo against dusky rose, magenta, deep fuchsia; a few blush or periwinkle glints allowed, but weighted dark — jewel blues and pinks with the lights turned low.
+
 
 ## How to reason before you emit
 
