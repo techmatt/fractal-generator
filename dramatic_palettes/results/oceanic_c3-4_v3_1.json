@@ -1,0 +1,349 @@
+[
+  {
+    "name": "Petrol & Coal",
+    "mood": "pure petrol and coral against black and white; petrol rises to a white flare, coral falls into black \u2014 two hues, no blend, the swap routed through white",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 205], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.50, 0.15, 200], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.26, "oklch": [0.72, 0.13, 195], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.97, 0.01, 210], "role": "glow"},
+      {"pos": 0.60, "oklch": [0.66, 0.17,  33], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.20, 0.06,  30], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 205], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Foam Over Indigo",
+    "mood": "pale foam field with a deep-indigo dark as the event and a coral accent; two hues plus white, no black \u2014 high-key",
+    "architecture": "duotone-plus",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.02, 200], "role": "field"},
+      {"pos": 0.22, "oklch": [0.95, 0.02, 190], "role": "glow"},
+      {"pos": 0.42, "oklch": [0.24, 0.10, 265], "role": "anchor"},
+      {"pos": 0.60, "oklch": [0.88, 0.02, 250], "role": "mid"},
+      {"pos": 0.78, "oklch": [0.70, 0.13,  33], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.90, 0.02, 200], "role": "field"}
+    ]
+  },
+  {
+    "name": "Teal Flare, Amber Fall",
+    "mood": "teal and amber, an early white flare then a long fall; the warm-cool swap drops through a near-black waypoint",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.14, 0.03, 195], "role": "ground"},
+      {"pos": 0.13, "oklch": [0.56, 0.15, 190], "role": "anchor"},
+      {"pos": 0.25, "oklch": [0.95, 0.02, 200], "role": "glow"},
+      {"pos": 0.40, "oklch": [0.48, 0.14, 190], "role": "anchor"},
+      {"pos": 0.55, "oklch": [0.12, 0.03, 200], "role": "mid"},
+      {"pos": 0.72, "oklch": [0.60, 0.16,  62], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.34, 0.09,  55], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.14, 0.03, 195], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ice Ascent",
+    "mood": "a single cool sweep, black up through indigo, cobalt, petrol, foam to a white peak \u2014 no reversal, the ramp is the drama",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.06, 0.02, 265], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.28, 0.12, 262], "role": "anchor"},
+      {"pos": 0.38, "oklch": [0.48, 0.15, 252], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.66, 0.13, 208], "role": "anchor"},
+      {"pos": 0.78, "oklch": [0.84, 0.08, 192], "role": "anchor"},
+      {"pos": 0.90, "oklch": [0.97, 0.01, 190], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.06, 0.02, 265], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Petrol Depths",
+    "mood": "one cool temperature held low and muted, petrol easing up to a bright foam \u2014 mineral, no complement, no cliff",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.13, 0.03, 205], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.30, 0.10, 205], "role": "field"},
+      {"pos": 0.34, "oklch": [0.46, 0.12, 200], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.60, 0.11, 195], "role": "anchor"},
+      {"pos": 0.68, "oklch": [0.74, 0.08, 188], "role": "mid"},
+      {"pos": 0.84, "oklch": [0.90, 0.04, 185], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.13, 0.03, 205], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Coral Tideline",
+    "mood": "the warm oceanic side alone \u2014 a single muted coral-to-cream sweep with one deep coral jewel, no cool, no black",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.55, 0.12,  40], "role": "anchor"},
+      {"pos": 0.16, "oklch": [0.94, 0.02,  70], "role": "glow"},
+      {"pos": 0.34, "oklch": [0.72, 0.11,  50], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.30, 0.10,  30], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.58, 0.11,  55], "role": "mid"},
+      {"pos": 0.86, "oklch": [0.80, 0.06,  65], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.55, 0.12,  40], "role": "anchor"}
+    ]
+  },
+  {
+    "name": "Teal Against Coral",
+    "mood": "deep teal mass and coral mass in real tension, each swap bridged by a white or cream peak; two lit crests, a dark trough between",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 200], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.52, 0.16, 195], "role": "anchor"},
+      {"pos": 0.26, "oklch": [0.94, 0.02, 195], "role": "glow"},
+      {"pos": 0.42, "oklch": [0.66, 0.15,  35], "role": "anchor"},
+      {"pos": 0.54, "oklch": [0.16, 0.05,  30], "role": "mid"},
+      {"pos": 0.68, "oklch": [0.60, 0.15,  38], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.90, 0.02,  60], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Cobalt Meets Rust",
+    "mood": "cobalt against coral, joined by a near-neutral grey bridge rather than a blend; a warm cream crest arrives late",
+    "architecture": "complementary-tension",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.20, 0.06, 255], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.42, 0.15, 252], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.26, 0.08, 255], "role": "mid"},
+      {"pos": 0.46, "oklch": [0.52, 0.03, 300], "role": "mid"},
+      {"pos": 0.62, "oklch": [0.60, 0.15,  35], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.90, 0.05,  55], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.20, 0.06, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Sea-Glass & Ash",
+    "mood": "muted teal against muted coral over a pale field, a deep-teal jewel dropping in a crisp small cliff; the coral bridged back through pale",
+    "architecture": "complementary-tension",
+    "skeleton": "cliff-in-mids",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.86, 0.03, 190], "role": "field"},
+      {"pos": 0.14, "oklch": [0.95, 0.02, 195], "role": "glow"},
+      {"pos": 0.30, "oklch": [0.60, 0.12, 190], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.44, 0.11, 192], "role": "mid", "segment": "cliff"},
+      {"pos": 0.45, "oklch": [0.24, 0.09, 195], "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.90, 0.02, 200], "role": "mid"},
+      {"pos": 0.80, "oklch": [0.66, 0.12,  35], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.86, 0.03, 190], "role": "field"}
+    ]
+  },
+  {
+    "name": "Cobalt & Ember",
+    "mood": "cobalt mass and coral mass with a bright bridge between, all smooth; darks and lights both in play",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.03, 255], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.46, 0.15, 252], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.28, 0.07, 255], "role": "mid"},
+      {"pos": 0.44, "oklch": [0.92, 0.02, 240], "role": "glow"},
+      {"pos": 0.62, "oklch": [0.64, 0.15,  38], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.30, 0.07,  33], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.16, 0.03, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Indigo to Foam",
+    "mood": "an early pale flare, then a slow cool walk down through blue-teal, teal, foam-green \u2014 neighboring hues, no complement",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 255], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.90, 0.04, 250], "role": "glow"},
+      {"pos": 0.36, "oklch": [0.54, 0.14, 222], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.40, 0.14, 200], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.52, 0.13, 188], "role": "mid"},
+      {"pos": 0.82, "oklch": [0.30, 0.13, 176], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Deep Water Walk",
+    "mood": "a cool hue walk indigo\u2192cobalt\u2192petrol\u2192teal rising late to a foam crest; the drama is the walk, not any single pair",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.05, 265], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.34, 0.13, 255], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.26, 0.10, 240], "role": "mid"},
+      {"pos": 0.50, "oklch": [0.48, 0.15, 210], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.62, 0.13, 195], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.90, 0.04, 185], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.16, 0.05, 265], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Bright Bay, Deep Well",
+    "mood": "pale teal field, two bright crests around a deep-indigo well, the cool hues drifting indigo\u2192petrol\u2192foam \u2014 no black",
+    "architecture": "analogous-drift",
+    "skeleton": "double-peak",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.80, 0.05, 195], "role": "field"},
+      {"pos": 0.16, "oklch": [0.95, 0.03, 190], "role": "glow"},
+      {"pos": 0.34, "oklch": [0.30, 0.12, 250], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.58, 0.14, 210], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.92, 0.04, 185], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.80, 0.05, 195], "role": "field"}
+    ]
+  },
+  {
+    "name": "Still Lagoon",
+    "mood": "a pale foam surface with a genuinely deep indigo trough as the one event, muted cool hues drifting around it",
+    "architecture": "analogous-drift",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.88, 0.03, 190], "role": "field"},
+      {"pos": 0.18, "oklch": [0.94, 0.02, 185], "role": "glow"},
+      {"pos": 0.36, "oklch": [0.70, 0.10, 200], "role": "anchor"},
+      {"pos": 0.50, "oklch": [0.44, 0.11, 220], "role": "mid"},
+      {"pos": 0.58, "oklch": [0.22, 0.10, 255], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.50, 0.11, 210], "role": "mid"},
+      {"pos": 0.88, "oklch": [0.82, 0.05, 190], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.88, 0.03, 190], "role": "field"}
+    ]
+  },
+  {
+    "name": "Reef Triad",
+    "mood": "teal, coral and gold in balance; every distant swap routed through a white or black waypoint, two lit crests and a dark trough",
+    "architecture": "triad",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 195], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.52, 0.15, 190], "role": "anchor"},
+      {"pos": 0.26, "oklch": [0.94, 0.02, 195], "role": "glow"},
+      {"pos": 0.40, "oklch": [0.66, 0.16,  33], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.72, 0.14,  78], "role": "accent"},
+      {"pos": 0.62, "oklch": [0.16, 0.04,  60], "role": "mid"},
+      {"pos": 0.76, "oklch": [0.90, 0.02, 200], "role": "glow"},
+      {"pos": 0.88, "oklch": [0.44, 0.15, 190], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 195], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Plum, Coral, Tide",
+    "mood": "plum, coral and teal held in a three-hue balance; a small plum cliff in the mids, the far swaps dropped through white and near-black",
+    "architecture": "triad",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.03, 300], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.46, 0.14, 300], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.21, "oklch": [0.30, 0.11, 300], "role": "mid"},
+      {"pos": 0.36, "oklch": [0.92, 0.02, 310], "role": "glow"},
+      {"pos": 0.54, "oklch": [0.62, 0.15,  35], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.12, 0.03,  40], "role": "mid"},
+      {"pos": 0.86, "oklch": [0.52, 0.14, 190], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.16, 0.03, 300], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Pale Reef, Three Lights",
+    "mood": "pale foam field carrying a deep-indigo anchor, coral and gold; polychromatic breadth, distant swaps routed through white \u2014 no black",
+    "architecture": "triad",
+    "skeleton": "no-cliff",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.86, 0.03, 190], "role": "field"},
+      {"pos": 0.14, "oklch": [0.95, 0.02, 195], "role": "glow"},
+      {"pos": 0.30, "oklch": [0.30, 0.12, 250], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.60, 0.14, 210], "role": "mid"},
+      {"pos": 0.56, "oklch": [0.93, 0.02, 200], "role": "glow"},
+      {"pos": 0.70, "oklch": [0.66, 0.15,  35], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.74, 0.13,  80], "role": "accent"},
+      {"pos": 1.0,  "oklch": [0.86, 0.03, 190], "role": "field"}
+    ]
+  },
+  {
+    "name": "Teal With One Ember",
+    "mood": "a full teal value range, black to foam, broken once by a single coral spark bracketed by white and near-black so the swap stays clean",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.12, 0.03, 195], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.55, 0.14, 195], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.94, 0.02, 190], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.62, 0.16,  30], "role": "accent"},
+      {"pos": 0.58, "oklch": [0.14, 0.03,  35], "role": "mid"},
+      {"pos": 0.74, "oklch": [0.48, 0.14, 198], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.12, 0.03, 195], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Tidewater, Two Crests",
+    "mood": "teal across the full range with two lit crests, one white and one warm cream, a single coral spark rising out of a dark trough",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 195], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.50, 0.15, 195], "role": "anchor"},
+      {"pos": 0.26, "oklch": [0.93, 0.03, 192], "role": "glow"},
+      {"pos": 0.40, "oklch": [0.44, 0.14, 200], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.12, 0.03, 200], "role": "mid"},
+      {"pos": 0.62, "oklch": [0.58, 0.16,  32], "role": "accent"},
+      {"pos": 0.74, "oklch": [0.90, 0.03,  60], "role": "glow"},
+      {"pos": 0.88, "oklch": [0.40, 0.13, 190], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 195], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Shoal, One Coral",
+    "mood": "pale teal field with a genuinely deep teal trough as the event and a lone coral spark, the spark routed in through white \u2014 no black",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.84, 0.04, 190], "role": "field"},
+      {"pos": 0.16, "oklch": [0.95, 0.02, 188], "role": "glow"},
+      {"pos": 0.36, "oklch": [0.22, 0.10, 195], "role": "anchor"},
+      {"pos": 0.54, "oklch": [0.93, 0.02, 195], "role": "glow"},
+      {"pos": 0.70, "oklch": [0.64, 0.15,  32], "role": "accent"},
+      {"pos": 1.0,  "oklch": [0.84, 0.04, 190], "role": "field"}
+    ]
+  }
+]

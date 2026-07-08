@@ -1,0 +1,345 @@
+[
+  {
+    "name": "Nightbloom Signal",
+    "mood": "pure indigo and magenta against black and white; indigo rises to a white flare, magenta falls into black - two hues, no bridge",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 262], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.45, 0.17, 262], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.97, 0.005, 300], "role": "glow"},
+      {"pos": 0.52, "oklch": [0.55, 0.19, 338], "role": "anchor"},
+      {"pos": 0.74, "oklch": [0.20, 0.08, 340], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 262], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Plum Fracture",
+    "mood": "bright plum against warm gold, split by a cream flash; a small crisp value cliff inside the plum; plum-to-gold routes through the cream, gold wraps back through a near-black",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.30, 0.10, 320], "role": "field"},
+      {"pos": 0.18, "oklch": [0.62, 0.17, 320], "role": "anchor"},
+      {"pos": 0.34, "oklch": [0.42, 0.14, 320], "role": "mid", "segment": "cliff"},
+      {"pos": 0.40, "oklch": [0.30, 0.11, 320], "role": "mid"},
+      {"pos": 0.56, "oklch": [0.96, 0.01, 90],  "role": "glow"},
+      {"pos": 0.72, "oklch": [0.72, 0.15, 88],  "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.16, 0.05, 62],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.30, 0.10, 320], "role": "field"}
+    ]
+  },
+  {
+    "name": "Pale Orchid, Deep Well",
+    "mood": "pale lilac field with a deep violet well as the event and a single chartreuse glint; no blacks - the deep jewel carries the dark",
+    "architecture": "duotone-plus",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 300], "role": "field"},
+      {"pos": 0.20, "oklch": [0.78, 0.10, 300], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.15, 0.09, 300], "role": "anchor"},
+      {"pos": 0.55, "oklch": [0.72, 0.14, 122], "role": "accent"},
+      {"pos": 0.74, "oklch": [0.92, 0.02, 300], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 300], "role": "field"}
+    ]
+  },
+  {
+    "name": "Violet Ascension",
+    "mood": "a single cool sweep - black to indigo to violet to magenta to white; no reversal, drama is the pure ramp",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 262], "role": "ground"},
+      {"pos": 0.20, "oklch": [0.28, 0.13, 265], "role": "field"},
+      {"pos": 0.40, "oklch": [0.48, 0.17, 288], "role": "anchor"},
+      {"pos": 0.60, "oklch": [0.64, 0.16, 315], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.80, 0.12, 335], "role": "anchor"},
+      {"pos": 0.90, "oklch": [0.96, 0.01, 340], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 262], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Plum Smoke Ramp",
+    "mood": "one plum temperature climbing deep-plum to magenta to orchid to pale; a pure value-and-chroma sweep, no complement",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.22, 0.08, 330], "role": "field"},
+      {"pos": 0.16, "oklch": [0.38, 0.15, 330], "role": "anchor"},
+      {"pos": 0.34, "oklch": [0.52, 0.18, 335], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.64, 0.16, 320], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.78, 0.11, 315], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.92, 0.04, 320], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.22, 0.08, 330], "role": "field"}
+    ]
+  },
+  {
+    "name": "Indigo Kindling",
+    "mood": "cool ramp flaring early to ice-violet then descending through violet into deep plum; single cool temperature family",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 265], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.42, 0.16, 268], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.90, 0.05, 285], "role": "glow"},
+      {"pos": 0.52, "oklch": [0.55, 0.17, 310], "role": "anchor"},
+      {"pos": 0.74, "oklch": [0.28, 0.11, 330], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 265], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Twilight Bridge",
+    "mood": "a violet mass set against a gold mass, bridged by a cream flare; two lightness peaks with a dark trough; the temperature jumps route through cream and near-black",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.25, 0.10, 300], "role": "field"},
+      {"pos": 0.14, "oklch": [0.62, 0.17, 300], "role": "anchor"},
+      {"pos": 0.28, "oklch": [0.30, 0.11, 300], "role": "mid"},
+      {"pos": 0.42, "oklch": [0.95, 0.02, 60],  "role": "glow"},
+      {"pos": 0.58, "oklch": [0.70, 0.16, 88],  "role": "anchor"},
+      {"pos": 0.74, "oklch": [0.40, 0.12, 82],  "role": "mid"},
+      {"pos": 0.88, "oklch": [0.16, 0.05, 70],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.25, 0.10, 300], "role": "field"}
+    ]
+  },
+  {
+    "name": "Ashen Iris",
+    "mood": "a muted violet against a muted amber, bridged by a dim cream; deep black body, two soft peaks; deliberately dusty, no pure hues",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 300], "role": "ground"},
+      {"pos": 0.20, "oklch": [0.48, 0.10, 298], "role": "anchor"},
+      {"pos": 0.36, "oklch": [0.22, 0.06, 300], "role": "mid"},
+      {"pos": 0.52, "oklch": [0.85, 0.04, 80],  "role": "glow"},
+      {"pos": 0.70, "oklch": [0.50, 0.11, 72],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 300], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Fuchsia & Acid",
+    "mood": "pale rose field with an ice-white flare early, a deep magenta jewel as event, and an acid chartreuse counter; the magenta-to-acid jump routes through the deep jewel",
+    "architecture": "complementary-tension",
+    "skeleton": "peak-early",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.04, 336], "role": "field"},
+      {"pos": 0.14, "oklch": [0.94, 0.02, 210], "role": "glow"},
+      {"pos": 0.30, "oklch": [0.60, 0.17, 340], "role": "anchor"},
+      {"pos": 0.46, "oklch": [0.18, 0.10, 338], "role": "anchor"},
+      {"pos": 0.60, "oklch": [0.66, 0.16, 125], "role": "accent"},
+      {"pos": 0.78, "oklch": [0.40, 0.11, 122], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.90, 0.04, 336], "role": "field"}
+    ]
+  },
+  {
+    "name": "Orchid Procession",
+    "mood": "an analogous walk indigo to blue-violet to violet to orchid with a pale pink glow; drama is the hue walk over a wide value, no complement",
+    "architecture": "analogous-drift",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.20, 0.07, 262], "role": "field"},
+      {"pos": 0.16, "oklch": [0.44, 0.13, 280], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.30, 0.11, 292], "role": "mid"},
+      {"pos": 0.46, "oklch": [0.60, 0.14, 308], "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.74, 0.13, 330], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.92, 0.03, 345], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.20, 0.07, 262], "role": "field"}
+    ]
+  },
+  {
+    "name": "Deep Iris Rise",
+    "mood": "deep plum climbing through magenta and violet to a pale periwinkle and white; a hue walk with a value dip, then a late peak",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 330], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.28, 0.12, 335], "role": "field"},
+      {"pos": 0.34, "oklch": [0.42, 0.16, 340], "role": "anchor"},
+      {"pos": 0.50, "oklch": [0.36, 0.13, 320], "role": "mid"},
+      {"pos": 0.66, "oklch": [0.58, 0.17, 300], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.82, 0.10, 285], "role": "anchor"},
+      {"pos": 0.92, "oklch": [0.95, 0.02, 285], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 330], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Orchid Dawn",
+    "mood": "pale violet field with a deep violet jewel, drifting violet to magenta to rose to warm cream; high-key, no blacks, the jewel carries the dark",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.78, 0.06, 310], "role": "field"},
+      {"pos": 0.16, "oklch": [0.22, 0.10, 305], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.52, 0.16, 320], "role": "anchor"},
+      {"pos": 0.48, "oklch": [0.40, 0.13, 332], "role": "mid"},
+      {"pos": 0.64, "oklch": [0.68, 0.14, 345], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.95, 0.02, 55],  "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.78, 0.06, 310], "role": "field"}
+    ]
+  },
+  {
+    "name": "Three-Court Triad",
+    "mood": "indigo, magenta and gold held in balance; white and near-black waypoints carry every hue jump; two lightness peaks",
+    "architecture": "triad",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.24, 0.09, 262], "role": "field"},
+      {"pos": 0.14, "oklch": [0.55, 0.17, 262], "role": "anchor"},
+      {"pos": 0.28, "oklch": [0.94, 0.02, 300], "role": "glow"},
+      {"pos": 0.42, "oklch": [0.58, 0.17, 340], "role": "anchor"},
+      {"pos": 0.56, "oklch": [0.18, 0.06, 338], "role": "mid"},
+      {"pos": 0.70, "oklch": [0.72, 0.16, 88],  "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.16, 0.05, 84],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.24, 0.09, 262], "role": "field"}
+    ]
+  },
+  {
+    "name": "Plum, Cobalt, Acid",
+    "mood": "cobalt, plum and chartreuse triad over black; a small crisp cliff inside the plum; cool white and near-black route the big jumps",
+    "architecture": "triad",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 262], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.46, 0.17, 262], "role": "anchor"},
+      {"pos": 0.26, "oklch": [0.62, 0.16, 296], "role": "anchor"},
+      {"pos": 0.36, "oklch": [0.60, 0.15, 320], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.44, "oklch": [0.44, 0.13, 322], "role": "mid"},
+      {"pos": 0.58, "oklch": [0.95, 0.02, 200], "role": "glow"},
+      {"pos": 0.74, "oklch": [0.66, 0.16, 122], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.18, 0.06, 120], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 262], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Orchid Fanfare",
+    "mood": "violet, magenta and gold triad on a pale field; a white flare early, a deep plum jewel routing to the gold; high-key, no blacks",
+    "architecture": "triad",
+    "skeleton": "peak-early",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 318], "role": "field"},
+      {"pos": 0.14, "oklch": [0.95, 0.02, 300], "role": "glow"},
+      {"pos": 0.30, "oklch": [0.56, 0.17, 300], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.18, 0.09, 320], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.70, 0.16, 88],  "role": "accent"},
+      {"pos": 0.74, "oklch": [0.86, 0.06, 92],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 318], "role": "field"}
+    ]
+  },
+  {
+    "name": "Single Iris",
+    "mood": "one violet family across the full value range with a single gold spark; pale field, a deep violet trough as the event, spark routed off the trough",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.88, 0.04, 300], "role": "field"},
+      {"pos": 0.20, "oklch": [0.66, 0.12, 300], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.15, 0.08, 300], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.62, 0.14, 92],  "role": "accent"},
+      {"pos": 0.62, "oklch": [0.93, 0.02, 300], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.88, 0.04, 300], "role": "field"}
+    ]
+  },
+  {
+    "name": "Plum in Ash",
+    "mood": "a muted plum-to-violet family over charcoal with one acid chartreuse spark held between two near-blacks; dusty, low-chroma, one fierce cool-green event",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 320], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.30, 0.08, 322], "role": "field"},
+      {"pos": 0.32, "oklch": [0.52, 0.11, 318], "role": "anchor"},
+      {"pos": 0.48, "oklch": [0.72, 0.08, 315], "role": "anchor"},
+      {"pos": 0.60, "oklch": [0.16, 0.05, 300], "role": "mid"},
+      {"pos": 0.70, "oklch": [0.52, 0.12, 120], "role": "accent"},
+      {"pos": 0.82, "oklch": [0.16, 0.05, 118], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 320], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Indigo Nocturne",
+    "mood": "a muted indigo family with a single magenta spark reached through a pale cool flare; dusty blues with the lights turned low, a late peak",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.18, 0.05, 262], "role": "field"},
+      {"pos": 0.18, "oklch": [0.40, 0.10, 265], "role": "anchor"},
+      {"pos": 0.34, "oklch": [0.30, 0.08, 268], "role": "mid"},
+      {"pos": 0.52, "oklch": [0.56, 0.11, 270], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.90, 0.03, 285], "role": "glow"},
+      {"pos": 0.82, "oklch": [0.58, 0.12, 340], "role": "accent"},
+      {"pos": 1.0,  "oklch": [0.18, 0.05, 262], "role": "field"}
+    ]
+  },
+  {
+    "name": "Deep Well, Warm Coal",
+    "mood": "pale violet field with a deep indigo well as the event and a muted warm gold rising out of it; high-key, dusty, cool mass against a warm ember",
+    "architecture": "complementary-tension",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.86, 0.04, 300], "role": "field"},
+      {"pos": 0.16, "oklch": [0.70, 0.09, 300], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.15, 0.08, 265], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.55, 0.11, 70],  "role": "accent"},
+      {"pos": 0.58, "oklch": [0.78, 0.07, 78],  "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.90, 0.03, 90],  "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.86, 0.04, 300], "role": "field"}
+    ]
+  },
+  {
+    "name": "Orchid Triad Ember",
+    "mood": "cobalt, magenta and gold triad over black; a small crisp cliff inside the cobalt, white and near-black waypoints carrying the jumps",
+    "architecture": "triad",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 260], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.50, 0.17, 260], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.24, "oklch": [0.36, 0.13, 262], "role": "mid"},
+      {"pos": 0.38, "oklch": [0.94, 0.02, 320], "role": "glow"},
+      {"pos": 0.52, "oklch": [0.60, 0.17, 340], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.18, 0.06, 40],  "role": "mid"},
+      {"pos": 0.82, "oklch": [0.68, 0.16, 90],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 260], "role": "ground"}
+    ]
+  }
+]

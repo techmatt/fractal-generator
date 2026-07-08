@@ -1,0 +1,1459 @@
+[
+  {
+    "name": "Sapphire & Coal",
+    "mood": "pure sapphire and deep fuchsia against black and white; sapphire flares to white, fuchsia falls into black \u2014 two hues, no bridge",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.44,
+          0.17,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.97,
+          0.01,
+          250
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.52,
+        "oklch": [
+          0.58,
+          0.19,
+          348
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.74,
+        "oklch": [
+          0.2,
+          0.08,
+          342
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Ink & Fuchsia Flare",
+    "mood": "cobalt sapphire rising to a white flare, deep fuchsia collapsing to black; poster-pure duotone, no mid-blend",
+    "architecture": "duotone-plus",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.08,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.14,
+        "oklch": [
+          0.3,
+          0.14,
+          260
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.28,
+        "oklch": [
+          0.5,
+          0.18,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.4,
+        "oklch": [
+          0.96,
+          0.01,
+          255
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.56,
+        "oklch": [
+          0.62,
+          0.2,
+          350
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.7,
+        "oklch": [
+          0.44,
+          0.17,
+          344
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.85,
+        "oklch": [
+          0.19,
+          0.07,
+          340
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.08,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Bruised Velvet",
+    "mood": "sapphire and magenta on a mid slate field; a small violet cliff cuts the mids, a pale blush glow bridges the two hues",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.14,
+          0.03,
+          268
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.4,
+          0.16,
+          258
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.55,
+          0.1,
+          285
+        ],
+        "role": "mid",
+        "segment": "cliff"
+      },
+      {
+        "pos": 0.42,
+        "oklch": [
+          0.42,
+          0.12,
+          300
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.58,
+        "oklch": [
+          0.9,
+          0.02,
+          350
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.74,
+        "oklch": [
+          0.6,
+          0.18,
+          344
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.88,
+        "oklch": [
+          0.3,
+          0.1,
+          338
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.14,
+          0.03,
+          268
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Twin Sapphires",
+    "mood": "two bright flares \u2014 an ice-white sapphire crest and a blush-white magenta crest \u2014 over black, dark trough between",
+    "architecture": "duotone-plus",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.55,
+          0.18,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.26,
+        "oklch": [
+          0.93,
+          0.03,
+          250
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.16,
+          0.05,
+          300
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.6,
+          0.19,
+          344
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.72,
+        "oklch": [
+          0.95,
+          0.02,
+          350
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.86,
+        "oklch": [
+          0.3,
+          0.1,
+          340
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Ice Spire",
+    "mood": "a pure cool sweep \u2014 black to navy to cobalt to sky, cresting white; one temperature, no warmth",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.08,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.24,
+        "oklch": [
+          0.3,
+          0.14,
+          260
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.52,
+          0.17,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.74,
+        "oklch": [
+          0.74,
+          0.12,
+          248
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.9,
+        "oklch": [
+          0.97,
+          0.01,
+          245
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.08,
+          0.02,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Rose Furnace",
+    "mood": "a pure warm sweep \u2014 deep plum through magenta and rose to a cream-blush crest; all one temperature",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.16,
+          0.06,
+          336
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.34,
+          0.15,
+          340
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.42,
+        "oklch": [
+          0.52,
+          0.19,
+          344
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.62,
+        "oklch": [
+          0.66,
+          0.15,
+          350
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.8,
+        "oklch": [
+          0.8,
+          0.09,
+          356
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.92,
+        "oklch": [
+          0.94,
+          0.02,
+          355
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.16,
+          0.06,
+          336
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Indigo Descent",
+    "mood": "a pure indigo-violet ramp climbing black to periwinkle to white; single cool temperature, no reversal",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.08,
+          0.02,
+          285
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.26,
+        "oklch": [
+          0.3,
+          0.13,
+          282
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.52,
+        "oklch": [
+          0.5,
+          0.16,
+          288
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.78,
+        "oklch": [
+          0.72,
+          0.11,
+          292
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.92,
+        "oklch": [
+          0.96,
+          0.01,
+          290
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.08,
+          0.02,
+          285
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Sapphire Against Rose",
+    "mood": "cool sapphire mass and warm rose-magenta mass in real tension, two glows bridging; deep trough between the poles",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.18,
+          0.06,
+          260
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.46,
+          0.16,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.28,
+        "oklch": [
+          0.9,
+          0.03,
+          250
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.24,
+          0.08,
+          300
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.52,
+          0.15,
+          344
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.74,
+        "oklch": [
+          0.92,
+          0.02,
+          352
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.88,
+        "oklch": [
+          0.34,
+          0.1,
+          348
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.18,
+          0.06,
+          260
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Cobalt Meets Blush",
+    "mood": "deep cobalt against dusky rose, a pale bloom bridging the swing; saturation held across the temperature reversal",
+    "architecture": "complementary-tension",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.02,
+          260
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.52,
+          0.18,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.32,
+        "oklch": [
+          0.95,
+          0.02,
+          300
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.54,
+        "oklch": [
+          0.56,
+          0.14,
+          348
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.22,
+          0.08,
+          344
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.02,
+          260
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Slate & Wine",
+    "mood": "the muted register \u2014 dusty slate-blue against dusky wine-rose over a bone glow; candlelit, chroma pulled back",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.2,
+          0.04,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.4,
+          0.08,
+          258
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.38,
+        "oklch": [
+          0.58,
+          0.07,
+          275
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.52,
+        "oklch": [
+          0.84,
+          0.03,
+          330
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.68,
+        "oklch": [
+          0.4,
+          0.09,
+          350
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.84,
+        "oklch": [
+          0.56,
+          0.08,
+          344
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.2,
+          0.04,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Nightfall Spectrum",
+    "mood": "a hue walk navy to indigo to violet to plum to a blush crest; no complement, drama from the drift and the dip",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.03,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.3,
+          0.13,
+          268
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.52,
+          0.15,
+          285
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.34,
+          0.14,
+          305
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.56,
+          0.16,
+          330
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.84,
+        "oklch": [
+          0.88,
+          0.07,
+          348
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.03,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Twilight Procession",
+    "mood": "a dusky drift slate-navy through indigo and violet to magenta, two soft crests; muted jewel walk",
+    "architecture": "analogous-drift",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.2,
+          0.04,
+          264
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.78,
+          0.08,
+          272
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.34,
+          0.1,
+          288
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.48,
+          0.11,
+          305
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.58,
+          0.12,
+          330
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.84,
+          0.07,
+          346
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.92,
+        "oklch": [
+          0.44,
+          0.1,
+          344
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.2,
+          0.04,
+          264
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Inkfall",
+    "mood": "navy climbing through indigo to violet with a small crisp cliff in the mids, a lilac-white glow, plum tail",
+    "architecture": "analogous-drift",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.03,
+          262
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.36,
+          0.15,
+          270
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.36,
+        "oklch": [
+          0.52,
+          0.14,
+          285
+        ],
+        "role": "mid",
+        "segment": "cliff"
+      },
+      {
+        "pos": 0.46,
+        "oklch": [
+          0.4,
+          0.13,
+          300
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.64,
+        "oklch": [
+          0.86,
+          0.06,
+          320
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.3,
+          0.11,
+          340
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.03,
+          262
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Pale Sapphire Ground",
+    "mood": "a pale ice-and-lilac field with a single deep sapphire trough as the event; airy, muted, the dark is the drama",
+    "architecture": "analogous-drift",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.82,
+          0.04,
+          250
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.9,
+          0.03,
+          260
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.7,
+          0.08,
+          275
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.24,
+          0.12,
+          262
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.66,
+          0.09,
+          300
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.84,
+          0.07,
+          330
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.82,
+          0.04,
+          250
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Triad Nocturne",
+    "mood": "sapphire, violet and magenta held in balance over slate, ice crest early; polychromatic breadth a pair can't give",
+    "architecture": "triad",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.18,
+          0.06,
+          258
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.86,
+          0.05,
+          250
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.32,
+        "oklch": [
+          0.48,
+          0.17,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.4,
+          0.15,
+          302
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.2,
+          0.09,
+          300
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.54,
+          0.17,
+          344
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.18,
+          0.06,
+          258
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Three Jewels",
+    "mood": "cobalt, violet and fuchsia over black, a white flare between the cool pair and the hot; three pure hues",
+    "architecture": "triad",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.02,
+          258
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.5,
+          0.18,
+          255
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.38,
+        "oklch": [
+          0.95,
+          0.02,
+          290
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.56,
+        "oklch": [
+          0.46,
+          0.15,
+          300
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.74,
+        "oklch": [
+          0.54,
+          0.18,
+          346
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.02,
+          258
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Rose Above",
+    "mood": "a pale blush field carrying deep sapphire and violet jewel anchors, cresting bright blush; high-key triad, no black",
+    "architecture": "triad",
+    "skeleton": "peak-late",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.82,
+          0.04,
+          352
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.3,
+          0.11,
+          256
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.66,
+          0.08,
+          290
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.34,
+          0.11,
+          305
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.7,
+          0.08,
+          340
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.86,
+        "oklch": [
+          0.95,
+          0.03,
+          352
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.82,
+          0.04,
+          352
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Blue Hour Spark",
+    "mood": "a pale-to-deep sapphire field, deep trough as the event, a single warm rose spark routed through white",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.84,
+          0.04,
+          255
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.55,
+          0.13,
+          258
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.4,
+        "oklch": [
+          0.22,
+          0.17,
+          260
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.58,
+        "oklch": [
+          0.93,
+          0.02,
+          250
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.64,
+          0.16,
+          350
+        ],
+        "role": "accent",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.8
+        }
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.84,
+          0.04,
+          255
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Rose Field, Sapphire Cut",
+    "mood": "a deep magenta-rose family across the full range, small crisp cliff, then one cool sapphire spark cut through white",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.1,
+          0.03,
+          344
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.22,
+        "oklch": [
+          0.42,
+          0.16,
+          346
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.38,
+        "oklch": [
+          0.6,
+          0.14,
+          350
+        ],
+        "role": "mid",
+        "segment": "cliff"
+      },
+      {
+        "pos": 0.48,
+        "oklch": [
+          0.46,
+          0.13,
+          356
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.64,
+        "oklch": [
+          0.9,
+          0.03,
+          345
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.8,
+        "oklch": [
+          0.34,
+          0.15,
+          258
+        ],
+        "role": "accent",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.85
+        }
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.1,
+          0.03,
+          344
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Rose Veil, Cool Glint",
+    "mood": "a pale rose-magenta field with a deep plum trough, a single cool periwinkle glint routed through white",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.85,
+          0.04,
+          340
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.24,
+        "oklch": [
+          0.56,
+          0.14,
+          344
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.22,
+          0.15,
+          340
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.93,
+          0.02,
+          350
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.78,
+        "oklch": [
+          0.66,
+          0.12,
+          286
+        ],
+        "role": "accent",
+        "keypoint": {
+          "type": "accent_pop",
+          "salience": 0.8
+        }
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.85,
+          0.04,
+          340
+        ],
+        "role": "ground"
+      }
+    ]
+  }
+]

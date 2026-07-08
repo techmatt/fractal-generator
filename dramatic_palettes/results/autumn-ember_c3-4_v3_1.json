@@ -1,0 +1,1492 @@
+[
+  {
+    "name": "Ember Gate",
+    "mood": "pure amber and deep petrol-teal against near-black and cream; the two hues never blend \u2014 amber falls to black, the jump to teal passes through the cream flare",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.07,
+          0.02,
+          60
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.64,
+          0.15,
+          58
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.92,
+          0.03,
+          82
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.52,
+        "oklch": [
+          0.45,
+          0.09,
+          195
+        ],
+        "role": "anchor",
+        "segment": "cliff"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.26,
+          0.07,
+          198
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.07,
+          0.02,
+          60
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Oxblood & Gild",
+    "mood": "deep oxblood and pure gold with a white flare between them; oxblood dips into shadow, gold peaks late \u2014 the warm-to-warm poles read as one hot palette",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.15,
+          0.05,
+          30
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.44,
+          0.15,
+          28
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.32,
+        "oklch": [
+          0.25,
+          0.07,
+          30
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.5,
+          0.1,
+          32
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.68,
+        "oklch": [
+          0.95,
+          0.02,
+          65
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.83,
+        "oklch": [
+          0.78,
+          0.14,
+          88
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.15,
+          0.05,
+          30
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Bright Ash, Cold Coal",
+    "mood": "a pale bone-gold field with a single deep petrol-teal jewel as the dark event; warm and cool never meet saturated \u2014 the crossing happens in low-chroma ash",
+    "architecture": "duotone-plus",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.9,
+          0.05,
+          80
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.72,
+          0.1,
+          72
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.45,
+          0.03,
+          90
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.25,
+          0.09,
+          205
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.46,
+          0.03,
+          90
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.83,
+        "oklch": [
+          0.74,
+          0.11,
+          68
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.9,
+          0.05,
+          80
+        ],
+        "role": "field"
+      }
+    ]
+  },
+  {
+    "name": "Forge Sweep",
+    "mood": "a pure heat ramp black to oxblood to rust to burnt orange to gold to white; no reversal \u2014 drama is the saturated value sweep itself, peaking near white late",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.05,
+          0.02,
+          40
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.13,
+        "oklch": [
+          0.28,
+          0.12,
+          32
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.28,
+        "oklch": [
+          0.46,
+          0.16,
+          45
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.6,
+          0.16,
+          58
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.73,
+          0.15,
+          78
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.78,
+        "oklch": [
+          0.88,
+          0.08,
+          88
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.9,
+        "oklch": [
+          0.97,
+          0.01,
+          90
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.05,
+          0.02,
+          40
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Coalglow",
+    "mood": "an ember ramp that flares gold early then sinks through amber and rust into umber and black; single warm temperature, no cool anywhere",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.06,
+          0.02,
+          50
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.22,
+        "oklch": [
+          0.85,
+          0.1,
+          85
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.4,
+        "oklch": [
+          0.62,
+          0.14,
+          60
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.58,
+        "oklch": [
+          0.45,
+          0.14,
+          45
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.78,
+        "oklch": [
+          0.26,
+          0.09,
+          38
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.06,
+          0.02,
+          50
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Smoke Ramp",
+    "mood": "a muted, smoky warm sweep from deep umber up through soft rust and amber to a cream haze; single temperature, chroma pulled back to ash",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.16,
+          0.04,
+          45
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.34,
+          0.08,
+          42
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.5,
+          0.1,
+          55
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.52,
+        "oklch": [
+          0.63,
+          0.1,
+          70
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.7,
+        "oklch": [
+          0.78,
+          0.07,
+          82
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.86,
+        "oklch": [
+          0.9,
+          0.03,
+          86
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.16,
+          0.04,
+          45
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Amber Highlands",
+    "mood": "a high-key warm sweep, no black \u2014 a cream flare early, then a walk down warm to a single deep-amber jewel that anchors in place of shadow",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.62,
+          0.09,
+          70
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.94,
+          0.03,
+          88
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.4,
+        "oklch": [
+          0.74,
+          0.11,
+          72
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.58,
+        "oklch": [
+          0.5,
+          0.13,
+          55
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.32,
+          0.11,
+          40
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.62,
+          0.09,
+          70
+        ],
+        "role": "field"
+      }
+    ]
+  },
+  {
+    "name": "Rust Against Slate",
+    "mood": "real temperature tension: a deep slate-blue mass against a vivid rust mass, bridged by a cream flare that carries the big hue jump \u2014 never a blend",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.16,
+          0.06,
+          255
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.15,
+        "oklch": [
+          0.42,
+          0.11,
+          252
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.3,
+          0.07,
+          255
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.92,
+          0.03,
+          80
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.58,
+          0.15,
+          50
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.4,
+          0.12,
+          42
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.88,
+        "oklch": [
+          0.24,
+          0.08,
+          38
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.16,
+          0.06,
+          255
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Copper & Steel",
+    "mood": "a deliberately muted temperature swing \u2014 warm copper peak and cool steel-blue peak with a near-black trough between; the warm-to-cool crossing routes through the dark",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.09,
+          0.03,
+          55
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.5,
+          0.12,
+          52
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.32,
+        "oklch": [
+          0.66,
+          0.08,
+          68
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.14,
+          0.03,
+          150
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.68,
+        "oklch": [
+          0.58,
+          0.1,
+          245
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.84,
+        "oklch": [
+          0.34,
+          0.07,
+          250
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.09,
+          0.03,
+          55
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Petrol Boundary",
+    "mood": "burnt gold against petrol-teal, the tension bridged by cream while a small crisp cliff steps down inside the teal mass",
+    "architecture": "complementary-tension",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.15,
+          0.05,
+          195
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.48,
+          0.1,
+          197
+        ],
+        "role": "anchor",
+        "segment": "cliff"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.3,
+          0.08,
+          198
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.9,
+          0.03,
+          85
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.68,
+          0.13,
+          82
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.78,
+        "oklch": [
+          0.45,
+          0.11,
+          70
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.15,
+          0.05,
+          195
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Long Autumn",
+    "mood": "an all-warm hue walk oxblood to rust to amber to gold to cream, arranged as two lightness peaks with a rust trough between; no cool, no complement",
+    "architecture": "analogous-drift",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.16,
+          0.05,
+          30
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.15,
+        "oklch": [
+          0.52,
+          0.13,
+          35
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.28,
+        "oklch": [
+          0.68,
+          0.1,
+          55
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.4,
+          0.11,
+          45
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.6,
+          0.12,
+          70
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.88,
+          0.05,
+          88
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.9,
+        "oklch": [
+          0.55,
+          0.1,
+          80
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.16,
+          0.05,
+          30
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Umber Rise",
+    "mood": "a warm neighbor-walk that flares amber-gold early, then descends through rust and umber into black, with a small secondary rust bump on the way down",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.07,
+          0.02,
+          45
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.2,
+        "oklch": [
+          0.78,
+          0.09,
+          80
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.36,
+        "oklch": [
+          0.55,
+          0.14,
+          60
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.52,
+        "oklch": [
+          0.38,
+          0.13,
+          45
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.7,
+        "oklch": [
+          0.5,
+          0.11,
+          52
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.86,
+        "oklch": [
+          0.24,
+          0.07,
+          40
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.07,
+          0.02,
+          45
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Faded Gilt",
+    "mood": "high-key, no black: pale gold drifting down through amber to a deep rust jewel and back, with a bright mid-bump \u2014 a sun-bleached warm gradient with a dark heart",
+    "architecture": "analogous-drift",
+    "skeleton": "no-cliff",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.88,
+          0.04,
+          85
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.14,
+        "oklch": [
+          0.72,
+          0.1,
+          78
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.55,
+          0.12,
+          60
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.44,
+        "oklch": [
+          0.68,
+          0.09,
+          68
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.58,
+        "oklch": [
+          0.4,
+          0.12,
+          48
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.72,
+        "oklch": [
+          0.3,
+          0.1,
+          38
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.86,
+        "oklch": [
+          0.6,
+          0.08,
+          72
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.88,
+          0.04,
+          85
+        ],
+        "role": "field"
+      }
+    ]
+  },
+  {
+    "name": "Smoke to Gold",
+    "mood": "muted and atmospheric: a smoky ash-light, an umber trough, then a gold peak feathering to cream \u2014 a warm walk kept low and hazy",
+    "architecture": "analogous-drift",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.18,
+          0.03,
+          70
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.58,
+          0.05,
+          74
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.36,
+        "oklch": [
+          0.36,
+          0.09,
+          55
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.54,
+        "oklch": [
+          0.66,
+          0.12,
+          78
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.72,
+        "oklch": [
+          0.84,
+          0.04,
+          86
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.86,
+        "oklch": [
+          0.48,
+          0.08,
+          68
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.18,
+          0.03,
+          70
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Three Coals",
+    "mood": "a triad of deep slate-blue, rust and gold held in balance; the warm-to-cool crossings pass through a dark slate and a late cream flare, never a muddy seam",
+    "architecture": "triad",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.15,
+          0.06,
+          255
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.44,
+          0.11,
+          250
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.18,
+          0.05,
+          255
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.46,
+        "oklch": [
+          0.5,
+          0.14,
+          42
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.64,
+        "oklch": [
+          0.66,
+          0.13,
+          85
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.9,
+          0.03,
+          86
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.15,
+          0.06,
+          255
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Oxblood, Amber, Teal",
+    "mood": "a three-hue palette \u2014 vivid oxblood, bright amber and deep teal \u2014 with a small cliff inside the amber; the amber-to-teal crossing drops through near-black",
+    "architecture": "triad",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.07,
+          0.02,
+          30
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.14,
+        "oklch": [
+          0.44,
+          0.15,
+          28
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.28,
+        "oklch": [
+          0.72,
+          0.13,
+          68
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.4,
+        "oklch": [
+          0.52,
+          0.12,
+          72
+        ],
+        "role": "mid",
+        "segment": "cliff"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.34,
+          0.1,
+          74
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.62,
+        "oklch": [
+          0.12,
+          0.03,
+          130
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.42,
+          0.11,
+          195
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.88,
+        "oklch": [
+          0.24,
+          0.08,
+          200
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.07,
+          0.02,
+          30
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Dusk Trio",
+    "mood": "an autumn-dusk triad: pale gold field, a rust jewel, and a muted plum-violet, the far hues bridged by a cream flare \u2014 polychromatic but hushed, no black",
+    "architecture": "triad",
+    "skeleton": "no-cliff",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.9,
+          0.04,
+          85
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.16,
+        "oklch": [
+          0.64,
+          0.12,
+          52
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.3,
+        "oklch": [
+          0.36,
+          0.1,
+          40
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.46,
+        "oklch": [
+          0.94,
+          0.02,
+          82
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.6,
+        "oklch": [
+          0.5,
+          0.08,
+          320
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.76,
+        "oklch": [
+          0.66,
+          0.09,
+          305
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.9,
+          0.04,
+          85
+        ],
+        "role": "field"
+      }
+    ]
+  },
+  {
+    "name": "Pale Field, Teal Heart",
+    "mood": "a near-monochrome warm gold family across the whole value range with one small deep-teal spark as the dark event; the lone cool note is the drama",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.9,
+          0.04,
+          82
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.72,
+          0.11,
+          72
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.36,
+        "oklch": [
+          0.48,
+          0.03,
+          90
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.26,
+          0.1,
+          200
+        ],
+        "role": "accent"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.5,
+          0.03,
+          90
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.74,
+          0.1,
+          76
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.9,
+          0.04,
+          82
+        ],
+        "role": "field"
+      }
+    ]
+  },
+  {
+    "name": "Ash & One Ember",
+    "mood": "a near-neutral smoke-and-charcoal family across the full value range with a single fierce rust ember as the only saturated event",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.06,
+          0.01,
+          60
+        ],
+        "role": "ground"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.7,
+          0.02,
+          80
+        ],
+        "role": "glow"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.44,
+          0.02,
+          70
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.48,
+        "oklch": [
+          0.58,
+          0.16,
+          50
+        ],
+        "role": "accent"
+      },
+      {
+        "pos": 0.62,
+        "oklch": [
+          0.34,
+          0.03,
+          80
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.8,
+        "oklch": [
+          0.2,
+          0.02,
+          70
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.06,
+          0.01,
+          60
+        ],
+        "role": "ground"
+      }
+    ]
+  },
+  {
+    "name": "Gold Field, Blood Spark",
+    "mood": "a warm amber-gold family carrying the image, with a single deep oxblood plunge as the focal dark event; one hue family, one sharp shadow",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {
+        "pos": 0.0,
+        "oklch": [
+          0.55,
+          0.09,
+          80
+        ],
+        "role": "field"
+      },
+      {
+        "pos": 0.18,
+        "oklch": [
+          0.74,
+          0.1,
+          78
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 0.34,
+        "oklch": [
+          0.5,
+          0.11,
+          70
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.5,
+        "oklch": [
+          0.16,
+          0.1,
+          28
+        ],
+        "role": "accent"
+      },
+      {
+        "pos": 0.66,
+        "oklch": [
+          0.52,
+          0.11,
+          68
+        ],
+        "role": "mid"
+      },
+      {
+        "pos": 0.82,
+        "oklch": [
+          0.72,
+          0.09,
+          82
+        ],
+        "role": "anchor"
+      },
+      {
+        "pos": 1.0,
+        "oklch": [
+          0.55,
+          0.09,
+          80
+        ],
+        "role": "field"
+      }
+    ]
+  }
+]

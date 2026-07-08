@@ -1,0 +1,339 @@
+[
+  {
+    "name": "Patina & Ember",
+    "mood": "pure verdigris teal and pure copper against true black and near-white; teal rises to a white glow, copper falls into black — two hues, no bridge",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 190], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.56, 0.14, 187], "role": "anchor"},
+      {"pos": 0.31, "oklch": [0.95, 0.02, 160], "role": "glow"},
+      {"pos": 0.54, "oklch": [0.62, 0.16,  54], "role": "anchor"},
+      {"pos": 0.76, "oklch": [0.27, 0.09,  40], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 190], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Verdigris Flare",
+    "mood": "copper mass against verdigris, a late white flare; the copper->teal flip routes through a near-black bridge",
+    "architecture": "duotone-plus",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.22, 0.06,  45], "role": "ground"},
+      {"pos": 0.20, "oklch": [0.52, 0.15,  52], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.18, 0.05, 100], "role": "mid"},
+      {"pos": 0.60, "oklch": [0.56, 0.13, 186], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.92, 0.02, 195], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.22, 0.06,  45], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Oxide Cliff",
+    "mood": "verdigris teal and copper with a small tonal cliff dropping through the teal; white glow bridges to the copper side",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 185], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.46, 0.13, 187], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.24, "oklch": [0.30, 0.10, 188], "role": "mid"},
+      {"pos": 0.42, "oklch": [0.90, 0.02, 180], "role": "glow"},
+      {"pos": 0.62, "oklch": [0.60, 0.16,  54], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.30, 0.10,  42], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 185], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Verdigris Lantern",
+    "mood": "high-key pale verdigris field with a deep copper trough as the event; white extremes, no black",
+    "architecture": "duotone-plus",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 182], "role": "field"},
+      {"pos": 0.22, "oklch": [0.70, 0.11, 187], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.19, 0.06,  40], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.60, 0.13,  52], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.86, 0.05,  70], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 182], "role": "field"}
+    ]
+  },
+  {
+    "name": "Copper Forge",
+    "mood": "a single pure heat sweep — black to oxblood to copper to amber to gold to cream; drama is the ramp, no reversal",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02,  40], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.30, 0.10,  35], "role": "anchor"},
+      {"pos": 0.36, "oklch": [0.52, 0.15,  50], "role": "anchor"},
+      {"pos": 0.54, "oklch": [0.66, 0.14,  62], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.80, 0.11,  80], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.95, 0.02,  85], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02,  40], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Oxide Depths",
+    "mood": "a single cool sweep — black to deep petrol to teal to verdigris to foam to white; a pure verdigris ramp, no warm",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 195], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.26, 0.07, 192], "role": "anchor"},
+      {"pos": 0.38, "oklch": [0.46, 0.12, 188], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.64, 0.11, 182], "role": "anchor"},
+      {"pos": 0.78, "oklch": [0.82, 0.07, 178], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.95, 0.02, 180], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 195], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ash to Copper",
+    "mood": "smoky muted warm ramp — smoke umber climbing through soft copper to a low gold glow; one temperature, pulled-back chroma",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.18, 0.03,  50], "role": "ground"},
+      {"pos": 0.24, "oklch": [0.34, 0.07,  45], "role": "mid"},
+      {"pos": 0.48, "oklch": [0.50, 0.11,  55], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.66, 0.10,  68], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.86, 0.05,  82], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.18, 0.03,  50], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Copper Meets Oxide",
+    "mood": "warm copper mass against a cool verdigris mass, bridged by a cream glow (never a seam); temperature tension held at full chroma",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.18, 0.06, 190], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.50, 0.13, 186], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.34, 0.10, 188], "role": "mid"},
+      {"pos": 0.46, "oklch": [0.92, 0.03,  95], "role": "glow"},
+      {"pos": 0.64, "oklch": [0.58, 0.14,  56], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.40, 0.12,  46], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.18, 0.06, 190], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Faded Steel & Rust",
+    "mood": "muted complementary in a high key — pale bone-blue field, a deep rust jewel as the single anchor, steel-teal bridged by cream",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.89, 0.03, 210], "role": "field"},
+      {"pos": 0.18, "oklch": [0.60, 0.08, 198], "role": "anchor"},
+      {"pos": 0.36, "oklch": [0.86, 0.04, 150], "role": "glow"},
+      {"pos": 0.54, "oklch": [0.24, 0.10,  44], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.52, 0.10,  52], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.89, 0.03, 210], "role": "field"}
+    ]
+  },
+  {
+    "name": "Green Fire, Red Ember",
+    "mood": "vivid complementary — deep saturated verdigris against deep saturated rust, jump routed through true white; a small copper cliff for filigree",
+    "architecture": "complementary-tension",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02,  30], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.40, 0.14,  35], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.62, 0.16,  52], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.40, "oklch": [0.44, 0.13,  50], "role": "mid"},
+      {"pos": 0.56, "oklch": [0.96, 0.02, 180], "role": "glow"},
+      {"pos": 0.72, "oklch": [0.56, 0.15, 188], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.32, 0.11, 193], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02,  30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Tarnished Bridge",
+    "mood": "high-key complementary — pale cream field, one deep copper jewel anchor, verdigris returning through a near-white bridge",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.88, 0.03,  90], "role": "field"},
+      {"pos": 0.20, "oklch": [0.70, 0.11,  60], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.24, 0.12,  45], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.90, 0.03, 150], "role": "glow"},
+      {"pos": 0.76, "oklch": [0.66, 0.11, 186], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.88, 0.03,  90], "role": "field"}
+    ]
+  },
+  {
+    "name": "Verdigris Walk",
+    "mood": "an analogous cool-to-warm hue walk — verdigris to green to olive to gold, no reversal; the walk wraps home through the dark",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.05, 185], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.74, 0.12, 178], "role": "glow"},
+      {"pos": 0.34, "oklch": [0.44, 0.13, 150], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.58, 0.12, 120], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.40, 0.13,  95], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.26, 0.09,  85], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.16, 0.05, 185], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ember Analogous",
+    "mood": "a vivid warm hue walk — oxblood to rust to copper to gold, no complement; drama is value plus the warm drift",
+    "architecture": "analogous-drift",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02,  30], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.42, 0.15,  32], "role": "anchor"},
+      {"pos": 0.34, "oklch": [0.24, 0.10,  42], "role": "mid"},
+      {"pos": 0.52, "oklch": [0.66, 0.16,  58], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.78, 0.12,  80], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.40, 0.13,  68], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02,  30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Foam & Olive",
+    "mood": "high-key cool analogous — pale foam field, a deep green jewel trough, verdigris through olive; the dark is the event",
+    "architecture": "analogous-drift",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 185], "role": "field"},
+      {"pos": 0.22, "oklch": [0.64, 0.10, 182], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.30, 0.10, 160], "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.52, 0.11, 140], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.72, 0.09, 120], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 185], "role": "field"}
+    ]
+  },
+  {
+    "name": "Triad Patina",
+    "mood": "three well-separated jewels — verdigris, copper, plum — each flip routed through black or white; a late white peak",
+    "architecture": "triad",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.15, 0.04, 185], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.44, 0.13, 187], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.12, 0.03,  60], "role": "mid"},
+      {"pos": 0.44, "oklch": [0.50, 0.16,  52], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.14, 0.03,  10], "role": "mid"},
+      {"pos": 0.72, "oklch": [0.48, 0.13, 338], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.93, 0.02, 320], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.15, 0.04, 185], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Three-Metal",
+    "mood": "verdigris, copper, and an indigo jewel in balance; a small teal cliff, a white bridge to copper, indigo routed through dark",
+    "architecture": "triad",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.18, 0.05, 190], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.50, 0.13, 186], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.26, "oklch": [0.36, 0.11, 184], "role": "mid"},
+      {"pos": 0.42, "oklch": [0.90, 0.03, 200], "role": "glow"},
+      {"pos": 0.56, "oklch": [0.58, 0.16,  54], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.14, 0.03, 260], "role": "mid"},
+      {"pos": 0.84, "oklch": [0.42, 0.12, 258], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.18, 0.05, 190], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Verdigris, Olive, Copper",
+    "mood": "an in-family triad — verdigris, chartreuse-olive, and copper, each well separated; a cream double-peak, big steps routed clean",
+    "architecture": "triad",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.14, 0.04, 188], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.54, 0.12, 185], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.90, 0.03, 150], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.60, 0.13, 108], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.16, 0.04,  90], "role": "mid"},
+      {"pos": 0.72, "oklch": [0.56, 0.15,  50], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.30, 0.10,  44], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.14, 0.04, 188], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Verdigris & One Spark",
+    "mood": "near-monochrome verdigris across the full value range with a single copper spark; the spark enters and exits through black",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.02, 190], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.72, 0.11, 185], "role": "glow"},
+      {"pos": 0.32, "oklch": [0.48, 0.12, 188], "role": "anchor"},
+      {"pos": 0.50, "oklch": [0.30, 0.08, 192], "role": "mid"},
+      {"pos": 0.62, "oklch": [0.10, 0.03,  60], "role": "mid"},
+      {"pos": 0.74, "oklch": [0.56, 0.14,  52], "role": "accent"},
+      {"pos": 0.88, "oklch": [0.16, 0.05, 190], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.07, 0.02, 190], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Copper Bloom, Teal Fleck",
+    "mood": "near-monochrome copper in a high key — pale cream field, a deep copper jewel, and one small teal fleck routed through a dark",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03,  80], "role": "field"},
+      {"pos": 0.20, "oklch": [0.68, 0.12,  60], "role": "anchor"},
+      {"pos": 0.40, "oklch": [0.30, 0.12,  48], "role": "anchor"},
+      {"pos": 0.56, "oklch": [0.18, 0.04,  90], "role": "mid"},
+      {"pos": 0.68, "oklch": [0.50, 0.12, 188], "role": "accent"},
+      {"pos": 0.84, "oklch": [0.90, 0.03, 150], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03,  80], "role": "field"}
+    ]
+  },
+  {
+    "name": "Pale Verdigris, Copper Heart",
+    "mood": "high-key near-monochrome verdigris with a deep copper heart as the dark event; both hue flips route through the low copper trough",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.03, 182], "role": "field"},
+      {"pos": 0.22, "oklch": [0.66, 0.10, 186], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.18, 0.09,  48], "role": "accent"},
+      {"pos": 0.62, "oklch": [0.60, 0.10, 190], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.78, 0.08, 180], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.90, 0.03, 182], "role": "field"}
+    ]
+  }
+]
