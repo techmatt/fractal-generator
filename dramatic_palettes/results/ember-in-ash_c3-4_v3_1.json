@@ -1,0 +1,337 @@
+[
+  {
+    "name": "Cold Furnace",
+    "mood": "cool smoke-grey ash across a wide value range with one molten-red spark; drama is the saturated ember against a near-achromatic field",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.015, 255], "role": "ground"},
+      {"pos": 0.22, "oklch": [0.32, 0.03,  255], "role": "field", "segment": "cliff"},
+      {"pos": 0.24, "oklch": [0.50, 0.035, 255], "role": "field"},
+      {"pos": 0.5,  "oklch": [0.70, 0.025, 250], "role": "glow"},
+      {"pos": 0.7,  "oklch": [0.55, 0.16,  28],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.10, 0.015, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ashfall",
+    "mood": "pale cool bone field, no black; a single deep ember-red jewel is the dark event; near-monochrome smoke with a warm spark at the trough",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.87, 0.015, 250], "role": "field"},
+      {"pos": 0.22, "oklch": [0.70, 0.02,  250], "role": "field"},
+      {"pos": 0.45, "oklch": [0.45, 0.03,  250], "role": "mid"},
+      {"pos": 0.55, "oklch": [0.30, 0.16,  30],  "role": "anchor"},
+      {"pos": 0.78, "oklch": [0.62, 0.02,  252], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.87, 0.015, 250], "role": "field"}
+    ]
+  },
+  {
+    "name": "Grey Kiln",
+    "mood": "warm-grey smoke over full value with a warm bone glow; the ember-orange stop erupts as pure chroma against the desaturated family",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.14, 0.01, 60], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.35, 0.02, 65], "role": "field"},
+      {"pos": 0.36, "oklch": [0.55, 0.03, 70], "role": "field"},
+      {"pos": 0.5,  "oklch": [0.78, 0.02, 80], "role": "glow"},
+      {"pos": 0.62, "oklch": [0.58, 0.05, 68], "role": "mid"},
+      {"pos": 0.75, "oklch": [0.60, 0.17, 62], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.30, 0.10, 45], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.14, 0.01, 60], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Cinder Veil",
+    "mood": "cool smoke with two light peaks (a cool bone flare and a warm one) and a saturated ember at the second rise; ash monochrome plus a warm spark",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.015, 258], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.55, 0.03,  255], "role": "field"},
+      {"pos": 0.28, "oklch": [0.72, 0.02,  250], "role": "glow"},
+      {"pos": 0.42, "oklch": [0.34, 0.03,  258], "role": "mid"},
+      {"pos": 0.58, "oklch": [0.62, 0.16,  55],  "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.80, 0.05,  70],  "role": "glow"},
+      {"pos": 0.86, "oklch": [0.30, 0.06,  60],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.10, 0.015, 258], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Slow Combustion",
+    "mood": "a pure heat ramp rising out of charcoal: oxblood to ember-red to molten orange to burnt gold to ash-white; single temperature, no reversal",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.01, 30], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.24, 0.10, 28], "role": "field"},
+      {"pos": 0.34, "oklch": [0.42, 0.17, 32], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.58, 0.18, 50], "role": "anchor"},
+      {"pos": 0.70, "oklch": [0.75, 0.15, 75], "role": "anchor"},
+      {"pos": 0.86, "oklch": [0.92, 0.04, 90], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.08, 0.01, 30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Fanned Coals",
+    "mood": "fire flares bright early to a pale-gold flash then a long warm descent back through orange to ember-dark; pure single-temperature sweep",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.03, 40], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.70, 0.16, 70], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.88, 0.05, 85], "role": "glow"},
+      {"pos": 0.55, "oklch": [0.55, 0.17, 45], "role": "anchor"},
+      {"pos": 0.78, "oklch": [0.34, 0.14, 32], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.16, 0.03, 40], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Buried Fire",
+    "mood": "a smouldering red-dominant heat ramp mostly buried in charcoal; deep oxblood to ember-red to rust with a dim amber-cream glow; ashier, redder fire",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.02, 28], "role": "ground"},
+      {"pos": 0.26, "oklch": [0.28, 0.11, 28], "role": "field"},
+      {"pos": 0.5,  "oklch": [0.44, 0.16, 32], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.60, 0.14, 48], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.74, 0.06, 65], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.10, 0.02, 28], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Coal & Coal-Fire",
+    "mood": "pale field, no black; steel smoke-blue and ember-orange as the two hues with a deep cobalt jewel as the dark event; white flare bridges the hues",
+    "architecture": "duotone-plus",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.02,  250], "role": "field"},
+      {"pos": 0.2,  "oklch": [0.55, 0.14,  255], "role": "anchor"},
+      {"pos": 0.4,  "oklch": [0.22, 0.09,  258], "role": "anchor"},
+      {"pos": 0.5,  "oklch": [0.96, 0.005, 250], "role": "glow"},
+      {"pos": 0.72, "oklch": [0.60, 0.17,  45],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.90, 0.02,  250], "role": "field"}
+    ]
+  },
+  {
+    "name": "Struck Flint",
+    "mood": "smoke-teal and ember-orange against true black and a white flare; a small ash-value cliff on the teal, the big hue jump routed through white",
+    "architecture": "duotone-plus",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 200], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.40, 0.10, 200], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.2,  "oklch": [0.56, 0.11, 200], "role": "field"},
+      {"pos": 0.42, "oklch": [0.95, 0.01, 210], "role": "glow"},
+      {"pos": 0.66, "oklch": [0.62, 0.18, 55],  "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.24, 0.12, 35],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Two Fires, One Cold",
+    "mood": "cobalt smoke against ember red-orange, black and a white flare; the cobalt peaks early, the ember falls back into cold ash; jump routed through white",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-early",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.02, 258], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.52, 0.16, 258], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.94, 0.01, 250], "role": "glow"},
+      {"pos": 0.5,  "oklch": [0.66, 0.17, 40],  "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.30, 0.12, 30],  "role": "mid"},
+      {"pos": 0.8,  "oklch": [0.16, 0.04, 260], "role": "field"},
+      {"pos": 1.0,  "oklch": [0.10, 0.02, 258], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ash Divide",
+    "mood": "deep cobalt-smoke mass against an ember-orange mass, bridged by a warm cream glow (never a cliff); real temperature tension with chroma held across the swing",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.12, 0.03, 255], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.50, 0.13, 255], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.30, 0.07, 250], "role": "field"},
+      {"pos": 0.5,  "oklch": [0.90, 0.03, 85],  "role": "glow"},
+      {"pos": 0.66, "oklch": [0.60, 0.16, 55],  "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.34, 0.13, 38],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.12, 0.03, 255], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Steel & Coals",
+    "mood": "deep petrol-teal cool mass against a vivid ember warm mass, a bone glow bridging; two light peaks over black ash, temperature tension for real",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 200], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.66, 0.10, 200], "role": "glow"},
+      {"pos": 0.32, "oklch": [0.36, 0.13, 200], "role": "anchor"},
+      {"pos": 0.48, "oklch": [0.90, 0.02, 90],  "role": "glow"},
+      {"pos": 0.64, "oklch": [0.58, 0.17, 45],  "role": "anchor"},
+      {"pos": 0.8,  "oklch": [0.28, 0.13, 32],  "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 200], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Rust Against Slate",
+    "mood": "the deliberately muted tension: steel-blue slate against muted copper, routed through a dark shadow, resolving to a dim cream glow late; ashy, restrained",
+    "architecture": "complementary-tension",
+    "skeleton": "peak-late",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.14, 0.03, 250], "role": "ground"},
+      {"pos": 0.2,  "oklch": [0.44, 0.07, 250], "role": "field"},
+      {"pos": 0.38, "oklch": [0.18, 0.03, 255], "role": "mid"},
+      {"pos": 0.56, "oklch": [0.46, 0.10, 45],  "role": "anchor"},
+      {"pos": 0.78, "oklch": [0.84, 0.05, 78],  "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.14, 0.03, 250], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Coldhearth",
+    "mood": "pale cool field, no black; a deep cobalt jewel and an ember warm anchor bridged by a white flare, with a small ash cliff on the cool side; high-key temperature tension",
+    "architecture": "complementary-tension",
+    "skeleton": "cliff-in-mids",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.89, 0.02, 250], "role": "field"},
+      {"pos": 0.16, "oklch": [0.62, 0.08, 252], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.18, "oklch": [0.44, 0.09, 255], "role": "field"},
+      {"pos": 0.4,  "oklch": [0.28, 0.11, 258], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.92, 0.02, 250], "role": "glow"},
+      {"pos": 0.76, "oklch": [0.62, 0.15, 50],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.89, 0.02, 250], "role": "field"}
+    ]
+  },
+  {
+    "name": "Smoke to Ember",
+    "mood": "a warm hue-walk rising out of charcoal: oxblood to rust to orange to gold, dipping once at a deep ember trough; drama is value plus the analogous march, no reversal",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.02, 55], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.44, 0.10, 40], "role": "field"},
+      {"pos": 0.34, "oklch": [0.28, 0.13, 32], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.56, 0.16, 50], "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.78, 0.13, 78], "role": "anchor"},
+      {"pos": 0.88, "oklch": [0.90, 0.04, 90], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.10, 0.02, 55], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Bank of Coals",
+    "mood": "a muted warm walk over two light peaks: rust to oxblood-trough to amber to ochre-gold; ashy, browner embers held in balance, no temperature reversal",
+    "architecture": "analogous-drift",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.12, 0.02, 35], "role": "ground"},
+      {"pos": 0.2,  "oklch": [0.54, 0.09, 45], "role": "anchor"},
+      {"pos": 0.36, "oklch": [0.30, 0.11, 30], "role": "anchor"},
+      {"pos": 0.54, "oklch": [0.72, 0.11, 62], "role": "anchor"},
+      {"pos": 0.74, "oklch": [0.44, 0.08, 85], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.12, 0.02, 35], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Pale Ember Wash",
+    "mood": "pale cream-peach field, no black, with a deep ember-red as the dark event; a warm analogous field descending into one saturated coal",
+    "architecture": "analogous-drift",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.02, 75], "role": "field"},
+      {"pos": 0.2,  "oklch": [0.74, 0.06, 60], "role": "field"},
+      {"pos": 0.42, "oklch": [0.48, 0.12, 45], "role": "anchor"},
+      {"pos": 0.54, "oklch": [0.30, 0.16, 30], "role": "anchor"},
+      {"pos": 0.76, "oklch": [0.66, 0.07, 68], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.90, 0.02, 75], "role": "field"}
+    ]
+  },
+  {
+    "name": "Three Coals",
+    "mood": "a triad of deep plum, petrol-teal and ember-orange against black ash, each hue jump routed through near-black or a white flare; polychromatic breadth",
+    "architecture": "triad",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.02, 335], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.44, 0.13, 335], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.14, 0.03, 200], "role": "mid"},
+      {"pos": 0.46, "oklch": [0.56, 0.13, 195], "role": "anchor"},
+      {"pos": 0.6,  "oklch": [0.94, 0.01, 90],  "role": "glow"},
+      {"pos": 0.78, "oklch": [0.62, 0.17, 55],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.10, 0.02, 335], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Fen Fire",
+    "mood": "teal, ember-gold and oxblood-red as three coals against black; a small teal cliff, a white flare and near-black shadows routing every big hue jump",
+    "architecture": "triad",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 190], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.46, 0.12, 190], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.2,  "oklch": [0.62, 0.12, 192], "role": "field"},
+      {"pos": 0.36, "oklch": [0.94, 0.01, 90],  "role": "glow"},
+      {"pos": 0.54, "oklch": [0.66, 0.15, 88],  "role": "anchor"},
+      {"pos": 0.72, "oklch": [0.16, 0.03, 30],  "role": "mid"},
+      {"pos": 0.84, "oklch": [0.42, 0.16, 28],  "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 190], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Marsh Lantern",
+    "mood": "a muted triad of smoke-teal, ember-rust and dusky plum showing as three colored bursts against charcoal, each separated by near-black; teal flares early",
+    "architecture": "triad",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.10, 0.02, 200], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.68, 0.09, 195], "role": "anchor"},
+      {"pos": 0.3,  "oklch": [0.12, 0.02, 195], "role": "field"},
+      {"pos": 0.46, "oklch": [0.46, 0.11, 40],  "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.12, 0.02, 40],  "role": "mid"},
+      {"pos": 0.78, "oklch": [0.42, 0.10, 330], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.10, 0.02, 200], "role": "ground"}
+    ]
+  }
+]

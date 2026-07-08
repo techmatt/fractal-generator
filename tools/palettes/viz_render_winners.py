@@ -1,24 +1,26 @@
-"""viz_render, retargeted from whq3_000 onto 3 random emit_v1 winners.
+"""viz_render, retargeted from whq3_000 onto 3 emit_v1 winners, across every batch.
 
 Reuses the `viz_render` sheet harness **verbatim** — tile size, preview
 resolution/supersample, downsample filter, `densify_palette` call, layout
 constants, and the dump-ONCE / recolor-many cached-field pattern (`viz_render.recolor`
-is imported and called unchanged). Exactly two behavioural changes vs viz_render:
+is imported and called unchanged). Behavioural changes vs viz_render:
 
-  1. Location set: instead of the single fixed whq3_000, pick **3 emit_v1 winners at
-     random** (seeded RNG, default seed 0) and emit **one sheet file per winner**.
-     The winners are emit_v1's selected picks (`emit_v1.build_and_select`) — the same
-     set its manifest.jsonl records; each carries its own coords / render block, which
-     is all we borrow (the palettes tested are the fire-ice batch, not the winner's).
-  2. Cycle set: sweep **n_cycles in {1, 2, 3, 4}** (viz_render does {2, 3, 4}).
+  1. Location set: instead of the single fixed whq3_000, pick **3 emit_v1 winners**
+     (seeded RNG, default seed 0). The winners are emit_v1's selected picks
+     (`emit_v1.build_and_select`) — the same set its manifest.jsonl records; each
+     carries its own coords / render block, which is all we borrow. A **diversity
+     pass** drops near-duplicate winners (same family + adjacent c-plane center) so
+     the three sheets show visually distinct fractals, topping up from the pool.
+  2. Palette set: sweep **every** `results/*.json` batch (viz_render's own input),
+     not just fire-ice. Each (batch × winner) pair emits its own sheet, filename
+     **prefixed with the batch stem** (`<batch>_winner<i>.png`) so the cross product
+     never collides.
+  3. Cycle set: sweep **n_cycles in {1, 2, 3, 4}** (viz_render does {2, 3, 4}).
 
 The smooth field is a pure function of (location, geometry, maxiter) and is invariant
-to both palette and n_cycles, so it is dumped **once per winner** and reused across
-all 20 palettes x 4 cycles — the n_cycles=1 addition is just one more `recolor` call
-over the already-cached field, never a re-dump (asserted below via a dump counter).
-
-Palettes: dramatic_palettes/results/fire-ice_c3-4_v3_1.json (whole batch), through the
-same densify path viz_render uses.
+to both palette and n_cycles, so it is dumped **once per winner** up front and reused
+across every batch × palette × cycle — never re-dumped per batch (tracked by a dump
+counter that must stay at N_WINNERS).
 
 Usage:
     uv run python -u tools/palettes/viz_render_winners.py
@@ -50,10 +52,11 @@ import location as loc_mod                            # noqa: E402  render_one_f
 from densify_authored import densify_palette          # noqa: E402  OKLCH densifier (W=0.08 default)
 from preview_render import font, lut_strip            # noqa: E402  shared label helpers
 
-# ---- the two changes ------------------------------------------------------- #
-CYCLES = (1, 2, 3, 4)                                  # change 2: add the single-pass column
-PALETTES_JSON = ROOT / "dramatic_palettes" / "results" / "fire-ice_c3-4_v3_1.json"
+# ---- the changes ----------------------------------------------------------- #
+CYCLES = (1, 2, 3, 4)                                  # change 3: add the single-pass column
+RESULTS_DIR = ROOT / "dramatic_palettes" / "results"  # change 2: sweep every batch
 N_WINNERS = 3                                          # change 1: 3 emit_v1 winners
+DIVERSITY_TOL = 0.05                                   # c-plane center dist below which same-family winners are dupes
 
 VIZ_DIR = ROOT / "dramatic_palettes" / "viz_render_winners"
 FIELDS_DIR = ROOT / "out" / "palette_viz_render" / "fields"   # shared disposable field cache
@@ -133,13 +136,46 @@ def sheet_for_winner(palettes: list[dict], field: cm.FieldData, prep: cm.Stretch
     img.save(out)
 
 
+def _loc_key(c):
+    """(family, cx, cy) for a winner candidate — the diversity-filter coordinate."""
+    l = loc_mod.from_render_block(c.meta["row"]["render"])
+    return l.family, float(l.cx), float(l.cy)
+
+
+def _too_similar(a, b) -> bool:
+    """Near-duplicate winners: same family AND c-plane centers within DIVERSITY_TOL."""
+    (fa, ax, ay), (fb, bx, by) = a, b
+    return fa == fb and ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 < DIVERSITY_TOL
+
+
 def pick_winners(seed: int, n: int):
-    """emit_v1's selected picks == its manifest winners. Seeded random n-subset."""
+    """emit_v1's selected picks == its manifest winners. Seeded random n-subset, then a
+    diversity pass drops near-duplicate locations (same family + adjacent center) so the
+    sheets show visually distinct fractals — topping up from the rest of the seeded pool.
+    The first non-duplicate picks are preserved, so only colliding winners get swapped."""
     import emit_v1
     picks, _res, _n_pass = emit_v1.build_and_select(emit_v1.POOL_DEFAULT, emit_v1.GATE_THRESHOLD)
     if len(picks) < n:
         raise RuntimeError(f"only {len(picks)} winners available, need {n}")
-    chosen = random.Random(seed).sample(picks, n)
+    rng = random.Random(seed)
+    base = rng.sample(picks, n)                          # original seeded pick (winner0/1 preserved)
+    chosen, keys = [], []
+    for c in base:                                       # keep first occurrence, drop near-dups
+        k = _loc_key(c)
+        if any(_too_similar(k, kk) for kk in keys):
+            continue
+        chosen.append(c); keys.append(k)
+    if len(chosen) < n:                                  # top up with distinct pool locations
+        seen = {c.location_id for c in base}
+        for c in rng.sample(picks, len(picks)):
+            if c.location_id in seen:
+                continue
+            k = _loc_key(c)
+            if any(_too_similar(k, kk) for kk in keys):
+                continue
+            chosen.append(c); keys.append(k); seen.add(c.location_id)
+            if len(chosen) == n:
+                break
     return chosen
 
 
@@ -147,7 +183,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=0, help="RNG seed for winner selection")
-    ap.add_argument("--palettes", type=Path, default=PALETTES_JSON)
+    ap.add_argument("--results", type=Path, default=RESULTS_DIR, help="dir of palette batch JSONs")
     ap.add_argument("--viz", type=Path, default=VIZ_DIR)
     ap.add_argument("--filter", default="box", choices=["box", "mitchell", "lanczos3"],
                     help="downsample AA filter (default box; lanczos3 = production emit)")
@@ -158,31 +194,42 @@ def main() -> None:
         except (AttributeError, ValueError):
             pass
 
-    palettes = json.loads(args.palettes.read_text())
-    print(f"palettes: {args.palettes.name} ({len(palettes)} palettes)  ·  cycles {CYCLES}  ·  filter {args.filter}\n")
+    srcs = sorted(args.results.glob("*.json"))
+    if not srcs:
+        print(f"no results files under {args.results}")
+        return
+    print(f"batches: {len(srcs)} under {args.results.name}  ·  cycles {CYCLES}  ·  filter {args.filter}\n")
 
     winners = pick_winners(args.seed, N_WINNERS)
-    print(f"\n=== winner selection ===\nseed = {args.seed}")
+    print(f"\n=== winner selection ===\nseed = {args.seed}  (diversity tol = {DIVERSITY_TOL})")
     for i, c in enumerate(winners):
         print(f"  winner[{i}]  key = {c.location_id}")
         print(f"             image_id={c.image_id}  family={c.family}  p_ge3={c.meta['p_ge3']:.3f}")
     print()
 
+    # Dump each winner's field ONCE up front, reused across every batch × palette × cycle.
     dump_counter: list = []
+    wf = []
     for i, c in enumerate(winners):
         loc = loc_mod.from_render_block(c.meta["row"]["render"])
-        n_before = len(dump_counter)
         field = ensure_field(loc, dump_counter)
-        prep = cm.stretch_field(field)                            # one percentile sort, reused across all recolors
-        # confirm the n_cycles=1 addition did not force a second dump for this winner.
-        assert len(dump_counter) - n_before <= 1, "winner triggered >1 field dump"
-        stem = f"winner{i}_{loc.family}_{c.image_id}"
-        out = args.viz / f"{stem}.png"
-        title = f"{stem}   ·   {loc.family}   ·   {args.filter}   ·   n_cycles {'/'.join(map(str, CYCLES))}"
-        sheet_for_winner(palettes, field, prep, out, args.filter, title)
-        print(f"  BUILT {out.relative_to(ROOT)}  ({len(palettes)} palettes x {len(CYCLES)} cycles, 1 field dump)")
+        prep = cm.stretch_field(field)                            # one percentile sort per winner
+        wf.append((loc, field, prep, c))
+    assert len(dump_counter) <= N_WINNERS, "more field dumps than winners — cache key drift"
 
-    print(f"\ndone: {len(winners)} winner sheet(s) -> {args.viz.relative_to(ROOT)}  "
+    built = 0
+    for src in srcs:
+        palettes = json.loads(src.read_text())
+        for i, (loc, field, prep, c) in enumerate(wf):
+            stem = f"{src.stem}_winner{i}"                        # batch-prefixed → unique per (batch, winner)
+            out = args.viz / f"{stem}.png"
+            title = (f"{stem}   ·   {loc.family} {c.image_id}   ·   {args.filter}"
+                     f"   ·   n_cycles {'/'.join(map(str, CYCLES))}")
+            sheet_for_winner(palettes, field, prep, out, args.filter, title)
+            built += 1
+        print(f"  BUILT {src.stem}: {len(wf)} winner sheet(s) x {len(palettes)} palettes x {len(CYCLES)} cycles")
+
+    print(f"\ndone: {built} sheet(s) -> {args.viz.relative_to(ROOT)}  "
           f"({len(dump_counter)} field dump(s) total)")
 
 
