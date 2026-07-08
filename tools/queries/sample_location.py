@@ -235,13 +235,83 @@ def score_recolor(fld, cfg, lib, prep, coarse, profile=None):
 # gen-0 palette draw — feature-space farthest-point over the 777 pool.
 # ===========================================================================
 
+# gen-0 source composition — FIXED FRACTIONS of N_GEN0 (not hardcoded integers), so a
+# future N_GEN0 bump re-splits by weight rather than by frozen counts. Buckets are the
+# pool record's `source`. At N_GEN0=60 these round (largest-remainder, below) to
+# dramatic 45 / curated_q3 5 / curated_q2 3 / extracted 7.
+GEN0_SOURCE_WEIGHTS = {
+    "dramatic":   0.75,
+    "curated_q3": 0.0833,
+    "curated_q2": 0.05,
+    "extracted":  0.1167,
+}
+
+
+def _hamilton_apportion(weights, N):
+    """Largest-remainder (Hamilton) apportionment of N integer slots over `weights`:
+    floor(w/Σw·N) each, then hand the leftover slots to the largest fractional remainders.
+    Ties broken by the buckets' order in `weights` so the split is deterministic."""
+    order = list(weights.keys())
+    wsum = sum(weights.values())
+    raw = {b: weights[b] / wsum * N for b in order}
+    base = {b: int(math.floor(raw[b])) for b in order}
+    leftover = N - sum(base.values())
+    frac_order = sorted(order, key=lambda b: (-(raw[b] - math.floor(raw[b])), order.index(b)))
+    for b in frac_order[:leftover]:
+        base[b] += 1
+    return base
+
+
+def _source_quotas(weights, N, avail):
+    """Per-bucket gen-0 quotas: largest-remainder (Hamilton) over `weights`, each capped at
+    that bucket's `avail` count. A capped (underfilled) bucket's shortfall is redistributed
+    across the remaining non-exhausted buckets by the SAME weight-proportional
+    largest-remainder pass, iterated until no bucket exceeds its availability. Emits fewer
+    than N only when the TOTAL available across buckets is < N. (No bucket underfills at
+    N_GEN0=60 today — this loop is robustness for a future weight/N change.)"""
+    N = min(N, sum(avail.values()))
+    final = {b: 0 for b in weights}
+    active = [b for b in weights if weights[b] > 0 and avail[b] > 0]
+    remaining = N
+    while active and remaining > 0:
+        quota = _hamilton_apportion({b: weights[b] for b in active}, remaining)
+        overflow = [b for b in active if quota[b] > avail[b]]
+        if not overflow:                      # everyone fits -> commit and finish
+            for b in active:
+                final[b] += quota[b]
+            break
+        for b in overflow:                    # cap the exhausted buckets, redistribute rest
+            final[b] = avail[b]
+            remaining -= avail[b]
+            active.remove(b)
+    return final
+
+
 def gen0_palettes(sampler, k):
-    """`k` palette names spread by farthest-point over palette-FEATURE space (OKLab
-    trajectory distance_matrix, NOT render space). Deterministic (FP seeds on the two
-    most-distant), so gen-0 palette coverage is identical across locations by design."""
+    """`k` palette names with a FIXED source composition (GEN0_SOURCE_WEIGHTS), farthest-
+    point WITHIN each source bucket. Buckets are the pool record's `source`
+    (dramatic / curated_q3 / curated_q2 / extracted); per-bucket quotas are largest-
+    remainder over the weights with underfill redistribution (`_source_quotas`). Each
+    bucket's slots are drawn by feature-space FP over that bucket ALONE (OKLab trajectory
+    distance_matrix), so every source stays internally diverse AND dramatic palettes get a
+    guaranteed share instead of whatever the global feature space happens to give them.
+    Deterministic (same location -> same k, fixed bucket order). Returns the full-pool
+    distance matrix `D` (over `names`) for the spread report."""
     names = [n for n in sampler.feats if n in sampler.library.colormaps]
-    D = pf.distance_matrix(sampler.feats, names)
-    return pf.farthest_point_order(names, k=k, dmat=D), names, D
+    D = pf.distance_matrix(sampler.feats, names)   # full matrix — for gen0_spread only
+    buckets = {}                                   # source -> [names], in `names` order
+    for n in names:
+        buckets.setdefault(sampler.source_of(n), []).append(n)
+    avail = {b: len(buckets.get(b, [])) for b in GEN0_SOURCE_WEIGHTS}
+    quotas = _source_quotas(GEN0_SOURCE_WEIGHTS, k, avail)
+    sel = []
+    for b in GEN0_SOURCE_WEIGHTS:                  # fixed bucket order -> deterministic
+        names_b, k_b = buckets.get(b, []), quotas[b]
+        if k_b <= 0 or not names_b:
+            continue
+        dmat_b = pf.distance_matrix(sampler.feats, names_b)
+        sel.extend(pf.farthest_point_order(names_b, k=k_b, dmat=dmat_b))
+    return sel, names, D
 
 
 def gen0_spread(sel_names, all_names, D):
@@ -311,6 +381,7 @@ def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False
         keep = set(order)
         all_candidates = [
             {"palette": gen0_cfgs[i].palette, "palette_type": lib.palette_type(gen0_cfgs[i].palette),
+             "palette_source": sampler.source_of(gen0_cfgs[i].palette),
              "gen": 0, "lineage": gen0_cfgs[i].palette, "score": float(gen0_scores[i]),
              "survivor": i in keep, "config": gen0_cfgs[i]}
             for i in range(len(gen0_cfgs))
@@ -348,6 +419,7 @@ def run_location(label, ref, lib, sampler, model, device, seed, retain_all=False
                 for (l, cfg, _img), s in zip(variants, vscores):
                     all_candidates.append(
                         {"palette": l["palette"], "palette_type": l["ptype"],
+                         "palette_source": sampler.source_of(l["palette"]),
                          "gen": r, "lineage": l["palette"], "score": float(s),
                          "survivor": True, "config": cfg})
             per_lin = {}

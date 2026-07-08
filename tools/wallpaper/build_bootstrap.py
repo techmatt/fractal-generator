@@ -315,6 +315,7 @@ def provenance_block(spec, loc, role, source_row, pick):
     cfg = pick["config"]
     params = {
         "palette": cfg.palette, "palette_type": pick["palette_type"],
+        "palette_source": pick.get("palette_source"),  # pool `source` bucket (dramatic/curated_*/extracted); absent-reads-None on old records
         "reverse": cfg.reverse, "log_premap": cfg.log_premap, "gamma": cfg.gamma,
         "phase": cfg.phase, "n_cycles": cfg.n_cycles,
         "transfer": cfg.transfer, "transfer_gamma": cfg.transfer_gamma,
