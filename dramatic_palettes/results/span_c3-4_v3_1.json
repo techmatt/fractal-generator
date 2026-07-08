@@ -155,7 +155,7 @@
     ]
   },
   {
-    "name": "Opal Drift",
+    "name": "Opal Aqua Drift",
     "mood": "opalescent drift — pale lilac through periwinkle, sky and mint with one deep aqua jewel anchoring in place of black and a pale peach glint; no true dark, iridescent and cool",
     "architecture": "analogous-drift",
     "skeleton": "no-cliff",
@@ -173,7 +173,7 @@
     ]
   },
   {
-    "name": "Ember Orchard",
+    "name": "Oxblood Orchard",
     "mood": "a warm analogous walk — oxblood through red, orange and burnt gold to a cream peak, falling back through rust to umber; no complement, drama is value plus the hue walk",
     "architecture": "analogous-drift",
     "skeleton": "peak-early",
@@ -191,7 +191,7 @@
     ]
   },
   {
-    "name": "Indigo to Foam",
+    "name": "Indigo Teal Crests",
     "mood": "a cool analogous drift — deep indigo through bright blue to green-teal, two lightness crests over a dark teal trough; no warm note, drama is the value arc and the hue walk",
     "architecture": "analogous-drift",
     "skeleton": "double-peak",
@@ -292,7 +292,7 @@
     ]
   },
   {
-    "name": "Ember in Ash",
+    "name": "Ember in Smoke",
     "mood": "smoke and ash-grey across the value range with one fierce ember-orange event, dropped crisply back into smoke; near-monochrome with a single hot spark",
     "architecture": "near-monochrome-spark",
     "skeleton": "cliff-in-mids",

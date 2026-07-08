@@ -18,7 +18,7 @@
     ]
   },
   {
-    "name": "Forge Ascending",
+    "name": "Forge to White",
     "mood": "a single pure heat ramp black to red to orange to gold to white; drama is the value+chroma sweep, no reversal",
     "architecture": "mono-temperature-ramp",
     "skeleton": "peak-late",
@@ -223,7 +223,7 @@
     ]
   },
   {
-    "name": "Candle & Wine",
+    "name": "Wine & Slate Candle",
     "mood": "deep wine and dusty rose, routed through near-black to slate-blue, a bone-cream candle glow; muted, candlelit, two soft peaks",
     "architecture": "analogous-drift",
     "skeleton": "double-peak",
