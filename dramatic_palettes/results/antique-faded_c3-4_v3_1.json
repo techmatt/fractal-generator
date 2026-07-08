@@ -1,0 +1,347 @@
+[
+  {
+    "name": "Bone Vault",
+    "mood": "wine and slate on a pale bone field; the drama is the deep oxblood trough dropping out of a candlelit room — two hues meeting only through black and bone",
+    "architecture": "duotone-plus",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.90, 0.02,  60], "role": "glow"},
+      {"pos": 0.20, "oklch": [0.80, 0.045, 255], "role": "field"},
+      {"pos": 0.40, "oklch": [0.50, 0.07,  258], "role": "anchor"},
+      {"pos": 0.55, "oklch": [0.19, 0.11,   24], "role": "anchor"},
+      {"pos": 0.75, "oklch": [0.62, 0.06,   20], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.90, 0.02,   60], "role": "glow"}
+    ]
+  },
+  {
+    "name": "Burgundy & Coal",
+    "mood": "deep saturated burgundy rising off true black to a bone flare, then slate falling back into black — a vivid two-hue poster with no bridge but light and dark",
+    "architecture": "duotone-plus",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.01,  25], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.34, 0.15,  22], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.48, 0.11,  20], "role": "anchor"},
+      {"pos": 0.46, "oklch": [0.40, 0.09,  22], "role": "mid"},
+      {"pos": 0.60, "oklch": [0.70, 0.05,  26], "role": "mid"},
+      {"pos": 0.74, "oklch": [0.93, 0.02,  72], "role": "glow"},
+      {"pos": 0.88, "oklch": [0.52, 0.07, 258], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.08, 0.01,  25], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Twin Sconces",
+    "mood": "burgundy peak and slate peak flanking a dark shadow trough; two candle-glows, one warm one cool, the hue swap hidden in the dark between them",
+    "architecture": "duotone-plus",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.30, 0.14,  24], "role": "anchor"},
+      {"pos": 0.16, "oklch": [0.86, 0.03,  40], "role": "glow"},
+      {"pos": 0.32, "oklch": [0.50, 0.09,  22], "role": "anchor"},
+      {"pos": 0.48, "oklch": [0.16, 0.05,  20], "role": "mid"},
+      {"pos": 0.62, "oklch": [0.46, 0.07, 258], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.88, 0.025, 250], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.30, 0.14,  24], "role": "anchor"}
+    ]
+  },
+  {
+    "name": "Candle Ramp",
+    "mood": "a single warm sweep — black to oxblood to wine to dusty rose to a warm bone glow — pure value climb, no reversal",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-late",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.01,  30], "role": "ground"},
+      {"pos": 0.20, "oklch": [0.30, 0.12,  26], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.48, 0.12,  22], "role": "anchor"},
+      {"pos": 0.62, "oklch": [0.68, 0.08,  24], "role": "mid"},
+      {"pos": 0.80, "oklch": [0.90, 0.03,  60], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.07, 0.01,  30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Cold Sconce",
+    "mood": "a single cool sweep peaking early — near-black navy up to a pale ice bone, then a long slate descent back into the dark; the ice counterpart to the candle ramp",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "peak-early",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.02, 262], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.55, 0.07, 258], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.88, 0.025, 250], "role": "glow"},
+      {"pos": 0.48, "oklch": [0.62, 0.06, 256], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.42, 0.075, 260], "role": "anchor"},
+      {"pos": 0.82, "oklch": [0.24, 0.06, 264], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.08, 0.02, 262], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Umber to Gold",
+    "mood": "deep umber climbing through oxblood and rust into a muted candle-gold and cream; a warm mineral ramp that never cools",
+    "architecture": "mono-temperature-ramp",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.04,  40], "role": "ground"},
+      {"pos": 0.22, "oklch": [0.34, 0.12,  28], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.52, 0.13,  45], "role": "anchor"},
+      {"pos": 0.66, "oklch": [0.72, 0.10,  78], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.90, 0.035, 85], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.16, 0.04,  40], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Drape & Shadow",
+    "mood": "the classic tension — a wine drape against a slate shadow, bridged by a warm bone candle-glow; both hues sink into a shared near-black corner",
+    "architecture": "complementary-tension",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.13, 0.03,  22], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.36, 0.11,  24], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.28, 0.09,  22], "role": "mid"},
+      {"pos": 0.46, "oklch": [0.62, 0.07,  24], "role": "mid"},
+      {"pos": 0.60, "oklch": [0.90, 0.03,  65], "role": "glow"},
+      {"pos": 0.80, "oklch": [0.42, 0.075, 258], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.13, 0.03,  22], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Ember Against Steel",
+    "mood": "deep saturated burgundy versus deep saturated slate, each with its own glow, troughs down to true black; tension pushed to the vivid edge of the mood",
+    "architecture": "complementary-tension",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.01,  25], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.38, 0.15,  22], "role": "anchor"},
+      {"pos": 0.28, "oklch": [0.72, 0.06,  26], "role": "mid"},
+      {"pos": 0.40, "oklch": [0.91, 0.025, 70], "role": "glow"},
+      {"pos": 0.54, "oklch": [0.50, 0.08, 258], "role": "anchor"},
+      {"pos": 0.68, "oklch": [0.20, 0.055, 262], "role": "mid"},
+      {"pos": 0.82, "oklch": [0.86, 0.03, 248], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.07, 0.01,  25], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Faded Salon",
+    "mood": "a pale candlelit salon with two deep jewels set into it — a wine and a slate — bright early, no blacks; warm against cool held apart by the pale field",
+    "architecture": "complementary-tension",
+    "skeleton": "peak-early",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.86, 0.03,  60], "role": "field"},
+      {"pos": 0.14, "oklch": [0.93, 0.02,  72], "role": "glow"},
+      {"pos": 0.30, "oklch": [0.60, 0.07,  22], "role": "anchor"},
+      {"pos": 0.44, "oklch": [0.26, 0.13,  24], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.50, 0.06,  20], "role": "mid"},
+      {"pos": 0.70, "oklch": [0.78, 0.035, 255], "role": "field"},
+      {"pos": 0.84, "oklch": [0.40, 0.08, 260], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.86, 0.03,  60], "role": "field"}
+    ]
+  },
+  {
+    "name": "Wine Step",
+    "mood": "wine warmth against a slate cool, with one crisp small step up the wine before the bone glow; the temperature swap runs through bone and near-black",
+    "architecture": "complementary-tension",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.15, 0.04,  22], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.40, 0.11,  24], "role": "anchor"},
+      {"pos": 0.36, "oklch": [0.55, 0.09,  22], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.40, "oklch": [0.70, 0.06,  20], "role": "mid"},
+      {"pos": 0.56, "oklch": [0.91, 0.025, 62], "role": "glow"},
+      {"pos": 0.74, "oklch": [0.46, 0.08, 258], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.15, 0.04,  22], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Plum Walk",
+    "mood": "a walk along the warm edge — oxblood to wine to plum to dusty violet, no complement, no reversal; a single lilac glow lifts the middle",
+    "architecture": "analogous-drift",
+    "skeleton": "no-cliff",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.13, 0.03, 345], "role": "ground"},
+      {"pos": 0.14, "oklch": [0.34, 0.10,  25], "role": "anchor"},
+      {"pos": 0.28, "oklch": [0.26, 0.09,  20], "role": "mid"},
+      {"pos": 0.44, "oklch": [0.52, 0.10,  18], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.72, 0.06, 356], "role": "mid"},
+      {"pos": 0.70, "oklch": [0.89, 0.025, 325], "role": "glow"},
+      {"pos": 0.85, "oklch": [0.50, 0.065, 300], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.13, 0.03, 345], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Periwinkle Room",
+    "mood": "a pale slate room drifting through periwinkle toward lilac, one deep navy jewel set as the dark; cool analogous walk, no blacks",
+    "architecture": "analogous-drift",
+    "skeleton": "peak-late",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.84, 0.03, 250], "role": "field"},
+      {"pos": 0.20, "oklch": [0.70, 0.05, 258], "role": "mid"},
+      {"pos": 0.40, "oklch": [0.30, 0.08, 265], "role": "anchor"},
+      {"pos": 0.58, "oklch": [0.52, 0.07, 290], "role": "mid"},
+      {"pos": 0.78, "oklch": [0.90, 0.025, 300], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.84, 0.03, 250], "role": "field"}
+    ]
+  },
+  {
+    "name": "Rust to Plum",
+    "mood": "a warm drift from rust through oxblood to plum and mauve, two candle-glows lifting it, true black between; the hue walks while the value pulses",
+    "architecture": "analogous-drift",
+    "skeleton": "double-peak",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.01,  30], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.40, 0.13,  45], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.88, 0.035, 78], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.38, 0.11,  28], "role": "anchor"},
+      {"pos": 0.56, "oklch": [0.18, 0.06,  20], "role": "mid"},
+      {"pos": 0.70, "oklch": [0.52, 0.09, 356], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.86, 0.03, 340], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.07, 0.01,  30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Three Candles",
+    "mood": "wine, muted candle-gold, and slate held in balance — a polychromatic antique triad, each hue reached only through cream or the dark",
+    "architecture": "triad",
+    "skeleton": "double-peak",
+    "value_key": "mid",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.28, 0.13,  24], "role": "anchor"},
+      {"pos": 0.16, "oklch": [0.50, 0.09,  22], "role": "mid"},
+      {"pos": 0.30, "oklch": [0.90, 0.03,  80], "role": "glow"},
+      {"pos": 0.44, "oklch": [0.66, 0.09,  85], "role": "anchor"},
+      {"pos": 0.56, "oklch": [0.18, 0.05, 100], "role": "mid"},
+      {"pos": 0.70, "oklch": [0.44, 0.08, 258], "role": "anchor"},
+      {"pos": 0.84, "oklch": [0.88, 0.025, 250], "role": "glow"},
+      {"pos": 1.0,  "oklch": [0.28, 0.13,  24], "role": "anchor"}
+    ]
+  },
+  {
+    "name": "Gilt Triad",
+    "mood": "wine, gilt gold, and slate off true black; three separated hues, each islanded by cream or a near-black olive so no pair muddies",
+    "architecture": "triad",
+    "skeleton": "no-cliff",
+    "value_key": "low",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.08, 0.01,  30], "role": "ground"},
+      {"pos": 0.16, "oklch": [0.44, 0.12,  24], "role": "anchor"},
+      {"pos": 0.32, "oklch": [0.90, 0.03,  78], "role": "glow"},
+      {"pos": 0.48, "oklch": [0.60, 0.10,  88], "role": "anchor"},
+      {"pos": 0.64, "oklch": [0.14, 0.04, 100], "role": "mid"},
+      {"pos": 0.80, "oklch": [0.42, 0.075, 258], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.08, 0.01,  30], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Three Jewels, Pale Room",
+    "mood": "a pale antique field carrying three deep jewels — gold, wine, slate — bright early, no blacks; the triad read as insets in bone",
+    "architecture": "triad",
+    "skeleton": "peak-early",
+    "value_key": "high",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.85, 0.03,  60], "role": "field"},
+      {"pos": 0.14, "oklch": [0.93, 0.02,  80], "role": "glow"},
+      {"pos": 0.28, "oklch": [0.58, 0.09,  88], "role": "anchor"},
+      {"pos": 0.42, "oklch": [0.30, 0.08,  95], "role": "anchor"},
+      {"pos": 0.54, "oklch": [0.80, 0.03,  40], "role": "field"},
+      {"pos": 0.66, "oklch": [0.28, 0.13,  24], "role": "anchor"},
+      {"pos": 0.80, "oklch": [0.82, 0.025, 250], "role": "field"},
+      {"pos": 0.90, "oklch": [0.40, 0.075, 260], "role": "anchor"},
+      {"pos": 1.0,  "oklch": [0.85, 0.03,  60], "role": "field"}
+    ]
+  },
+  {
+    "name": "Slate with a Wine Glint",
+    "mood": "a pale slate field falling to a deep navy event, with one small warm wine glint as the spark; near-monochrome cool with a single ember",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.88, 0.025, 250], "role": "field"},
+      {"pos": 0.22, "oklch": [0.66, 0.05, 256], "role": "mid"},
+      {"pos": 0.40, "oklch": [0.18, 0.075, 264], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.40, 0.10,  22], "role": "accent"},
+      {"pos": 0.62, "oklch": [0.90, 0.025, 40], "role": "glow"},
+      {"pos": 0.76, "oklch": [0.60, 0.05, 256], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.88, 0.025, 250], "role": "field"}
+    ]
+  },
+  {
+    "name": "Oxblood, One Cold Spark",
+    "mood": "a deep saturated oxblood family across the full range off true black, one crisp small step in the wine, and a single cold slate spark braced by bone and dark",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "cliff-in-mids",
+    "value_key": "low",
+    "complexity": 4,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.07, 0.01,  25], "role": "ground"},
+      {"pos": 0.15, "oklch": [0.34, 0.15,  26], "role": "anchor"},
+      {"pos": 0.30, "oklch": [0.52, 0.11,  22], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.35, "oklch": [0.68, 0.06,  20], "role": "mid"},
+      {"pos": 0.50, "oklch": [0.91, 0.025, 65], "role": "glow"},
+      {"pos": 0.62, "oklch": [0.44, 0.08, 258], "role": "accent"},
+      {"pos": 0.76, "oklch": [0.16, 0.05,  24], "role": "mid"},
+      {"pos": 1.0,  "oklch": [0.07, 0.01,  25], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Slate, One Warm Spark",
+    "mood": "a slate family from deep navy to pale bone with one crisp slate step, and a single warm rust spark that routes home through the dark; near-mono cool with a lit ember",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "cliff-in-mids",
+    "value_key": "mid",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.16, 0.05, 262], "role": "ground"},
+      {"pos": 0.18, "oklch": [0.40, 0.08, 258], "role": "anchor", "segment": "cliff"},
+      {"pos": 0.24, "oklch": [0.56, 0.06, 255], "role": "mid"},
+      {"pos": 0.40, "oklch": [0.72, 0.05, 252], "role": "mid"},
+      {"pos": 0.56, "oklch": [0.88, 0.03, 248], "role": "glow"},
+      {"pos": 0.74, "oklch": [0.54, 0.09,  55], "role": "accent"},
+      {"pos": 1.0,  "oklch": [0.16, 0.05, 262], "role": "ground"}
+    ]
+  },
+  {
+    "name": "Blush Room, Wine Dark",
+    "mood": "a pale blush field dropping to a deep oxblood event, one cool slate glint braced by a warm bone flare; near-monochrome warm, the dark as the drama",
+    "architecture": "near-monochrome-spark",
+    "skeleton": "inverted-arc",
+    "value_key": "high",
+    "complexity": 3,
+    "stops": [
+      {"pos": 0.0,  "oklch": [0.88, 0.03,  22], "role": "field"},
+      {"pos": 0.22, "oklch": [0.64, 0.06,  20], "role": "mid"},
+      {"pos": 0.40, "oklch": [0.22, 0.12,  26], "role": "anchor"},
+      {"pos": 0.52, "oklch": [0.44, 0.09,  18], "role": "mid"},
+      {"pos": 0.64, "oklch": [0.90, 0.025, 40], "role": "glow"},
+      {"pos": 0.78, "oklch": [0.50, 0.07, 258], "role": "accent"},
+      {"pos": 1.0,  "oklch": [0.88, 0.03,  22], "role": "field"}
+    ]
+  }
+]
