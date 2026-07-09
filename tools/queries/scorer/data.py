@@ -39,11 +39,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 # version. Flip this one string to promote a staged retrain; the load path is
 # version-agnostic (build_model + state_dict), so only this line changes.
 # Mirrors tools/reframe_probe/probe.py:ACTIVE_CKPT for the location classifier.
-ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v2")  # LIVE: pref-v2
-# Rollback / promote target: pref-v3 (folds in prefv2_dramatic_v1). STAGED, not live.
-# To promote after review, set ACTIVE_SCORER_DIR to the v3 dir (one-line flip):
-#   ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v3")
-V3_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v3")
+ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v3")  # LIVE: pref-v3
+# One-flip rollback: pref-v2 (the gvo-excluded union without prefv2_dramatic_v1).
+# To roll back, set ACTIVE_SCORER_DIR to the v2 dir (one-line flip):
+#   ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v2")
+V2_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v2")
 
 
 @dataclass(frozen=True)
