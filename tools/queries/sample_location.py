@@ -74,7 +74,11 @@ import train as ST                         # noqa: E402  (build_model)
 
 cm = qs.cm
 ROOT = qs.ROOT
-V2_DIR = ROOT / "data" / "queries" / "scorer" / "v2"
+sys.path.insert(0, str(HERE / "scorer"))
+import data as SD                            # noqa: E402  (ACTIVE_SCORER_DIR single-source pointer)
+# Deployed pref scorer resolves from the single-source pointer (data.ACTIVE_SCORER_DIR);
+# promoting a retrain is a one-line flip there, not an edit here. Currently pref-v2.
+V2_DIR = Path(SD.ACTIVE_SCORER_DIR)
 OUT_DIR = ROOT / "out" / "sampler_eval"
 
 # --- pipeline constants ----------------------------------------------------

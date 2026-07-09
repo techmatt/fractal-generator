@@ -33,6 +33,18 @@ import torchvision.transforms.v2 as T
 # ---- paths ---------------------------------------------------------------
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+# --- ACTIVE deployed pref scorer (SINGLE SOURCE OF TRUTH) -----------------
+# Every live consumer of "the deployed pref scorer" (sample_location.py, and any
+# future gate) resolves the checkpoint dir from here -- nothing else hardcodes a
+# version. Flip this one string to promote a staged retrain; the load path is
+# version-agnostic (build_model + state_dict), so only this line changes.
+# Mirrors tools/reframe_probe/probe.py:ACTIVE_CKPT for the location classifier.
+ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v2")  # LIVE: pref-v2
+# Rollback / promote target: pref-v3 (folds in prefv2_dramatic_v1). STAGED, not live.
+# To promote after review, set ACTIVE_SCORER_DIR to the v3 dir (one-line flip):
+#   ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v3")
+V3_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v3")
+
 
 @dataclass(frozen=True)
 class BatchSpec:
@@ -53,10 +65,13 @@ def _batch(name: str) -> BatchSpec:
     )
 
 
-# The two batches v2 unions. coldstart first (its split is reused verbatim from v1).
+# The batches the union spans. coldstart first (its split is reused verbatim from
+# v1). v3 folds in prefv2_dramatic_v1 (600 within-location dramatic-inclusive
+# queries on 350 fresh/disjoint q3 locations) -> union = 399 + 600 = 999 queries.
 COLDSTART = _batch("coldstart_v2")
 WARMSTART = _batch("warmstart_v1")
-BATCHES = [COLDSTART, WARMSTART]
+DRAMATIC = _batch("prefv2_dramatic_v1")
+BATCHES = [COLDSTART, WARMSTART, DRAMATIC]
 
 # Explicit, auditable exclusion list (NOT a silent filter). q002_0040 is the single
 # eff@10==1 collapse query in warmstart; drop it at query-load so it contributes zero
@@ -81,15 +96,54 @@ INPUT_SIZE = 224
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+# ---- palette-source axis (v3 stratification) ----------------------------
+# Candidate records carry a `palette_source`. Only prefv2_dramatic_v1 introduces
+# the "dramatic" family; every coldstart/warmstart candidate is a "pool" palette
+# (extracted or curated_q{2,3}). The dramatic-vs-pool contrast is the point of v3.
+POOL_SOURCES = frozenset({"extracted", "curated_q2", "curated_q3"})
+
+
+def source_class(src: str | None) -> str | None:
+    """'dramatic' | 'pool' | None. The 2-way axis the v3 eval slices on."""
+    if src == "dramatic":
+        return "dramatic"
+    if src in POOL_SOURCES:
+        return "pool"
+    return None
+
+
+# Lazy name -> (skeleton, architecture) map for dramatic palettes (authoring tags
+# live in data/palettes/pool_colormaps.json, NOT in the batch records). Used only
+# to slice the dramatic axis in eval; None for any non-dramatic palette.
+_TAG_MAP = None
+
+
+def _tag_map() -> dict:
+    global _TAG_MAP
+    if _TAG_MAP is None:
+        path = os.path.join(REPO, "data", "palettes", "pool_colormaps.json")
+        pool = json.load(open(path, encoding="utf-8"))
+        _TAG_MAP = {
+            e["name"]: (e.get("skeleton"), e.get("architecture"))
+            for e in pool
+            if isinstance(e, dict) and e.get("source") == "dramatic"
+        }
+    return _TAG_MAP
+
 
 @dataclass
 class Query:
     query_id: str
-    query_type: str          # palette | param | joint
+    query_type: str          # palette|param|joint (old) OR within_dramatic|cross_source|param_variation (dramatic)
     location_key: str        # family + c_re + c_im + cx + cy + fw
     image_paths: list[str]   # absolute, in candidate order 0..5
     tiers: list[str]         # tier per candidate, aligned with image_paths
     batch: str = COLDSTART.name  # source batch name (for per-batch decomposition)
+    # v3 per-candidate stratification axes (aligned with image_paths/tiers):
+    sources: tuple = ()      # palette_source per candidate (raw string)
+    src_class: tuple = ()    # source_class per candidate ('dramatic'|'pool'|None)
+    skeletons: tuple = ()    # dramatic skeleton tag per candidate (None if not dramatic)
+    architectures: tuple = ()  # dramatic architecture tag per candidate (None if not dramatic)
 
 
 def _location_key(loc: dict) -> str:
@@ -126,11 +180,19 @@ def load_batch_queries(spec: BatchSpec, exclude=()) -> list[Query]:
         cands = rec["candidates"]
         tiers_map = entry["tiers"]  # candidate_id -> tier
 
+        tag_map = _tag_map()
         image_paths, tiers = [], []
+        sources, src_cls, skels, archs = [], [], [], []
         for ci, cand in enumerate(cands):
             cand_id = f"{qid}_{ci}"
             image_paths.append(os.path.join(spec.batch_dir, cand["image"]))
             tiers.append(tiers_map[cand_id])
+            src = cand.get("palette_source")
+            sources.append(src)
+            src_cls.append(source_class(src))
+            sk, ar = tag_map.get(cand.get("palette"), (None, None)) if src == "dramatic" else (None, None)
+            skels.append(sk)
+            archs.append(ar)
         out.append(
             Query(
                 query_id=qid,
@@ -139,6 +201,10 @@ def load_batch_queries(spec: BatchSpec, exclude=()) -> list[Query]:
                 image_paths=image_paths,
                 tiers=tiers,
                 batch=spec.name,
+                sources=tuple(sources),
+                src_class=tuple(src_cls),
+                skeletons=tuple(skels),
+                architectures=tuple(archs),
             )
         )
     return out
@@ -189,11 +255,16 @@ def split_by_location(queries: list[Query], val_frac: float, seed: int):
         loc2queries[q.location_key].append(q)
 
     # Per-location primary type: fixed priority so multi-type locations are
-    # deterministic (joint > param > palette). Used only for stratification.
-    prio = {"joint": 0, "param": 1, "palette": 2}
+    # deterministic. Used only for stratification. Covers both the old taxonomy
+    # (joint>param>palette) and the dramatic taxonomy (within_dramatic>cross_source
+    # >param_variation); unknown types sort last (.get default).
+    prio = {
+        "joint": 0, "param": 1, "palette": 2,
+        "within_dramatic": 3, "cross_source": 4, "param_variation": 5,
+    }
 
     def primary_type(qs):
-        return sorted({q.query_type for q in qs}, key=lambda t: prio[t])[0]
+        return sorted({q.query_type for q in qs}, key=lambda t: prio.get(t, 99))[0]
 
     strata: dict[str, list[str]] = defaultdict(list)
     for lk, qs in loc2queries.items():
@@ -307,6 +378,96 @@ def split_combined(queries: list[Query], val_frac: float, seed: int, v1_manifest
         "coldstart_val": per_batch(val_q, COLDSTART.name),
         "warmstart_train": per_batch(train_q, WARMSTART.name),
         "warmstart_val": per_batch(val_q, WARMSTART.name),
+        "train_locations": sorted(train_locs),
+        "val_locations": sorted(val_locs),
+    }
+    return train_q, val_q, manifest
+
+
+# ---- v3 union split (cold+warm+dramatic) --------------------------------
+def split_union_v3(queries: list[Query], val_frac: float, seed: int, v1_manifest_path: str):
+    """Location-disjoint split over the 3-batch union, matched to v2 on the OLD slice.
+
+    - coldstart: reuse v1's assignment VERBATIM (so old-slice regression is a
+      clean matched comparison against the deployed v2).
+    - warmstart: fresh location-disjoint stratified 80/20, seed -- IDENTICAL to the
+      call split_combined makes, so warm-val is byte-identical to v2's warm-val.
+    - dramatic (prefv2_dramatic_v1): fresh location-disjoint stratified 80/20, seed
+      (its 350 locations are all fresh/disjoint from the corpus's 388).
+
+    Asserts zero train/val location overlap across the FULL union.
+    Returns (train_q, val_q, manifest).
+    """
+    v1 = json.load(open(v1_manifest_path))
+    cold_train_locs = set(v1["train_locations"])
+    cold_val_locs = set(v1["val_locations"])
+
+    cold_q = [q for q in queries if q.batch == COLDSTART.name]
+    warm_q = [q for q in queries if q.batch == WARMSTART.name]
+    dram_q = [q for q in queries if q.batch == DRAMATIC.name]
+
+    # coldstart: verbatim v1 membership
+    cold_train, cold_val, unknown = [], [], set()
+    for q in cold_q:
+        if q.location_key in cold_train_locs:
+            cold_train.append(q)
+        elif q.location_key in cold_val_locs:
+            cold_val.append(q)
+        else:
+            unknown.add(q.location_key)
+    assert not unknown, f"COLDSTART LOC NOT IN v1 MANIFEST: {unknown}"
+
+    # warmstart + dramatic: fresh stratified location-disjoint 80/20
+    warm_train, warm_val, _ = split_by_location(warm_q, val_frac, seed)
+    dram_train, dram_val, dram_manifest = split_by_location(dram_q, val_frac, seed)
+
+    train_q = cold_train + warm_train + dram_train
+    val_q = cold_val + warm_val + dram_val
+
+    # zero-overlap proof across the FULL union (catches any cross-batch leak too)
+    train_locs = {q.location_key for q in train_q}
+    val_locs = {q.location_key for q in val_q}
+    overlap = train_locs & val_locs
+    assert not overlap, f"LOCATION LEAK (union v3): {overlap}"
+
+    # dramatic disjointness from the old corpus (documented, asserted)
+    old_locs = {q.location_key for q in cold_q + warm_q}
+    dram_locs = {q.location_key for q in dram_q}
+    dram_old_overlap = old_locs & dram_locs
+    assert not dram_old_overlap, f"DRAMATIC LEAKS INTO OLD CORPUS: {dram_old_overlap}"
+
+    def type_breakdown(qs):
+        return dict(Counter(q.query_type for q in qs))
+
+    def per_batch(qs, name):
+        b = [q for q in qs if q.batch == name]
+        return {
+            "n_queries": len(b),
+            "n_locations": len({q.location_key for q in b}),
+            "type_breakdown": type_breakdown(b),
+        }
+
+    manifest = {
+        "design": "union v3: coldstart verbatim-v1; warmstart+dramatic fresh stratified 80/20",
+        "seed": seed,
+        "val_frac": val_frac,
+        "v1_manifest_reused": os.path.relpath(v1_manifest_path, REPO).replace("\\", "/"),
+        "excluded_queries": list(EXCLUDED_QUERIES),
+        "n_locations_total": len(train_locs | val_locs),
+        "n_locations_train": len(train_locs),
+        "n_locations_val": len(val_locs),
+        "n_queries_train": len(train_q),
+        "n_queries_val": len(val_q),
+        "location_overlap_count": len(overlap),
+        "dramatic_old_overlap_count": len(dram_old_overlap),
+        "type_breakdown_train": type_breakdown(train_q),
+        "type_breakdown_val": type_breakdown(val_q),
+        "coldstart_train": per_batch(train_q, COLDSTART.name),
+        "coldstart_val": per_batch(val_q, COLDSTART.name),
+        "warmstart_train": per_batch(train_q, WARMSTART.name),
+        "warmstart_val": per_batch(val_q, WARMSTART.name),
+        "dramatic_train": per_batch(train_q, DRAMATIC.name),
+        "dramatic_val": per_batch(val_q, DRAMATIC.name),
         "train_locations": sorted(train_locs),
         "val_locations": sorted(val_locs),
     }
