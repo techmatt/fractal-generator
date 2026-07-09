@@ -29,7 +29,19 @@ Usage
 Exit code 0 iff zero ERRORS (warnings never change it).
 
 Importable
-  from validate_palettes import validate_batch, validate_palette, batch_spread
+  from validate_palettes import (validate_batch, validate_palette, batch_spread,
+                                 closure_error, find_duplicate_names)
+
+Set-level invariants (enforced, not just fixed at the instance level):
+  Assert 1 (closure)        -- every palette is a closed loop: first stop ~= last
+                               stop in OKLCH (dL,dC <= 0.01; dH <= 1deg, hue ignored
+                               when both endpoints are ~achromatic) AND pos runs 0->1.
+                               Per-palette ERROR (validate_palette / closure_error).
+  Assert 2 (name-unique)    -- no duplicate `name` within a batch OR across the whole
+                               results/ set (names key the colormaps/features/
+                               provenance joins, so a collision silently collapses
+                               records). ERROR via find_duplicate_names, reported by
+                               the CLI over one file and over `--dir`.
 """
 
 import json, sys, glob, os
@@ -42,6 +54,14 @@ BAND = {1: (4, 5), 2: (5, 6), 3: (6, 7), 4: (7, 9), 5: (8, 10), 6: (11, 15)}
 # cliffs carry only a SMALL step (ERROR if exceeded)
 CLIFF_HUE_MAX    = 30      # deg  -- max hue step a cliff may carry
 CLIFF_DL_FRAC    = 1/3     # |dL| cap for a cliff = this * palette L-range
+
+# closure invariant (Assert 1, ERROR): first stop ~= last stop in OKLCH so the
+# densifier can ship cyclic / mirror_needed:false seam-free. Tolerance, not byte-
+# equality -- a near-closed loop is still seam-free; an open one is not.
+CLOSURE_DL_MAX       = 0.01   # |dL(first,last)|
+CLOSURE_DC_MAX       = 0.01   # |dC(first,last)|
+CLOSURE_DH_MAX       = 1.0    # deg  |dH(first,last)| ...
+CLOSURE_HUE_IGNORE_C = 0.02   # ... ignored when BOTH endpoint chromas are below this
 
 # big saturated hue jumps on smooth/ease segments must route through black/white (ERROR)
 JUMP_HUE_MIN     = 55      # deg  -- a hue step this large counts as "big"
@@ -92,6 +112,32 @@ def is_glow(s):
     return s.get("role") == "glow" or (isinstance(kp, dict) and kp.get("type") == "glow_band")
 
 
+def closure_error(p):
+    """Assert 1: first stop ~= last stop in OKLCH (closed loop). Return an error
+    string (with the offending deltas) if OPEN, else None. Hue is ignored when
+    both endpoints are ~achromatic (C < CLOSURE_HUE_IGNORE_C)."""
+    a, b = p["stops"][0]["oklch"], p["stops"][-1]["oklch"]
+    dL, dC = abs(a[0] - b[0]), abs(a[1] - b[1])
+    dH = huedist(a[2], b[2])
+    hue_matters = min(a[1], b[1]) >= CLOSURE_HUE_IGNORE_C
+    bad = (dL > CLOSURE_DL_MAX or dC > CLOSURE_DC_MAX
+           or (hue_matters and dH > CLOSURE_DH_MAX))
+    if bad:
+        return (f"open loop: first {a} != last {b} "
+                f"(dL={dL:.3f}, dC={dC:.3f}, dH={dH:.1f}deg"
+                f"{'' if hue_matters else ', hue ignored'})")
+    return None
+
+
+def find_duplicate_names(name_file_pairs):
+    """Assert 2: collect (name, file) pairs; return {name: [files...]} for any
+    name that appears more than once (within a batch or across the whole set)."""
+    by_name = {}
+    for name, f in name_file_pairs:
+        by_name.setdefault(name, []).append(f)
+    return {n: fs for n, fs in by_name.items() if len(fs) > 1}
+
+
 # ------------------------------ core check -----------------------------------
 def validate_palette(p):
     """Return (errors, warnings) as two lists of strings."""
@@ -108,9 +154,10 @@ def validate_palette(p):
     Lrange = max(Ls) - min(Ls)
     Lmax_i, Lmin_i = Ls.index(max(Ls)), Ls.index(min(Ls))
 
-    # --- loop / ordering (ERROR) ---
-    if stops[0]["oklch"] != stops[-1]["oklch"]:
-        errs.append(f"loop not closed: {stops[0]['oklch']} != {stops[-1]['oklch']}")
+    # --- loop / ordering (ERROR) --- (Assert 1: closure, tolerance-based) ---
+    ce = closure_error(p)
+    if ce:
+        errs.append(ce)
     if abs(pos[0]) > 1e-9 or abs(pos[-1] - 1.0) > 1e-9:
         errs.append(f"pos does not run 0->1 ({pos[0]}..{pos[-1]})")
     if any(pos[i+1] <= pos[i] for i in range(len(pos)-1)):
@@ -197,10 +244,16 @@ def batch_spread(palettes):
 
 
 # --------------------------------- CLI ---------------------------------------
-def _report(path):
+def _load(path):
     P = json.load(open(path, encoding="utf-8"))
     if isinstance(P, dict):
         P = P.get("palettes", P.get("data", [P]))
+    return P
+
+
+def _report(path):
+    """Report one batch. Returns (nerr, [(name, path), ...]) for cross-set checks."""
+    P = _load(path)
     res = validate_batch(P)
     nerr = sum(len(r["errors"]) for r in res)
     nwarn = sum(len(r["warnings"]) for r in res)
@@ -218,7 +271,19 @@ def _report(path):
     print("  complexity  :", sp["complexity"])
     print(f"  chroma      : {sp['vivid']} vivid (peakC>={VIVID_PEAKC}), "
           f"{sp['muted']} muted (peakC<{MUTED_PEAKC})")
-    return nerr
+    return nerr, [(p.get("name", "?"), path) for p in P]
+
+
+def _report_dupes(name_file_pairs, scope):
+    """Assert 2: fail loudly on any duplicate name across `scope`. Returns error count."""
+    dups = find_duplicate_names(name_file_pairs)
+    print(f"\n--- name uniqueness ({scope}) ---")
+    if not dups:
+        print(f"  OK: {len(name_file_pairs)} palette(s), all names unique")
+        return 0
+    for name, files in sorted(dups.items()):
+        print(f"   ERROR  duplicate name {name!r} in: {', '.join(files)}")
+    return len(dups)
 
 
 def main():
@@ -226,13 +291,15 @@ def main():
     if args and args[0] == "--dir":
         d = args[1] if len(args) > 1 else "results"
         files = sorted(glob.glob(os.path.join(d, "*.json")))
-        tot = 0
+        tot, pairs = 0, []
         for f in files:
-            tot += _report(f); print()
-        print(f">>> TOTAL ERRORS across {len(files)} file(s): {tot}")
+            n, pf = _report(f); tot += n; pairs += pf; print()
+        tot += _report_dupes(pairs, f"across {len(files)} file(s) in {d}/")
+        print(f"\n>>> TOTAL ERRORS across {len(files)} file(s): {tot}")
         sys.exit(0 if tot == 0 else 1)
     path = args[0] if args else "batch.json"
-    tot = _report(path)
+    tot, pairs = _report(path)
+    tot += _report_dupes(pairs, path)
     print(f"\n>>> TOTAL ERRORS: {tot}")
     sys.exit(0 if tot == 0 else 1)
 
