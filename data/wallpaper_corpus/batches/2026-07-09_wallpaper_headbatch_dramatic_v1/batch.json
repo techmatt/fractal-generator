@@ -1,0 +1,102 @@
+{
+  "created": "2026-07-09T12:51:21",
+  "labeler": null,
+  "generator_version": "wallpaper_headbatch_dramatic_v1",
+  "schema_note": "Dramatic-inclusive wallpaper-quality head batch. Verified-good (humanq3) location reuse preserving the v2-head split (all eval-side included to grow eval-good) + fresh unseen deg-2 machine-q3. Top-K by the DEPLOYED pref scorer (data.ACTIVE_SCORER_DIR) + ~5% bottom-K dramatic hard-negatives on known-good locations. Coloring params live in provenance.params (crop = pure function of render + params). provenance.split_side/split_origin are STAMPED for the retrain to honor (preserved humanq3 assignments + fresh location-disjoint).",
+  "scorer": {
+    "active_scorer_dir": "data\\queries\\scorer\\v3_gvo",
+    "scorer_version": "v3_gvo",
+    "note": "resolved from data.ACTIVE_SCORER_DIR (pref-v3-gvo at build time)"
+  },
+  "sampling_metaparameters": {
+    "beam": {
+      "N_GEN0": 60,
+      "TOP_KEEP": 18,
+      "K_VARIANTS": 8,
+      "R_MAX": 2,
+      "seed": 7
+    },
+    "gen0_source_weights": {
+      "dramatic": 0.75,
+      "curated_q3": 0.0833,
+      "curated_q2": 0.05,
+      "extracted": 0.1167
+    },
+    "pool_K": 7,
+    "k_bad": 4,
+    "n_badinject_locs": 12,
+    "pool_rule": "top-K by pref (best-per-palette reps); bad_inject = bottom-K dramatic (distinct palettes, excl. top-K palettes)",
+    "maxiter_policy": "auto_maxiter(fw) \u2014 native fw-dependent (bootstrap parity)",
+    "split_seed": 0,
+    "eval_frac": 0.3,
+    "fresh_eval_frac": 0.3,
+    "seed": 7
+  },
+  "split_summary": {
+    "eval_side_reused_locations": 41,
+    "train_side_reused_locations": 41,
+    "fresh_eval_locations": 16,
+    "fresh_train_locations": 38
+  },
+  "reused_report": {
+    "humanq3_total_locations": 142,
+    "forced_train_side": 5,
+    "eval_side_available": 41,
+    "eval_side_reused": 41,
+    "train_side_available": 101,
+    "train_side_reused": 41,
+    "bad_inject_locations": [
+      "whq3_004",
+      "whq3_012",
+      "whq3_019",
+      "whq3_024",
+      "whq3_031",
+      "whq3_034",
+      "whq3_038",
+      "whq3_046",
+      "whq3_074",
+      "whq3_097",
+      "whq3_124",
+      "whq3_137"
+    ]
+  },
+  "fresh_report": {
+    "ledgers": [
+      "data\\discovery\\outcome_ledger.jsonl",
+      "data\\discovery\\gather\\mandelbrot\\outcome_ledger.jsonl"
+    ],
+    "filter": "decoded_class==3 & guard_pass & family\u2208{mandelbrot,julia:mandelbrot}",
+    "raw_matches": 363,
+    "within_set_or_reused_dups": 57,
+    "excluded_head_corpus_by_key": 28,
+    "excluded_head_corpus_by_proximity": 12,
+    "unseen_available": 266,
+    "chosen": 54,
+    "per_family_chosen": {
+      "julia:mandelbrot": 27,
+      "mandelbrot": 27
+    },
+    "fresh_eval_frac": 0.3,
+    "fresh_eval_locations": 16
+  },
+  "head_corpus_batches": [
+    "2026-07-05_wallpaper_bootstrap_v1",
+    "2026-07-05_wallpaper_humanq3_v1"
+  ],
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "composition": "center",
+    "render_path": "render-one --dump-field + colormap.render_candidate (byte-parity with the humanq3 label path)"
+  },
+  "run_status": {
+    "planned_units": 136,
+    "completed_units": 136,
+    "capped": false,
+    "wall_seconds": 6076.857918977737
+  },
+  "n_rows": 1000
+}
