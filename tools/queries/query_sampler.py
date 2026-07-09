@@ -129,6 +129,12 @@ GAMMA_CANON_HI = 1.18
 LOG_PREMAP_P = 0.15       # P(log_premap == 'log'); 0 in canonical draws
 REVERSE_P = 0.5           # Bernoulli(reverse); non-cyclic only (redundant with phase on cyclic)
 N_CYCLES_2_P = 0.25       # P(n_cycles == 2) on cyclic palettes; else 1
+DRAMATIC_PHASE0_P = 1.0 / 3.0  # dramatic-source cyclic palettes: phase=0 w.p. ~1/3, else
+                          #   U[0,1). Mirrors the pref-v2 dramatic labeling batch
+                          #   (prefv2_dramatic_v1.DRAMATIC_PHASE0_P) so the deployed gen-0
+                          #   draw matches the distribution v3-gvo trained on, and so
+                          #   emission explores the palette's authored phase=0 orientation.
+                          #   Pool cyclics stay pure U[0,1) (no authored canonical phase).
 
 # Palette-stratum draw.
 P_CYCLIC_TYPE = 0.5       # P(draw a cyclic palette) when type is unconstrained — balances
@@ -441,7 +447,9 @@ def sample_candidate(location_ref, rng, sampler, palette=None,
     - `canonical`      -> near-canonical params (gamma~=1, no log_premap): palette query.
 
     Per-type param rules:
-      cyclic      : reverse=False (redundant with phase), phase~U[0,1), n_cycles in {1,2}.
+      cyclic      : reverse=False (redundant with phase), n_cycles in {1,2}. phase is
+                    source-aware: dramatic -> 0 w.p. DRAMATIC_PHASE0_P else U[0,1);
+                    pool -> U[0,1).
       non_cyclic  : reverse~Bernoulli, no phase/n_cycles (core only).
     """
     if palette is not None:
@@ -454,7 +462,14 @@ def sample_candidate(location_ref, rng, sampler, palette=None,
 
     if ptype == "cyclic":
         reverse = False
-        phase = float(rng.random())
+        # Source-aware phase: dramatic-source cyclics get the phase=0 mass (authored
+        # ground->light orientation) that the labeling batch used; pool cyclics stay
+        # pure U[0,1). The decision draw is inline (mirrors prefv2_dramatic_v1) so a
+        # pool-only stream is byte-identical — only dramatic candidates consume it.
+        if sampler.source_of(name) == "dramatic":
+            phase = 0.0 if rng.random() < DRAMATIC_PHASE0_P else float(rng.random())
+        else:
+            phase = float(rng.random())
         n_cycles = 2 if rng.random() < N_CYCLES_2_P else 1
     else:
         reverse = bool(rng.random() < REVERSE_P)
