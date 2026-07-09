@@ -65,6 +65,7 @@ code{color:#9bb}
       <span class="cap" id="cap-pal"></span>
       <span class="cap" id="cap-params"></span>
       <span class="cap" id="cap-prefv2"></span>
+      <span class="cap" id="cap-headv2"></span>
       <span class="cur-score" id="cur-score"></span>
     </div>
     <div class="score-btns">
@@ -112,6 +113,16 @@ function locKey(r){
   return [rd.cx,rd.cy,rd.fw,rd.fractal_type,rd.c_re,rd.c_im].join('|');
 }
 function buildOrder(rows){
+  // Pre-label override: if rows carry a head_v2_pred (a deployed-head quality
+  // estimate stamped before labeling), present in DESCENDING predicted order
+  // (best first) for labeling speed — the anchoring bias is accepted. This is
+  // purely presentation; split/provenance/merge are untouched. Absent the stamp,
+  // fall back to the anti-anchoring per-location shuffle below.
+  if(rows.length && typeof rows[0].head_v2_pred==='number'){
+    const out=rows.slice().sort((a,b)=>(b.head_v2_pred-a.head_v2_pred)||(a.image_id<b.image_id?-1:1));
+    out.forEach(r=>{ r.__locstart=false; });
+    return out;
+  }
   // stable location groups in first-appearance order; renders shuffled inside each.
   const groups=new Map();               // locKey -> rows[]
   for(const r of rows){
@@ -204,6 +215,10 @@ function show(){
   const pf=document.getElementById('cap-prefv2'), v=pv.pref_v2_score;
   pf.textContent=(typeof v==='number')?('pref-v2 '+v.toFixed(2)+(pv.score_stratum?(' · '+pv.score_stratum):'')):'';
   pf.style.color='#777';
+  // head-v2 predicted quality (drives this batch's presentation order) — shown per the ask.
+  const hf=document.getElementById('cap-headv2'), hv=r.head_v2_pred;
+  hf.textContent=(typeof hv==='number')?('head-v2 '+hv.toFixed(2)):'';
+  hf.style.color='#8a7';
   if(lbOpen)syncLightbox();
   const s=scores[keyOf(r)];
   const sc=document.getElementById('cur-score');
