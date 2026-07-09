@@ -101,6 +101,7 @@ __pycache__/
 /data/queries/labels/*
 !/data/queries/labels/coldstart_v2.json
 !/data/queries/labels/warmstart_v1.json
+!/data/queries/labels/prefv2_dramatic_v1.json
 # sample_location.py eval pools: the runs were unseeded (GPU scoring is
 # nondeterministic), so records.json (exact re-renderable configs of the validated
 # top-18 pools) + summary.json are NON-regenerable — commit them. The .png sheets
