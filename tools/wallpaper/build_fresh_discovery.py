@@ -86,7 +86,8 @@ PILOT_COUNT = 20            # default pilot size (config knob; scale later)
 DEDUP_FRAC = 0.5           # two same-family coords within DEDUP_FRAC*fw = the "same spot"
 
 # --- pool / label knobs (PINNED to the humanq3 emission pool) ---------------
-K = 7                      # emission pool depth == serving depth (build_humanq3.K)
+K = 12                     # beam->selector handoff / emission pool depth (deployed default,
+                           # widened 7->12, ship lever A); == build_humanq3.K. Override --pool-k.
 LABEL_CROP_WORKERS = 4     # project-wide max-workers cap — DO NOT raise
 SEED = 7
 
@@ -301,7 +302,7 @@ def write_batch(rows, report, wall_s, args):
         "labeler": None,
         "generator_version": GENERATOR_VERSION,
         "schema_note": "Fresh-discovery HONEST-emit pool: UNSEEN machine-q3 locations "
-                       "(not in the wallpaper head's bootstrap ∪ humanq3 corpus), top-7 "
+                       "(not in the wallpaper head's bootstrap ∪ humanq3 corpus), top-K "
                        "by pref-v2 — the SAME pool rule/format as the humanq3 emission "
                        "pool, so emit_v1 --pool runs unchanged. Coloring params live in "
                        "provenance.params (crop = pure function of render + params).",
@@ -310,7 +311,7 @@ def write_batch(rows, report, wall_s, args):
         "sampling_metaparameters": {
             "beam": {"N_GEN0": SL.N_GEN0, "TOP_KEEP": SL.TOP_KEEP,
                      "K_VARIANTS": SL.K_VARIANTS, "R_MAX": SL.R_MAX, "seed": args.seed},
-            "pool_K": K, "pool_rule": "top-K by pref-v2 over best-per-palette reps "
+            "pool_K": args.pool_k, "pool_rule": "top-K by pref-v2 over best-per-palette reps "
                                       "(build_humanq3.top_k_pool — verbatim)",
             "scorer": "data/queries/scorer/v2 (within-location pref-v2 utility)",
             "maxiter_policy": "auto_maxiter(fw) — native fw-dependent (bootstrap parity)",
@@ -361,9 +362,12 @@ def main():
     ap = argparse.ArgumentParser(description="Fresh-discovery colorize front-end (unseen machine-q3).")
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--count", type=int, default=PILOT_COUNT, help="pilot location count")
+    ap.add_argument("--pool-k", type=int, default=K,
+                    help="beam->selector handoff / emission pool depth (deployed default 12)")
     ap.add_argument("--limit", type=int, default=0, help="cap locations actually run (smoke)")
     ap.add_argument("--estimate", action="store_true", help="print composition + est and exit")
     args = ap.parse_args()
+    k = args.pool_k
 
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -377,8 +381,8 @@ def main():
     per_loc_recolors = SL.N_GEN0 + SL.R_MAX * SL.TOP_KEEP * SL.K_VARIANTS
     print(f"\n[fresh] est per-location: 1 eval-field dump (ss2) + <= {per_loc_recolors} beam "
           f"recolors (coarse) + 1 label-field dump (ss{LABEL_SS} "
-          f"{LABEL_W*LABEL_SS}x{LABEL_H*LABEL_SS}) + <= {K} label recolors")
-    print(f"[fresh] est total: {len(sources)} locations -> <= {len(sources)*K} crops")
+          f"{LABEL_W*LABEL_SS}x{LABEL_H*LABEL_SS}) + <= {k} label recolors")
+    print(f"[fresh] est total: {len(sources)} locations -> <= {len(sources)*k} crops  (pool-k={k})")
 
     if args.limit:
         sources = sources[:args.limit]
@@ -406,7 +410,7 @@ def main():
         # re-rendered below on the full ss2 label path). Byte-identical to build_humanq3.
         res = SL.run_location(f"{cls}_{li:03d}", loc, lib, sampler, model, device,
                               args.seed, retain_all=True, coarse_score=True)
-        pool = top_k_pool(res["all_candidates"], K)
+        pool = top_k_pool(res["all_candidates"], k)
 
         field = ensure_label_field(loc)
         label_prep = cm.stretch_field(field)

@@ -8,7 +8,7 @@ pref-v3-gvo). Unions with the existing head corpus (bootstrap 504 + humanq3 994)
 This is a FUSION of the two existing build front-ends, byte-parity on everything
 downstream so the batch unions cleanly at train time:
   * build_humanq3.py  — verified-good (human max-over-crops q3) LOCATION reuse, the
-    beam + top-K-by-pref pool (`top_k_pool`, K=7), the shared Recipe-2 label tail.
+    beam + top-K-by-pref pool (`top_k_pool`, K deployed 12), the shared Recipe-2 label tail.
   * build_fresh_discovery.py — UNSEEN machine-q3 deg-2 location selection out of the
     discovery ledgers (`_to_location`, `_head_corpus_exclusion`, `_spatially_in`).
 
@@ -90,7 +90,8 @@ GENERATOR_VERSION = "wallpaper_headbatch_dramatic_v1"
 IMG_PREFIX = "whd"
 
 # --- composition knobs -----------------------------------------------------
-K = 7                       # top-K emission pool depth == humanq3 serving depth (PINNED)
+K = 12                      # beam->selector handoff / emission pool depth == humanq3 serving
+                            # depth (deployed default, widened 7->12 ship lever A). --pool-k.
 K_BAD = 4                   # bottom-K dramatic per bad-inject location
 N_BADINJECT_LOCS = 12       # verified-good (train-side) locations to also carry bad-inject
 N_TRAIN_REUSE_FILL = 41     # train-side humanq3 to reuse ON TOP of ALL eval-side (mandatory)
@@ -560,13 +561,18 @@ def _print_composition(reused_report, fresh_report, planned, args):
 
 
 def main():
+    global K                     # rebind the module constant so the shared report/eval-sizing
+                                 # sites (est_topk, eval-side, metadata, top_k_pool) all follow
     ap = argparse.ArgumentParser(description="Dramatic-inclusive wallpaper head batch (~1000).")
     ap.add_argument("--seed", type=int, default=SEED)
+    ap.add_argument("--pool-k", type=int, default=K,
+                    help="beam->selector handoff / emission pool depth (deployed default 12)")
     ap.add_argument("--limit", type=int, default=0, help="cap units actually run (smoke)")
     ap.add_argument("--estimate", action="store_true", help="print composition + est and exit")
     ap.add_argument("--wall-cap-min", type=float, default=DEFAULT_WALL_CAP_MIN,
                     help="stop starting new units past this wall-clock budget (min)")
     args = ap.parse_args()
+    K = args.pool_k
 
     for stream in (sys.stdout, sys.stderr):
         try:

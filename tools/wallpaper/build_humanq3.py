@@ -1,7 +1,7 @@
-"""Human-q3 wallpaper training set — the K=7 pool-floored batch (primary payload).
+"""Human-q3 wallpaper training set — the top-K pool-floored batch (primary payload).
 
 Builds the PRIMARY training set for the next wallpaper-quality head: human-verified
-good locations only (max-over-crops label == 3), each colored by the beam, top-7 by
+good locations only (max-over-crops label == 3), each colored by the beam, top-K by
 pref-v2 kept as the emission pool. Budget <=1000 renders. This is the batch that fixes
 v1's top-end starvation (the bootstrap only spanned decoded-q3, never human-q3, and
 strata-sampled the low end hard).
@@ -9,10 +9,11 @@ strata-sampled the low end hard).
 Difference from the bootstrap (tools/wallpaper/build_bootstrap.py):
   * Sources are HUMAN-q3 LOCATIONS read out of the labeled corpus batches (label.score
     max-over-crops == 3), NOT gather-ledger decoded-class rows.
-  * Per location we keep the TOP-7 by pref-v2 (one representative per palette, its
+  * Per location we keep the TOP-K by pref-v2 (one representative per palette, its
     best-scoring candidate; the refined winners land at rank-1 by construction) — the
-    emission pool itself, no strata sub-sampling. Serving-consistency pin: K=7 is also
-    the emission pool depth, so the head trains on top-7 and serves on top-7.
+    emission pool itself, no strata sub-sampling. Serving-consistency pin: K (deployed 12,
+    widened from 7 — see the K constant) is also the emission pool depth, so the head
+    trains on top-K and serves on top-K.
   * Everything else — the beam (retain_all + coarse_score), the ss2 label field dump,
     the render_candidate label-crop tail, the LOCKED 1280x720 ss2 Lanczos-3 q90 spec
     (shared via label_crop.py) — is byte-for-byte the bootstrap path, so the two batches
@@ -70,7 +71,14 @@ IMG_PREFIX = "whq3"
 V6_BATCH = "2026-07-05_gather_v6"
 
 # --- pool / budget knobs ---------------------------------------------------
-K = 7                      # emission pool depth == serving pool depth (PINNED, see docstring)
+# K = beam->selector HANDOFF depth == emission pool depth == serving pool depth. This is
+# the SOLE knob on per-location survivor count into the selector (TOP_KEEP=18 upstream is
+# the beam refinement width, independent). Deployed default widened 7 -> 12 (ship lever A,
+# prompts/ship-widen-handoff-12.md): the pref TOP-7 cut concentrated the emission warm skew
+# (aperture: warm-fraction 81%@top-7 -> 62%@top-12), and widening recovers neutral-cool
+# cells at ~zero head-quality cost. Overridable via --pool-k. Kept in lockstep across the
+# three wallpaper builders so train-on-K == serve-on-K (serving consistency).
+K = 12                     # emission pool depth == serving pool depth (deployed default)
 RENDER_BUDGET = 1000       # hard cap on total label crops
 
 # The label-crop spec (LABEL_W/H/SS, LABEL_FILTER, JPG_Q) + ensure_label_field +
@@ -390,11 +398,14 @@ def _print_composition(report):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Human-q3 wallpaper training-set generator (K=7).")
+    ap = argparse.ArgumentParser(description="Human-q3 wallpaper training-set generator (K=12).")
     ap.add_argument("--seed", type=int, default=SEED)
+    ap.add_argument("--pool-k", type=int, default=K,
+                    help="beam->selector handoff / emission pool depth (deployed default 12)")
     ap.add_argument("--limit", type=int, default=0, help="cap number of source locations (smoke)")
     ap.add_argument("--estimate", action="store_true", help="print composition + est and exit")
     args = ap.parse_args()
+    k = args.pool_k
 
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -408,8 +419,8 @@ def main():
     per_loc_recolors = SL.N_GEN0 + SL.R_MAX * SL.TOP_KEEP * SL.K_VARIANTS
     print(f"\n[humanq3] est per-location: 1 eval-field dump (ss2) + <= {per_loc_recolors} beam "
           f"recolors (coarse) + 1 label-field dump (ss{LABEL_SS} "
-          f"{LABEL_W*LABEL_SS}x{LABEL_H*LABEL_SS}) + <= {K} label recolors")
-    print(f"[humanq3] est total: {len(sources)} locations -> <= {len(sources)*K} crops")
+          f"{LABEL_W*LABEL_SS}x{LABEL_H*LABEL_SS}) + <= {k} label recolors")
+    print(f"[humanq3] est total: {len(sources)} locations -> <= {len(sources)*k} crops  (pool-k={k})")
 
     if args.limit:
         sources = sources[:args.limit]
@@ -439,7 +450,7 @@ def main():
         # are re-rendered below on the full ss2 label path, untouched by the coarse grid).
         res = SL.run_location(f"{cls}_{li:03d}", loc, lib, sampler, model, device,
                               args.seed, retain_all=True, coarse_score=True)
-        pool = top_k_pool(res["all_candidates"], K)
+        pool = top_k_pool(res["all_candidates"], k)
 
         # Label-spec re-render: ss2 field once, percentile-stretch once, then the K picks
         # concurrently (heavy single-threaded numpy per crop; cap 4).
