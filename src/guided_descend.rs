@@ -2756,7 +2756,7 @@ pub struct GuidedDescendArgs {
     /// min interior fraction — draws NO rng, byte-identical to prior runs) or
     /// `random-survivor` (uniform among survivors via reservoir sampling on the walk
     /// rng). Reject/EndCause logic is identical either way.
-    #[arg(long, value_enum, default_value_t = SelectionMode::LeastInterior)]
+    #[arg(long, value_enum, default_value_t = SelectionMode::RandomSurvivor)]
     pub selection: SelectionMode,
 
     /// Percentile finder band `lo,hi` (quantiles over escaped smooth-iter). The
