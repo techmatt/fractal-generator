@@ -2229,6 +2229,37 @@ impl WalkFamily {
     }
 }
 
+/// `dump-julia-bands` subcommand: see `guided_descend::run_dump_julia_bands`.
+/// Read-only; prints the per-family Julia descent band table as JSON. No render.
+#[derive(Args, Debug)]
+pub struct DumpJuliaBandsArgs {}
+
+/// Emit the canonical per-family Julia band table (`(esc_median_min, spread_min)`
+/// from [`WalkFamily::julia_band_defaults`]) as JSON to stdout, keyed by the
+/// `production_seeder.py` partition name. This is the single source of truth for the
+/// Rust↔Python parity guard (`tools/atlas/check_julia_bands.py`), which compares
+/// this output against `JULIA_GATHER_BANDS` — the guard never parses Rust source.
+/// Runtime render behavior is unchanged; this just prints what the engine already
+/// computes.
+pub fn run_dump_julia_bands(_args: &DumpJuliaBandsArgs) -> Result<(), String> {
+    // (partition key as used in tools/atlas/production_seeder.py, family).
+    let table = [
+        ("mandelbrot", WalkFamily::Mandelbrot),
+        ("multibrot3", WalkFamily::Multibrot3),
+        ("multibrot4", WalkFamily::Multibrot4),
+        ("multibrot5", WalkFamily::Multibrot5),
+    ];
+    let mut out = String::from("{\n");
+    for (i, (key, fam)) in table.iter().enumerate() {
+        let (esc, spread) = fam.julia_band_defaults();
+        let comma = if i + 1 < table.len() { "," } else { "" };
+        let _ = writeln!(out, "  \"{key}\": [{esc}, {spread}]{comma}");
+    }
+    out.push_str("}\n");
+    print!("{out}");
+    Ok(())
+}
+
 /// `guided-descend` subcommand: see `guided_descend::run_guided_descend`.
 /// Stochastic guided descent from the fixed base-Mandelbrot root; geometric
 /// policy only (no CNN). Reuses the `generate` cheap screen + `AcceptBand` and a

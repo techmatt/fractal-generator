@@ -200,6 +200,11 @@ pub enum Command {
     /// `data/guided_descend/<run>/`. Geometric policies only — no CNN, no dedup,
     /// no prefix-sharing. Diagnosis-first; `generate` is left intact as the control.
     GuidedDescend(crate::guided_descend::GuidedDescendArgs),
+    /// Read-only: print the canonical per-family Julia descent band table
+    /// (`WalkFamily::julia_band_defaults`) as JSON, keyed by partition name. The
+    /// single source of truth for the Rust↔Python band parity guard
+    /// (`tools/atlas/check_julia_bands.py`). No render.
+    DumpJuliaBands(crate::guided_descend::DumpJuliaBandsArgs),
     /// Corpus energy-histogram metric calibration + eye-check (Prompt
     /// corpus-energy-calibration). Computes a multi-scale OKLab edge-energy
     /// histogram for every corpus wallpaper, freezes equal-count bins per scale,

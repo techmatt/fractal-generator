@@ -333,6 +333,7 @@ fn run() -> Result<(), String> {
         Some(Command::Generate(args)) => generate::run_generate(args),
         Some(Command::Present(args)) => present::run_present(args),
         Some(Command::GuidedDescend(args)) => guided_descend::run_guided_descend(args),
+        Some(Command::DumpJuliaBands(args)) => guided_descend::run_dump_julia_bands(args),
         Some(Command::Calibrate(args)) => energy::run_calibrate(args),
         Some(Command::RenderOne(args)) => render_one::run_render_one(args),
         Some(Command::PaletteProbe(args)) => palette_probe::run_palette_probe(args),
