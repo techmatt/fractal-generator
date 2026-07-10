@@ -7,7 +7,7 @@ Pipeline (see prompts/ship_v1_emission_prompt.md):
   1. GATE-SCORE  run v2 inference on the existing humanq3 crops (already the head's
      ss2 label-crop input spec) -> marginal p_ge3 + continuous readout `score`. No
      re-render for scoring.
-  2. GATE        keep marginal p_ge3 > threshold (default 0.5). Good-only.
+  2. GATE        keep marginal p_ge3 > threshold (v3 default 0.90). Good-only.
   3. SELECT      the Stage-2d emission selector: family x Lab-cell MAP-Elites,
      <=1/location, palette cap; fitness = the continuous readout.
   4. EMIT        full-res render ONLY the selected winners at 2560x1440 ss4 Lanczos-3
@@ -59,8 +59,16 @@ _spec.loader.exec_module(es)
 
 # ---- config surface (tunable in place, no code changes) -------------------- #
 POOL_DEFAULT = REPO / "data/wallpaper_corpus/batches/2026-07-05_wallpaper_humanq3_v1"
-HEAD_CKPT = REPO / "data/wallpaper_head/v2/model_best.pt"
-GATE_THRESHOLD = 0.5             # marginal p_ge3 > threshold (good-only)
+HEAD_CKPT = REPO / "data/wallpaper_head/v3/model_best.pt"   # rollback: revert to v2/model_best.pt
+# Marginal p_ge3 > threshold (good-only). QUALITY-FLOOR / volume-policy dial, overridable
+# via --gate. Retuned 0.5 -> 0.90 for head v3 (see prompts/prompt_gate_retune_v3.md):
+# v3 gained a real precision GRADIENT the flat-on-v2 head lacked (eval precision of passers
+# 0.58@0.5 -> 0.68@0.90 -> 0.78@0.99). On the current dramatic beam the gate is NOT a volume
+# dial — the emission SELECTOR saturates first (winners flat ~21/52-loc-batch across
+# thr in [0.5,0.90], all winners already p_ge3>0.94), so 0.90 buys a higher-quality floor
+# feeding the selector at ZERO volume cost and holds the line on weaker/future pools. Raise
+# toward 0.95+ only to trade ~1 winner for a bit more precision; lower for more volume.
+GATE_THRESHOLD = 0.90
 PALETTE_CAP_FRAC = 0.05          # selector palette cap = max(2, ceil(frac * N_reachable_cells))
 GRID = es.ColorGrid()            # 3x3 a/b x 2 L = 18 color cells; family x cell = behavior space
 
@@ -151,7 +159,8 @@ def build_and_select(pool_dir: Path, gate_thr: float):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     score_fn, cfg = load_v2_scorer(device)
-    print(f"[gate] scoring {len(rows)} crops with v2 (best_epoch {cfg.get('best_epoch')}) on {device.type}")
+    print(f"[gate] scoring {len(rows)} crops with head {HEAD_CKPT.parent.name} "
+          f"(best_epoch {cfg.get('best_epoch')}) on {device.type}")
     t0 = time.time()
     cond, marg, ssum = score_fn(paths)
     p_ge3 = marg[:, 1]
@@ -188,7 +197,7 @@ def build_and_select(pool_dir: Path, gate_thr: float):
 
 
 def _parity_check(rows, p_ge3, ssum):
-    ev_path = REPO / "data/wallpaper_head/v2/eval_scores.jsonl"
+    ev_path = HEAD_CKPT.parent / "eval_scores.jsonl"   # track the deployed head (v3), not v2
     if not ev_path.exists():
         return
     ev = {json.loads(l)["image_id"]: json.loads(l)
@@ -337,7 +346,8 @@ def contact_sheet(manifest, gate_thr, n_pass, n_pool):
 def main():
     ap = argparse.ArgumentParser(description="Ship the v1 emission — real wallpapers.")
     ap.add_argument("--pool", type=Path, default=POOL_DEFAULT, help="candidate pool batch dir")
-    ap.add_argument("--gate", type=float, default=GATE_THRESHOLD, help="marginal p_ge3 gate")
+    ap.add_argument("--gate", type=float, default=GATE_THRESHOLD,
+                    help="marginal p_ge3 quality-floor gate (v3 default 0.90; lower=more volume)")
     ap.add_argument("--limit", type=int, default=0, help="emit only the first N winners (smoke)")
     ap.add_argument("--no-emit", action="store_true", help="gate+select only, skip full-res render")
     args = ap.parse_args()
