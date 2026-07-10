@@ -271,14 +271,22 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     if !(args.min_fw > 0.0) {
         return Err(format!("--min-fw must be > 0 (got {})", args.min_fw));
     }
-    let w_foci = args.w_foci.max(0.0);
-    let w_density = args.w_density.max(0.0);
-    let w_random = args.w_random.max(0.0);
+    // Policy mix (legacy finder): `--branch-weights f,d,r` overrides the `--w-*` trio.
+    let (bw_f, bw_d, bw_r) = args.resolved_branch_weights()?;
+    let w_foci = bw_f.max(0.0);
+    let w_density = bw_d.max(0.0);
+    let w_random = bw_r.max(0.0);
     let wsum = w_foci + w_density + w_random;
     if wsum <= 0.0 {
         return Err("target weights sum to zero".into());
     }
     let (p_foci, p_density) = (w_foci / wsum, w_density / wsum); // random = remainder
+
+    // Descent-ablation seam resolution (defaults reproduce prior behaviour).
+    let finder = args.finder;
+    let selection = args.selection;
+    let pct_band = args.resolved_pct_band()?;
+    let pct_schedule = args.resolved_pct_schedule()?;
 
     // Parse a fixed complex constant from two decimal strings. Shallow base-scale →
     // modest precision is plenty for the f64 projection (exactly like render-one).
@@ -681,22 +689,42 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                     let new_fh = new_fw * parent.out_height as f64 / parent.out_width as f64;
                     // parent_buf is always Some here (depth-1 root step set it).
                     let parent_samples = &parent_buf.as_ref().unwrap().samples;
-                    let mut gen = || -> Option<StepCand> {
-                        let (focus, branch, fscore) = pick_target(
-                            &parent, parent_samples, node_w as usize, node_h as usize, &sigmas,
-                            (p_foci, p_density), foci_div_px, random_boundary, &mut rng,
-                        );
-                        let placement = if branch == Branch::Random {
-                            Placement::Center
-                        } else {
-                            pick_placement((pl_center, pl_horizon, pl_random), plsum, &mut rng)
-                        };
-                        let center = child_center(focus, placement, new_fw, new_fh, &mut rng);
-                        Some(StepCand { center, branch: branch.name(), placement: placement.name(), fscore })
-                    };
                     // Part-0: skip the occ floor at the depth-1→2 step.
                     let step_screen = if d == 2 && skip_occ_d1d2 { &screen_d1d2 } else { &screen };
-                    best_of_n_step(step_screen, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects)
+                    match finder {
+                        FinderMode::Legacy => {
+                            let mut gen = |rng: &mut SplitMix64| -> Option<StepCand> {
+                                let (focus, branch, fscore) = pick_target(
+                                    &parent, parent_samples, node_w as usize, node_h as usize, &sigmas,
+                                    (p_foci, p_density), foci_div_px, random_boundary, rng,
+                                );
+                                let placement = if branch == Branch::Random {
+                                    Placement::Center
+                                } else {
+                                    pick_placement((pl_center, pl_horizon, pl_random), plsum, rng)
+                                };
+                                let center = child_center(focus, placement, new_fw, new_fh, rng);
+                                Some(StepCand { center, branch: branch.name(), placement: placement.name(), fscore })
+                            };
+                            best_of_n_step(
+                                step_screen, new_fw, selection, &render_node, &mut gen, &mut rng,
+                                &mut black_rejects, &mut occ_rejects,
+                            )
+                        }
+                        FinderMode::Percentile => {
+                            let pband = pct_band_for_depth(&pct_schedule, pct_band, d);
+                            let mut gen = |rng: &mut SplitMix64| -> Option<StepCand> {
+                                percentile_gen(
+                                    &parent, parent_samples, node_w as usize, node_h as usize, new_fw,
+                                    pband, args.pct_interior_cap, args.pct_max_tries, rng,
+                                )
+                            };
+                            best_of_n_step(
+                                step_screen, new_fw, selection, &render_node, &mut gen, &mut rng,
+                                &mut black_rejects, &mut occ_rejects,
+                            )
+                        }
+                    }
                 }
             };
 
@@ -707,6 +735,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                         "density" => branch_counts[1] += 1,
                         "random" => branch_counts[2] += 1,
                         "root8k" => root8k_count += 1,
+                        // Percentile-finder steps use no foci/density/random bucket
+                        // (the per-candidate `branch` in pool.jsonl carries the tag).
+                        "percentile" => {}
                         // Center-descend rungs used no policy branch — count them in
                         // none of the buckets (roots still count as rootjulia below).
                         "center" => {}
@@ -1053,19 +1084,23 @@ struct StepScreen<'a> {
 fn best_of_n_step(
     cfg: &StepScreen,
     new_fw: f64,
+    selection: SelectionMode,
     render_node: &impl Fn(&Frame) -> render::SampleBuffer,
-    gen: &mut dyn FnMut() -> Option<StepCand>,
+    gen: &mut dyn FnMut(&mut SplitMix64) -> Option<StepCand>,
+    rng: &mut SplitMix64,
     black_rejects: &mut usize,
     occ_rejects: &mut usize,
 ) -> StepResult {
     let mut saw_black = false; // a candidate failed the Stage-1 interior cap
     let mut saw_degen = false; // a candidate cleared the cap but failed the band
     let mut saw_occ = false; // a candidate cleared the band but failed the occ floor
-    // Winner so far = smallest interior fraction among full survivors.
+    // Winner among full survivors: least-interior keeps the min-interior-fraction
+    // survivor (draws NO rng); random-survivor reservoir-samples uniformly on `rng`.
     let mut best: Option<(Frame, render::SampleBuffer, &'static str, &'static str, f64, f64)> = None;
+    let mut n_surv = 0usize;
 
     for _ in 0..cfg.n_cand.max(1) {
-        let Some(sc) = gen() else { break };
+        let Some(sc) = gen(rng) else { break };
         let frame = Frame {
             center: sc.center,
             frame_width: new_fw,
@@ -1103,8 +1138,14 @@ fn best_of_n_step(
             }
         }
 
-        // Full survivor: keep it iff it is the least-set seen so far.
-        if best.as_ref().map_or(true, |b| int_frac < b.5) {
+        // Full survivor. least-interior: keep iff least-set so far (no rng).
+        // random-survivor: reservoir-sample (replace with prob 1/n_surv).
+        n_surv += 1;
+        let take = match selection {
+            SelectionMode::LeastInterior => best.as_ref().map_or(true, |b| int_frac < b.5),
+            SelectionMode::RandomSurvivor => rng.below(n_surv) == 0,
+        };
+        if take {
             best = Some((frame, buf, sc.branch, sc.placement, sc.fscore, int_frac));
         }
     }
@@ -1482,6 +1523,78 @@ fn density_focus(
     }
     let fh = parent.frame_height();
     Complex::new(parent.center.re + (fx - 0.5) * parent.frame_width, parent.center.im + (0.5 - fy) * fh)
+}
+
+/// Percentile-band finder (`--finder percentile`): draw one child-window center from
+/// the parent frame's escaped smooth-iter percentile band `[quantile(lo), quantile(hi)]`,
+/// window forced to CENTER (placement `center`). The child window's parent-space
+/// rectangle (width `new_fw`, 16:9) must have interior fraction `< interior_cap`
+/// (measured on the parent escaped mask) or the pixel is redrawn (up to `max_tries`).
+/// Returns `None` on an empty band or all-tries-fail — falling through exactly like an
+/// empty foci set. Consumes rng only (one `below` per redraw). Screened downstream by
+/// the same best-of-N band/occupancy/black gates as the legacy finder.
+#[allow(clippy::too_many_arguments)]
+fn percentile_gen(
+    parent: &Frame,
+    samples: &[crate::backend::PixelSample],
+    w: usize,
+    h: usize,
+    new_fw: f64,
+    (lo, hi): (f64, f64),
+    interior_cap: f64,
+    max_tries: usize,
+    rng: &mut SplitMix64,
+) -> Option<StepCand> {
+    let n = w * h;
+    if samples.len() < n || n == 0 {
+        return None;
+    }
+    // Escaped smooth-iter values → percentile thresholds.
+    let mut esc: Vec<f64> = samples[..n].iter().filter(|s| s.escaped).map(|s| s.smooth_iter).collect();
+    if esc.len() < 16 {
+        return None;
+    }
+    esc.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let q = |p: f64| esc[((p * (esc.len() - 1) as f64) as usize).min(esc.len() - 1)];
+    let (v_lo, v_hi) = (q(lo), q(hi));
+    // Candidate pixel indices: escaped, μ inside the band.
+    let band: Vec<usize> = (0..n)
+        .filter(|&i| {
+            let s = &samples[i];
+            s.escaped && s.smooth_iter >= v_lo && s.smooth_iter <= v_hi
+        })
+        .collect();
+    if band.is_empty() {
+        return None;
+    }
+    // Child window footprint in parent pixels (parent pixels are square in-plane).
+    let child_w_px = w as f64 * (new_fw / parent.frame_width);
+    let (hw, hh) = (child_w_px * 0.5, child_w_px * 9.0 / 16.0 * 0.5);
+    for _ in 0..max_tries.max(1) {
+        let i = band[rng.below(band.len())];
+        let (px, py) = ((i % w) as f64, (i / w) as f64);
+        // Parent-space child rect (clamped to the frame); interior frac on the mask.
+        let x0 = (px - hw).floor().max(0.0) as usize;
+        let x1 = ((px + hw).ceil() as i64).clamp(0, w as i64 - 1) as usize;
+        let y0 = (py - hh).floor().max(0.0) as usize;
+        let y1 = ((py + hh).ceil() as i64).clamp(0, h as i64 - 1) as usize;
+        let (mut interior, mut total) = (0usize, 0usize);
+        for yy in y0..=y1 {
+            let row = yy * w;
+            for xx in x0..=x1 {
+                total += 1;
+                if !samples[row + xx].escaped {
+                    interior += 1;
+                }
+            }
+        }
+        let int_frac = if total > 0 { interior as f64 / total as f64 } else { 1.0 };
+        if int_frac < interior_cap {
+            let center = pixel_to_complex(parent, px, py);
+            return Some(StepCand { center, branch: "percentile", placement: "center", fscore: f64::NAN });
+        }
+    }
+    None
 }
 
 /// A uniformly random interior point of the frame, ≥ 20 % from any edge.
@@ -2229,6 +2342,27 @@ impl WalkFamily {
     }
 }
 
+/// Which next-center generator the descent uses at depth ≥ 2 (ablation seam).
+/// `Legacy` = the settled foci/density/random policy (`pick_target` + placement);
+/// `Percentile` = the smooth-iter percentile-band finder (draw a pixel from an
+/// escaped-μ quantile band, window forced center). Default `Legacy` is byte-
+/// identical to prior runs.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum FinderMode {
+    Legacy,
+    Percentile,
+}
+
+/// How `best_of_n_step` picks the winner among full survivors (ablation seam).
+/// `LeastInterior` = the settled min-interior-fraction objective (draws NO rng —
+/// byte-identical to prior runs); `RandomSurvivor` = a uniform draw among the
+/// survivors via reservoir sampling on the walk rng.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum SelectionMode {
+    LeastInterior,
+    RandomSurvivor,
+}
+
 /// `dump-julia-bands` subcommand: see `guided_descend::run_dump_julia_bands`.
 /// Read-only; prints the per-family Julia descent band table as JSON. No render.
 #[derive(Args, Debug)]
@@ -2601,6 +2735,54 @@ pub struct GuidedDescendArgs {
     #[arg(long)]
     pub seed_list: Option<String>,
 
+    // --- Descent-ablation seam (finder / selection / percentile-band) ---------
+    /// Depth-≥2 next-center finder: `legacy` (foci/density/random policy, default,
+    /// byte-identical to prior runs) or `percentile` (smooth-iter percentile-band
+    /// finder — window centered on a pixel drawn from an escaped-μ quantile band).
+    /// The percentile finder ignores the foci/density/random weights, `--sigma-band`,
+    /// `--foci-diversity-radius`, `--random-boundary`, and placement (window forced
+    /// center); it is screened by the same best-of-N band/occupancy/black gates.
+    #[arg(long, value_enum, default_value_t = FinderMode::Legacy)]
+    pub finder: FinderMode,
+
+    /// Convenience override of the normalized foci/density/random policy mix as
+    /// `f,d,r` (e.g. `0.10,0.20,0.70`). When set, replaces `--w-foci/--w-density/
+    /// --w-random`. **Legacy finder only** (the percentile finder has no policy mix).
+    /// Unset ⇒ the individual `--w-*` flags apply.
+    #[arg(long)]
+    pub branch_weights: Option<String>,
+
+    /// Best-of-N winner objective among full survivors: `least-interior` (default,
+    /// min interior fraction — draws NO rng, byte-identical to prior runs) or
+    /// `random-survivor` (uniform among survivors via reservoir sampling on the walk
+    /// rng). Reject/EndCause logic is identical either way.
+    #[arg(long, value_enum, default_value_t = SelectionMode::LeastInterior)]
+    pub selection: SelectionMode,
+
+    /// Percentile finder band `lo,hi` (quantiles over escaped smooth-iter). The
+    /// candidate pixel set is the escaped pixels whose μ falls in `[quantile(lo),
+    /// quantile(hi)]`; a pixel is drawn uniformly from it and the child window is
+    /// centered there. Default `0.60,0.80`.
+    #[arg(long, default_value = "0.60,0.80")]
+    pub pct_band: String,
+
+    /// Percentile finder interior cap: the child window's parent-space rectangle must
+    /// have interior fraction `< cap` (measured on the parent mask) or the pixel is
+    /// redrawn. Default 0.30 (matches the Stage-1 black cap spirit).
+    #[arg(long, default_value_t = 0.30)]
+    pub pct_interior_cap: f64,
+
+    /// Percentile finder max redraw attempts before a single `gen` call returns None
+    /// (falls through like an empty foci set). Default 32.
+    #[arg(long, default_value_t = 32)]
+    pub pct_max_tries: usize,
+
+    /// Optional percentile band schedule: piecewise-constant by depth, as
+    /// `d0:lo0,hi0;d1:lo1,hi1;...` (the band for the largest breakpoint depth ≤ the
+    /// current descent depth wins). Unset ⇒ the constant `--pct-band`.
+    #[arg(long)]
+    pub pct_band_schedule: Option<String>,
+
     /// Output directory (`pool_sheet.html`, `pool.jsonl`, `pool_grid.png`,
     /// `tiles/`). Outside `out/` — durable. Use a distinct dir per run.
     #[arg(long, default_value = "data/guided_descend/run4")]
@@ -2726,6 +2908,88 @@ impl GuidedDescendArgs {
         }
         Ok(v)
     }
+
+    /// Resolved policy weights `(foci, density, random)` (un-normalized). `--branch-weights
+    /// f,d,r` overrides the individual `--w-*` flags when set (legacy finder only).
+    pub fn resolved_branch_weights(&self) -> Result<(f64, f64, f64), String> {
+        match &self.branch_weights {
+            None => Ok((self.w_foci, self.w_density, self.w_random)),
+            Some(s) => {
+                let p: Vec<&str> = s.split(',').collect();
+                if p.len() != 3 {
+                    return Err(format!("invalid --branch-weights '{s}', expected f,d,r"));
+                }
+                let parse = |x: &str| -> Result<f64, String> {
+                    x.trim().parse::<f64>().map_err(|_| format!("invalid --branch-weights value '{}'", x.trim()))
+                };
+                let (f, d, r) = (parse(p[0])?, parse(p[1])?, parse(p[2])?);
+                if f < 0.0 || d < 0.0 || r < 0.0 || f + d + r <= 0.0 {
+                    return Err("--branch-weights must be non-negative and sum > 0".into());
+                }
+                Ok((f, d, r))
+            }
+        }
+    }
+
+    /// Parse a `lo,hi` percentile-band spec into two quantiles in `[0,1]`, lo < hi.
+    fn parse_pct_pair(spec: &str) -> Result<(f64, f64), String> {
+        let p: Vec<&str> = spec.split(',').collect();
+        if p.len() != 2 {
+            return Err(format!("invalid percentile band '{spec}', expected lo,hi"));
+        }
+        let parse = |x: &str| -> Result<f64, String> {
+            x.trim().parse::<f64>().map_err(|_| format!("invalid percentile value '{}'", x.trim()))
+        };
+        let (lo, hi) = (parse(p[0])?, parse(p[1])?);
+        if !(0.0..=1.0).contains(&lo) || !(0.0..=1.0).contains(&hi) || hi <= lo {
+            return Err(format!("percentile band '{spec}' must satisfy 0<=lo<hi<=1"));
+        }
+        Ok((lo, hi))
+    }
+
+    /// Resolved constant percentile band `(lo, hi)` from `--pct-band`.
+    pub fn resolved_pct_band(&self) -> Result<(f64, f64), String> {
+        Self::parse_pct_pair(&self.pct_band)
+    }
+
+    /// Resolved percentile band schedule as ascending `(depth, lo, hi)` breakpoints.
+    /// Empty ⇒ constant band (`--pct-band` used directly). Format:
+    /// `d0:lo0,hi0;d1:lo1,hi1;...`.
+    pub fn resolved_pct_schedule(&self) -> Result<Vec<(u32, f64, f64)>, String> {
+        let Some(spec) = &self.pct_band_schedule else { return Ok(Vec::new()) };
+        let mut out: Vec<(u32, f64, f64)> = Vec::new();
+        for seg in spec.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            let (d, band) = seg
+                .split_once(':')
+                .ok_or_else(|| format!("invalid --pct-band-schedule segment '{seg}', expected d:lo,hi"))?;
+            let depth: u32 = d.trim().parse().map_err(|_| format!("invalid schedule depth '{}'", d.trim()))?;
+            let (lo, hi) = Self::parse_pct_pair(band.trim())?;
+            out.push((depth, lo, hi));
+        }
+        if out.is_empty() {
+            return Err("--pct-band-schedule parsed to no breakpoints".into());
+        }
+        out.sort_by_key(|(d, _, _)| *d);
+        Ok(out)
+    }
+}
+
+/// The percentile band for descent depth `d`: the schedule breakpoint with the
+/// largest depth ≤ `d` (or the first breakpoint if `d` precedes all), else the
+/// constant `fallback` when the schedule is empty.
+fn pct_band_for_depth(schedule: &[(u32, f64, f64)], fallback: (f64, f64), d: u32) -> (f64, f64) {
+    if schedule.is_empty() {
+        return fallback;
+    }
+    let mut band = (schedule[0].1, schedule[0].2);
+    for &(bd, lo, hi) in schedule {
+        if bd <= d {
+            band = (lo, hi);
+        } else {
+            break;
+        }
+    }
+    band
 }
 
 #[cfg(test)]
@@ -2774,7 +3038,7 @@ mod tests {
         };
 
         let new_fw = 3.0f64;
-        let mut gen = || -> Option<StepCand> {
+        let mut gen = |_rng: &mut SplitMix64| -> Option<StepCand> {
             Some(StepCand {
                 center: Complex::new(0.0, 0.0),
                 branch: "random",
@@ -2784,8 +3048,10 @@ mod tests {
         };
         let mut black_rejects = 0usize;
         let mut occ_rejects = 0usize;
+        let mut sel_rng = SplitMix64(0);
         let result = best_of_n_step(
-            &cfg, new_fw, &render_node, &mut gen, &mut black_rejects, &mut occ_rejects,
+            &cfg, new_fw, SelectionMode::LeastInterior, &render_node, &mut gen, &mut sel_rng,
+            &mut black_rejects, &mut occ_rejects,
         );
 
         let (frame, emitted_occ) = match result {
