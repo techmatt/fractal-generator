@@ -61,6 +61,7 @@ import sample_location as SL          # noqa: E402  (run_location retain-all, lo
 import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteSampler)
 import colormap as cm                 # noqa: E402  (stretch_field)
 import location as loc_mod            # noqa: E402  (canonical Location, from_render_block, location_key)
+import corpus_common as cc            # noqa: E402  (is_v6_decoded — v6-stamp guard)
 from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
 from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
     LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER,
@@ -183,7 +184,7 @@ def select_sources(seed, count):
         if not line.strip():
             continue
         d = json.loads(line)
-        if (d.get("scorer_version") != "v6" or d.get("decoded_class") != 3
+        if (not cc.is_v6_decoded(d) or d.get("decoded_class") != 3
                 or not d.get("guard_pass") or d.get("family") not in DEG2_FAMILIES):
             continue
         tl = _to_location(d)
