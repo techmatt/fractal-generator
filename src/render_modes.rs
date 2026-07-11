@@ -182,6 +182,17 @@ pub enum Field {
     /// averaging-family member; escaped-gated like smooth/stripe). A drop-in
     /// alternative shading to smooth. `divergescale = 1.0`, so `#index` is the raw
     /// sum (the percentile-stretch absorbs the scale).
+    ///
+    /// **Redundant with `smooth` — `niche`, deprecated for render-mode exploration.**
+    /// Added with the UF-algorithm reconstruction (`uf_coloring_algorithms.md`) as a
+    /// formula-agnostic smooth-alternative, *before* `smooth` was promoted the canonical
+    /// base carrier, so the overlap is by design. Empirically this field is monotone with
+    /// `smooth` (Spearman ≥ 0.999 across all 8 pilot families ⇒ beam-equivalent under the
+    /// gamma/transfer/n_cycles freedom), so its render-mode-pilot rasters were pixel-dupes
+    /// of their smooth counterpart (ΔE76 < 5, all flagged `too_close_to_smooth`). Its one
+    /// nominal knob `divergescale` is hardcoded 1.0 and, as a constant scale *before* the
+    /// percentile-stretch, is absorbed to a no-op (no non-stretched/fixed-palette index
+    /// path exists to make it live). Keep `smooth` as the base carrier.
     ExpSmoothing,
     /// **Decomposition**: final-only, escaped pixels only — `atan2(z_final)` folded
     /// to `[0,1)`. No accumulation; reads the escape-point angle. Pairs with a low
