@@ -81,10 +81,17 @@ code{color:#9bb}
 
 <script>
 // --- which batch to label: ?batch=<dir> query param overrides, else this default
-//     (a dir under data/label_corpus/batches/) ---
-const BATCH_ID=new URLSearchParams(location.search).get('batch')||'2026-07-05_gather_v6';
+//     (a dir under the corpus root) ---
+const QP=new URLSearchParams(location.search);
+const BATCH_ID=QP.get('batch')||'2026-07-05_gather_v6';
 const ROOT='../../';                 // tools/viz/ -> repo root
-const BATCH_DIR='data/label_corpus/batches/'+BATCH_ID;
+// ?root=<dir> overrides the corpus batches root (default: the location corpus).
+//   e.g. ?root=data/render_mode_corpus/batches for the render-mode pilot.
+const CORPUS_ROOT=(QP.get('root')||'data/label_corpus/batches').replace(/\/+$/,'');
+// ?blind=1 hides ALL provenance (mode/palette/location/etc) and forces the
+//   reproducible shuffle order — label purely on how the raster looks.
+const BLIND=QP.get('blind')==='1';
+const BATCH_DIR=CORPUS_ROOT+'/'+BATCH_ID;
 const IMAGES_URL=ROOT+BATCH_DIR+'/images.jsonl';
 const LS_KEY='corpus_label::'+BATCH_ID;   // localStorage is per-batch
 const SHUFFLE_SEED=0xC0FFEE;
@@ -105,7 +112,8 @@ function fscore(r){ const v=r.provenance&&r.provenance.filter_score; return (typ
 function buildOrder(rows){
   // v2-pre-scored batches: best-first by P(not-bad) descending (fast rejection at
   // the tail; orders the random_eval reserve). Nulls sink to the bottom.
-  if(rows.some(r=>fscore(r)!==null)){
+  // BLIND mode never sorts by score — always the reproducible shuffle below.
+  if(!BLIND && rows.some(r=>fscore(r)!==null)){
     return rows.slice().sort((a,b)=>{
       const fa=fscore(a), fb=fscore(b);
       if(fa===null&&fb===null) return (a.image_id<b.image_id)?-1:1;
@@ -185,21 +193,28 @@ function show(){
   const r=ROWS[cur], rd=r.render||{}, pv=r.provenance||{};
   document.getElementById('cur-img').src=imgSrc(r);
   document.getElementById('cur-img').alt=keyOf(r);
-  document.getElementById('cap-loc').textContent=`${cur+1}/${ROWS.length} · ${r.image_id}`;
-  const prov=[pv.root_src,pv.branch,(pv.depth!=null?('d'+pv.depth):null)].filter(Boolean).join(' ');
-  document.getElementById('cap-prov').textContent=prov||'—';
-  document.getElementById('cap-comp').textContent=rd.composition||'';
-  document.getElementById('cap-pal').textContent=rd.palette||'';
-  document.getElementById('cap-occ').textContent=(pv.occupancy!=null)?('occ '+(+pv.occupancy).toFixed(3)):'occ ?';
-  const v2=document.getElementById('cap-v2'), fs=fscore(r);
-  if(fs!==null){
-    const ec=pv.v2_est_class, lbl={1:'bad',2:'okay',3:'good'};
-    v2.textContent='v2 P(not-bad) '+fs.toFixed(3)+(ec?(' · est '+ec+'·'+(lbl[ec]||'')):'');
-    v2.style.color = fs>=0.5 ? '#5ec07a' : '#e0b24a';
-  } else { v2.textContent=''; v2.style.color=''; }
-  const role=document.getElementById('cap-role');
-  role.textContent=pv.selection_role||'';
-  role.style.color = pv.selection_role==='random_eval' ? '#6a8fd0' : '#777';
+  if(BLIND){
+    // hide mode / palette / location / all provenance — label on the raster alone
+    document.getElementById('cap-loc').textContent=`${cur+1}/${ROWS.length}`;
+    for(const id of ['cap-prov','cap-comp','cap-pal','cap-occ','cap-v2','cap-role'])
+      document.getElementById(id).textContent='';
+  } else {
+    document.getElementById('cap-loc').textContent=`${cur+1}/${ROWS.length} · ${r.image_id}`;
+    const prov=[pv.root_src,pv.branch,(pv.depth!=null?('d'+pv.depth):null)].filter(Boolean).join(' ');
+    document.getElementById('cap-prov').textContent=prov||'—';
+    document.getElementById('cap-comp').textContent=rd.composition||'';
+    document.getElementById('cap-pal').textContent=rd.palette||'';
+    document.getElementById('cap-occ').textContent=(pv.occupancy!=null)?('occ '+(+pv.occupancy).toFixed(3)):'occ ?';
+    const v2=document.getElementById('cap-v2'), fs=fscore(r);
+    if(fs!==null){
+      const ec=pv.v2_est_class, lbl={1:'bad',2:'okay',3:'good'};
+      v2.textContent='v2 P(not-bad) '+fs.toFixed(3)+(ec?(' · est '+ec+'·'+(lbl[ec]||'')):'');
+      v2.style.color = fs>=0.5 ? '#5ec07a' : '#e0b24a';
+    } else { v2.textContent=''; v2.style.color=''; }
+    const role=document.getElementById('cap-role');
+    role.textContent=pv.selection_role||'';
+    role.style.color = pv.selection_role==='random_eval' ? '#6a8fd0' : '#777';
+  }
   if(lbOpen)syncLightbox();
   const s=scores[keyOf(r)];
   const lbl={1:'bad',2:'okay',3:'good'};
@@ -226,6 +241,11 @@ function syncLightbox(){
   const r=ROWS[cur], rd=r.render||{}, pv=r.provenance||{};
   document.getElementById('lbimg').src=imgSrc(r);
   const lbl={1:'bad',2:'okay',3:'good'}, s=scores[keyOf(r)];
+  if(BLIND){
+    document.getElementById('lbcap').textContent=
+      `${cur+1}/${ROWS.length} · ${s?('label '+s+' · '+lbl[s]):'unlabeled'}`;
+    return;
+  }
   const fs=fscore(r);
   const v2txt=(fs!==null)?(' · v2 '+fs.toFixed(3)+(pv.v2_est_class?('/est'+pv.v2_est_class):'')):'';
   const roletxt=pv.selection_role?(' · '+pv.selection_role):'';
