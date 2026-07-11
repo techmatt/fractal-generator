@@ -196,7 +196,7 @@ pub enum Field {
 }
 
 impl Field {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Field::Smooth => "smooth",
             Field::Stripe => "stripe",
@@ -756,6 +756,13 @@ pub struct ColoringParams {
     pub palette_cycles: f64,
     /// Gradient phase offset in `[0,1)` (palette stage).
     pub palette_offset: f64,
+    /// Reverse the palette LUT direction (field-independent flip about the seam,
+    /// matching [`crate::palette::Palette::from_srgb8_stops_mirrored`]'s `reverse`).
+    /// The one approved colormap knob the beautiful path lacked; needed so a
+    /// `reverse=true` approved coloring (e.g. Winner B) renders faithfully through
+    /// `--coloring` on the composite modes, which cannot go through the Python
+    /// dump→recolor tail. Default `false` (byte-identical to the prior path).
+    pub reverse: bool,
     // --- v2 composite (field-modulates-field) ---
     /// Optional **texture** field that modulates the base ([`Self::field`]).
     /// `None` → the v1 single-field path (byte-identical, separate branch). When
@@ -805,6 +812,7 @@ impl Default for ColoringParams {
             light_height: 1.0,
             palette_cycles: 1.0,
             palette_offset: 0.0,
+            reverse: false,
             texture_field: None,
             texture_transform: Transform::Linear,
             texture_gamma: 1.0,
@@ -879,7 +887,7 @@ impl ColoringParams {
              \"direct_threshold\":{},\"direct_opacity\":{},\"merge_mode\":\"{}\",\
              \"merge_order\":\"{}\",\"shape\":\"{}\",\"start_color\":\"{}\",\"transform\":\"{}\",\"gamma\":{},\
              \"shade\":\"{}\",\"light_azimuth\":{},\"light_height\":{},\
-             \"palette_cycles\":{},\"palette_offset\":{},\
+             \"palette_cycles\":{},\"palette_offset\":{},\"reverse\":{},\
              \"texture_field\":\"{}\",\"texture_transform\":\"{}\",\"texture_gamma\":{},\
              \"combine\":\"{}\",\"texture_weight\":{}}}",
             self.bailout_b,
@@ -903,6 +911,7 @@ impl ColoringParams {
             self.light_height,
             self.palette_cycles,
             self.palette_offset,
+            self.reverse,
             self.texture_field.map_or("none", Field::as_str),
             self.texture_transform.as_str(),
             self.texture_gamma,
@@ -1010,6 +1019,10 @@ impl ColoringParams {
             }
             if let Some(v) = jsonl::field_f64(s, "palette_offset") {
                 p.palette_offset = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_bool(s, "reverse") {
+                p.reverse = v;
                 named = true;
             }
             // v2 composite. `texture_field` absent or "none" → single-field (None).
@@ -1841,6 +1854,73 @@ pub fn smooth_field_supersampled(
                 // NaN encodes interior / non-escaped (Field::Smooth is exterior-only).
                 let v = acc.field(Field::Smooth).map_or(f32::NAN, |x| x as f32);
                 row.push(v);
+            }
+            row
+        })
+        .collect();
+
+    let flat: Vec<f32> = rows.into_iter().flatten().collect();
+    (flat, sub_w as u32, sub_h as u32)
+}
+
+/// Compute the **raw scalar field of an arbitrary single coloring mode** over the
+/// supersampled grid — the general-field twin of [`smooth_field_supersampled`], for
+/// the field⊗Python-coloring split's non-smooth keeper modes (`tia`, `stripe`,
+/// `curvature`, `trap_circle`, …). Same grid geometry, same [`iterate_orbit`]
+/// accumulate pass, same `NaN`-encodes-interior / row-major layout — it differs only
+/// in the per-subpixel reduction: `params.field` instead of a hardcoded
+/// [`Field::Smooth`]. `de`/`gaussian_int` route through their pixel-/Color-By-aware
+/// reducers ([`OrbitAccum::de_value`] / [`OrbitAccum::gaussint_value`]) exactly as
+/// the composite path's `eval` closure, so every scalar field dumps faithfully.
+///
+/// Because the reduction is the *same* one [`render_beautiful_single`] applies before
+/// its percentile-stretch, a Python coloring tail fed this field reproduces the Rust
+/// single-field render (up to the shared stretch/transform, which the tail mirrors) —
+/// and inherits the full colormap param set (reverse / transfer / log_premap /
+/// n_cycles / phase) for free. [`Field::DirectTrap`] is colour-valued (no scalar
+/// reduction) and rejected by the caller before this is reached; on the off chance it
+/// arrives, its subpixels fall to `NaN`. Returns `(field, sub_w, sub_h)`.
+pub fn single_field_supersampled(
+    frame: &Frame,
+    ss: u32,
+    maxiter: u32,
+    family: Family,
+    params: &ColoringParams,
+) -> (Vec<f32>, u32, u32) {
+    let s = ss.max(1);
+    let sub_w = (frame.out_width * s) as usize;
+    let sub_h = (frame.out_height * s) as usize;
+    let fw = frame.frame_width;
+    let fh = frame.frame_height();
+    let sub_w_f = sub_w as f64;
+    let sub_h_f = sub_h as f64;
+    let center = frame.center;
+    let the_field = params.field;
+    // pixel scale for the `de` reducer (zoom-invariant filament thickness).
+    let pixel_size = fw / frame.out_width as f64;
+
+    // Grid geometry identical to `smooth_field_supersampled` (grid-centered SS).
+    let rows: Vec<Vec<f32>> = (0..sub_h)
+        .into_par_iter()
+        .map(|srow| {
+            let py = srow as f64 + 0.5;
+            let dc_im = (0.5 - py / sub_h_f) * fh;
+            let mut row = Vec::with_capacity(sub_w);
+            for scol in 0..sub_w {
+                let px = scol as f64 + 0.5;
+                let dc_re = (px / sub_w_f - 0.5) * fw;
+                let pixel = Complex::new(center.re + dc_re, center.im + dc_im);
+                let (z0, c) = family.seed(pixel);
+                let acc = iterate_orbit(z0, c, maxiter, params, family);
+                // Same per-field reduction the composite `eval` closure uses; `de` and
+                // `gaussian_int` need their pixel-/Color-By-aware reducers.
+                let v = match the_field {
+                    Field::De => acc.de_value(pixel_size, params.de_scale),
+                    Field::GaussianInt => acc.gaussint_value(params.gaussint_color_by),
+                    _ => acc.field(the_field),
+                };
+                // NaN encodes interior / non-escaped (the seam every dumped field writes).
+                row.push(v.map_or(f32::NAN, |x| x as f32));
             }
             row
         })

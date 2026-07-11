@@ -202,6 +202,14 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         ));
     }
 
+    // Beautiful coloring (non-default `--coloring`) routes to the decoupled
+    // field→shade→palette pipeline; absent/default routes to the byte-identical
+    // location-profile path below. Resolved before the palette build so the beautiful
+    // `reverse` knob can flip the baked LUT (field-independent; the location-profile
+    // path keeps `reverse = false`, preserving byte-identity).
+    let coloring_params = resolve_coloring(&args.coloring)?;
+    let want_reverse = coloring_params.as_ref().map_or(false, |cp| cp.reverse);
+
     // Palette through the SAME selective-mirror path as present/aa-filter, so any
     // library palette (cyclic or sequential `mirror_needed`) renders seam-free.
     let cm_text = std::fs::read_to_string(&args.colormaps)
@@ -213,44 +221,44 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         .find(|c| c.name == args.palette)
         .ok_or_else(|| format!("palette '{}' not found in {}", args.palette, args.colormaps))?;
     let palette =
-        Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, false, cm.mirror_needed);
+        Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, want_reverse, cm.mirror_needed);
 
     let mut params = color_params();
     params.density *= args.n_cycles; // n_cycles = palette band-repeat multiplier
     let channels = coloring::required_channels(&params);
     let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
 
-    // Beautiful coloring (non-default `--coloring`) routes to the decoupled
-    // field→shade→palette pipeline; absent/default routes to the byte-identical
-    // location-profile path below.
-    let coloring_params = resolve_coloring(&args.coloring)?;
-
-    // --- field dump branch (serialize the raw smooth field, exit before coloring) ---
+    // --- field dump branch (serialize the raw scalar field, exit before coloring) ---
     if let Some(dump_path) = &args.dump_field {
-        // The dumped field is the *smooth* field. Its only iterate-stage input is the
-        // bailout: take it from an explicit `--coloring` smooth spec, else the
-        // beautiful-smooth default (2^16). A non-smooth `--coloring` is a loud error
-        // rather than a silently-ignored field.
+        // The dumped field is whichever single scalar coloring mode `--coloring`
+        // names (default: the beautiful smooth field); its iterate-stage inputs
+        // (bailout, biomorph, stripe_density, …) come from the same spec. This is the
+        // serialization half of the field⊗Python-coloring split — the Python tail
+        // (`colormap.py`) is field-agnostic, so a dumped tia/stripe/curvature/… field
+        // inherits the full colormap param set (reverse/transfer/log_premap/…).
+        // `direct_trap` is colour-valued (no scalar reduction) and rejected below.
         let field_params = match &coloring_params {
-            Some(cp) if cp.field == render_modes::Field::Smooth => *cp,
-            Some(cp) => {
-                return Err(format!(
-                    "--dump-field serializes the smooth field, but --coloring names field={:?}. \
-                     Pass a smooth spec (e.g. '{{\"field\":\"smooth\"}}') or omit --coloring.",
-                    cp.field
-                ));
-            }
+            Some(cp) => *cp,
             None => ColoringParams::beautiful(render_modes::Field::Smooth),
         };
-        // `beautiful` runs the generic smooth kernel (byte-identical, colormap-split
-        // source). `f64` sources from the fast escape-time backend's smooth channel —
-        // same geometry / NaN seam, un-normalized value at the render path's `1e6`
-        // escape radius; for the mask/std-only guard. `report_bailout` records the
-        // escape radius actually used, so the sidecar's `bailout_b` matches the field.
+        let dumped_field = field_params.field;
+        if dumped_field == render_modes::Field::DirectTrap {
+            return Err("--dump-field: direct_trap is a colour-valued composite, not a scalar \
+                        field — nothing to serialize. Use a scalar field (smooth/tia/stripe/\
+                        curvature/trap_circle/…) or the Rust `--coloring` render path."
+                .into());
+        }
+        // `beautiful` runs the generic beautiful kernel and reduces `params.field`
+        // per subpixel (byte-identical to the smooth render for smooth). `f64` sources
+        // from the fast escape-time backend's smooth channel — same geometry / NaN
+        // seam, un-normalized value at the render path's `1e6` escape radius; for the
+        // mask/std-only guard, and smooth-only (no fast twin for the other fields).
+        // `report_bailout` records the escape radius actually used, so the sidecar's
+        // `bailout_b` matches the field.
         let t0 = Instant::now();
         let ((field, sub_w, sub_h), report_bailout) = match args.dump_field_source {
             FieldSourceChoice::Beautiful => (
-                render_modes::smooth_field_supersampled(
+                render_modes::single_field_supersampled(
                     &frame,
                     ss,
                     args.maxiter,
@@ -259,16 +267,26 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                 ),
                 field_params.bailout_b,
             ),
-            FieldSourceChoice::F64 => (
-                render_modes::smooth_field_f64_supersampled(
-                    &frame,
-                    ss,
-                    args.maxiter,
-                    family,
+            FieldSourceChoice::F64 => {
+                if dumped_field != render_modes::Field::Smooth {
+                    return Err(format!(
+                        "--dump-field-source f64 serializes only the smooth field, but \
+                         --coloring names field={:?}. Drop --dump-field-source (use the \
+                         default beautiful source) for non-smooth fields.",
+                        dumped_field
+                    ));
+                }
+                (
+                    render_modes::smooth_field_f64_supersampled(
+                        &frame,
+                        ss,
+                        args.maxiter,
+                        family,
+                        BAILOUT,
+                    )?,
                     BAILOUT,
-                )?,
-                BAILOUT,
-            ),
+                )
+            }
         };
         let secs = t0.elapsed().as_secs_f64();
 
@@ -297,10 +315,11 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         }
         let sidecar = format!(
             "{{\"width\":{sub_w},\"height\":{sub_h},\"supersample\":{ss},\
-             \"field\":\"smooth\",\"dtype\":\"f32\",\"layout\":\"row_major\",\
+             \"field\":\"{field_name}\",\"dtype\":\"f32\",\"layout\":\"row_major\",\
              \"bailout_b\":{bailout},\
              \"location\":{{\"kind\":\"{kind}\",\"cx\":\"{cx}\",\"cy\":\"{cy}\",\
              \"fw\":\"{fw}\",\"maxiter\":{maxiter}{c_fields}}}}}",
+            field_name = dumped_field.as_str(),
             bailout = report_bailout,
             cx = args.center_re,
             cy = args.center_im,
@@ -314,7 +333,8 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         std::fs::write(&json_path, sidecar).map_err(|e| format!("write sidecar {json_path}: {e}"))?;
 
         eprintln!(
-            "dump-field: {sub_w}x{sub_h} (ss{ss}) smooth field → {dump_path} (+ {json_path}) in {secs:.2}s"
+            "dump-field: {sub_w}x{sub_h} (ss{ss}) {field} field → {dump_path} (+ {json_path}) in {secs:.2}s",
+            field = dumped_field.as_str()
         );
         println!("=== render-one (dump-field) ===");
         println!("field:   {dump_path}");
@@ -694,15 +714,19 @@ pub struct RenderOneArgs {
     #[arg(long, default_value_t = 95)]
     pub jpg_quality: u8,
 
-    /// Dump the **raw smooth scalar field** (pre-coloring: before percentile-stretch,
-    /// transform, gamma, shade, palette) to `<path>` as little-endian `f32`,
-    /// row-major, at the supersampled resolution (`--width·ss × --height·ss`);
-    /// interior / non-escaped subpixels are `NaN`. Also writes a JSON sidecar
-    /// (`<path>` with `.bin`→`.json`, else `<path>.json`) describing dims / ss /
-    /// location. Computes the field and **exits before coloring** — no PNG is
-    /// written. The field is fixed to `smooth`; its bailout follows `--coloring`
-    /// (`{"field":"smooth", ...}`) or, when absent, the beautiful-smooth default
-    /// (`2^16`). This is the serialization half of the field⊗Python-coloring split.
+    /// Dump the **raw scalar field of a single coloring mode** (pre-coloring: before
+    /// percentile-stretch, transform, gamma, shade, palette) to `<path>` as
+    /// little-endian `f32`, row-major, at the supersampled resolution
+    /// (`--width·ss × --height·ss`); interior / non-escaped subpixels are `NaN`. Also
+    /// writes a JSON sidecar (`<path>` with `.bin`→`.json`, else `<path>.json`)
+    /// describing dims / ss / location / **field name**. Computes the field and
+    /// **exits before coloring** — no PNG is written. The field is whichever single
+    /// scalar mode `--coloring` names (`smooth` default, or `tia`/`stripe`/`curvature`/
+    /// `trap_circle`/…); `direct_trap` is colour-valued and rejected. Its bailout /
+    /// iterate knobs follow the same `--coloring` spec, else the beautiful default
+    /// (`2^16`). This is the serialization half of the field⊗Python-coloring split —
+    /// the Python `colormap.py` tail is field-agnostic, so any dumped field inherits
+    /// the full colormap param set (reverse / transfer / log_premap / n_cycles / phase).
     #[arg(long)]
     pub dump_field: Option<String>,
 
