@@ -1071,8 +1071,9 @@ struct StepScreen<'a> {
     params: &'a crate::coloring::ColorParams,
 }
 
-/// Draw up to `cfg.n_cand` candidates from `gen` and select the **least-interior**
-/// survivor of a two-stage screen:
+/// Draw up to `cfg.n_cand` candidates from `gen` and select a winning survivor
+/// (per `selection`: **random-survivor** by default, else least-interior) of a
+/// two-stage screen:
 /// - **Stage 1 (cheap):** probe at [`PROBE_W`] escape-time, reject interior ≥ cap.
 ///   Interior fraction is scale-robust, so the cheap probe is a sound ceiling.
 /// - **Stage 2 (768):** render the node, cull degenerate (band: flat/instant-escape),
@@ -1525,6 +1526,12 @@ fn density_focus(
     Complex::new(parent.center.re + (fx - 0.5) * parent.frame_width, parent.center.im + (0.5 - fy) * fh)
 }
 
+/// **PARKED — not for production.** Targeting a band of escape *value* is not a
+/// diversity axis: it reaches the same morphology vocabulary at every distance-band
+/// (verified null vs the random-survivor baseline). Kept flag-gated as the
+/// finder/selection seam for future *structure*-targeting work (|∇field|/curvature/
+/// winding), not to be selected on real runs. Do not delete.
+///
 /// Percentile-band finder (`--finder percentile`): draw one child-window center from
 /// the parent frame's escaped smooth-iter percentile band `[quantile(lo), quantile(hi)]`,
 /// window forced to CENTER (placement `center`). The child window's parent-space
@@ -2345,8 +2352,9 @@ impl WalkFamily {
 /// Which next-center generator the descent uses at depth ≥ 2 (ablation seam).
 /// `Legacy` = the settled foci/density/random policy (`pick_target` + placement);
 /// `Percentile` = the smooth-iter percentile-band finder (draw a pixel from an
-/// escaped-μ quantile band, window forced center). Default `Legacy` is byte-
-/// identical to prior runs.
+/// escaped-μ quantile band, window forced center) — **PARKED**, not for production
+/// use (escape-value banding is not a diversity axis; verified null vs the
+/// random-survivor baseline). Default `Legacy` is byte-identical to prior runs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum FinderMode {
     Legacy,
@@ -2354,9 +2362,9 @@ pub enum FinderMode {
 }
 
 /// How `best_of_n_step` picks the winner among full survivors (ablation seam).
-/// `LeastInterior` = the settled min-interior-fraction objective (draws NO rng —
-/// byte-identical to prior runs); `RandomSurvivor` = a uniform draw among the
-/// survivors via reservoir sampling on the walk rng.
+/// `RandomSurvivor` (the shipped default) = a uniform draw among the survivors via
+/// reservoir sampling on the walk rng; `LeastInterior` (opt-in via `--selection`) =
+/// the min-interior-fraction objective (draws NO rng — byte-identical to prior runs).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum SelectionMode {
     LeastInterior,
@@ -2739,6 +2747,9 @@ pub struct GuidedDescendArgs {
     /// Depth-≥2 next-center finder: `legacy` (foci/density/random policy, default,
     /// byte-identical to prior runs) or `percentile` (smooth-iter percentile-band
     /// finder — window centered on a pixel drawn from an escaped-μ quantile band).
+    /// **`percentile` is PARKED** (escape-value banding is not a diversity axis —
+    /// verified null vs the random-survivor baseline); the flag is retained as the
+    /// finder seam for future structure-targeting work, not for production use.
     /// The percentile finder ignores the foci/density/random weights, `--sigma-band`,
     /// `--foci-diversity-radius`, `--random-boundary`, and placement (window forced
     /// center); it is screened by the same best-of-N band/occupancy/black gates.
@@ -2747,22 +2758,24 @@ pub struct GuidedDescendArgs {
 
     /// Convenience override of the normalized foci/density/random policy mix as
     /// `f,d,r` (e.g. `0.10,0.20,0.70`). When set, replaces `--w-foci/--w-density/
-    /// --w-random`. **Legacy finder only** (the percentile finder has no policy mix).
-    /// Unset ⇒ the individual `--w-*` flags apply.
+    /// --w-random`. **Legacy-finder ablation knob** (the percentile finder has no
+    /// policy mix). Unset ⇒ the individual `--w-*` flags apply.
     #[arg(long)]
     pub branch_weights: Option<String>,
 
-    /// Best-of-N winner objective among full survivors: `least-interior` (default,
-    /// min interior fraction — draws NO rng, byte-identical to prior runs) or
-    /// `random-survivor` (uniform among survivors via reservoir sampling on the walk
-    /// rng). Reject/EndCause logic is identical either way.
+    /// Best-of-N winner objective among full survivors: `random-survivor` (default,
+    /// uniform among survivors via reservoir sampling on the walk rng) or
+    /// `least-interior` (the pre-ship default, retained opt-in: min interior fraction
+    /// — draws NO rng, byte-identical to prior runs). Reject/EndCause logic is
+    /// identical either way.
     #[arg(long, value_enum, default_value_t = SelectionMode::RandomSurvivor)]
     pub selection: SelectionMode,
 
     /// Percentile finder band `lo,hi` (quantiles over escaped smooth-iter). The
     /// candidate pixel set is the escaped pixels whose μ falls in `[quantile(lo),
     /// quantile(hi)]`; a pixel is drawn uniformly from it and the child window is
-    /// centered there. Default `0.60,0.80`.
+    /// centered there. Default `0.60,0.80`. (All `--pct-*` flags only bite under
+    /// `--finder percentile`, which is **PARKED** — see `--finder`.)
     #[arg(long, default_value = "0.60,0.80")]
     pub pct_band: String,
 
