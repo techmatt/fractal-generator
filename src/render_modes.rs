@@ -461,6 +461,108 @@ impl Combine {
     }
 }
 
+/// **Highlight rolloff** — a luminance-domain tone-compression applied to the final
+/// linear-RGB color right before downsample/sRGB, gated to the clipping-prone screen
+/// family (screen composites + additive `direct_trap` screen merge). The screen
+/// operators drive their output toward white (the additive direct-trap accumulator
+/// asymptotes to `1` as trap hits stack); large near-white plateaus read as blown.
+/// A rolloff compresses the top of the tone range so residual color re-emerges from
+/// the wash, while leaving midtones/shadows near-identity.
+///
+/// **Luminance-domain, not per-channel:** the operator maps the pixel's luminance
+/// `L → L'` and rescales all three channels by `L'/L`, preserving hue/chroma. A
+/// per-channel curve would pull the brightest channel down faster than the others and
+/// desaturate the highlight toward gray/white — the opposite of the goal.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Rolloff {
+    /// Identity — no rolloff (default; byte-identical to the pre-rolloff path).
+    None,
+    /// Extended Reinhard on luminance with white point `w = strength`
+    /// (`L' = L(1 + L/w²)/(1+L)`): `w` maps to `1`. Compresses the whole range (also
+    /// darkens midtones/shadows somewhat), so it's the "global" option.
+    Reinhard,
+    /// Narkowicz ACES filmic on exposure-scaled luminance (`strength` = pre-exposure).
+    /// Filmic shoulder + slight toe; the punchiest recovery, mild saturation shift.
+    Aces,
+    /// Soft-knee shoulder: identity below the knee `k = strength`, `tanh` shoulder
+    /// above (`L' = k + (1-k)·tanh((L-k)/(1-k))`, C¹ at the knee, → 1 as `L → ∞`).
+    /// Near-identity by construction on in-range content — bends only the highlights.
+    SoftKnee,
+}
+
+impl Rolloff {
+    fn as_str(self) -> &'static str {
+        match self {
+            Rolloff::None => "none",
+            Rolloff::Reinhard => "reinhard",
+            Rolloff::Aces => "aces",
+            Rolloff::SoftKnee => "soft_knee",
+        }
+    }
+    fn parse(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "none" => Rolloff::None,
+            "reinhard" => Rolloff::Reinhard,
+            "aces" => Rolloff::Aces,
+            "soft_knee" | "softknee" => Rolloff::SoftKnee,
+            _ => return Err(format!("unknown rolloff '{s}'")),
+        })
+    }
+    /// Map a single luminance value `l ≥ 0` under this operator. `strength` is the
+    /// operator's one knob (white point / exposure / knee — see the variant docs).
+    #[inline]
+    fn map_luma(self, l: f64, strength: f64) -> f64 {
+        match self {
+            Rolloff::None => l,
+            Rolloff::Reinhard => {
+                let w = strength.max(1e-6);
+                l * (1.0 + l / (w * w)) / (1.0 + l)
+            }
+            Rolloff::Aces => {
+                let x = l * strength;
+                let n = x * (2.51 * x + 0.03);
+                let d = x * (2.43 * x + 0.59) + 0.14;
+                (n / d).clamp(0.0, 1.0)
+            }
+            Rolloff::SoftKnee => {
+                let k = strength.clamp(0.0, 0.999);
+                if l <= k {
+                    l
+                } else {
+                    k + (1.0 - k) * ((l - k) / (1.0 - k)).tanh()
+                }
+            }
+        }
+    }
+}
+
+/// Rec.709 linear luminance of a linear-RGB pixel.
+#[inline]
+fn luma709(c: [f64; 3]) -> f64 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// Apply a highlight rolloff to one linear-RGB pixel in the **luminance domain**:
+/// map `L → L'` and rescale all channels by `L'/L` (chroma-preserving), clamping the
+/// result to `[0,1]`. `None` is the exact identity (early return → byte-identical).
+/// Black pixels (`L ≈ 0`) pass through untouched.
+#[inline]
+fn apply_rolloff(lin: [f64; 3], op: Rolloff, strength: f64) -> [f64; 3] {
+    if op == Rolloff::None {
+        return lin;
+    }
+    let l = luma709(lin);
+    if l <= 1e-9 {
+        return lin;
+    }
+    let s = op.map_luma(l, strength) / l;
+    [
+        (lin[0] * s).clamp(0.0, 1.0),
+        (lin[1] * s).clamp(0.0, 1.0),
+        (lin[2] * s).clamp(0.0, 1.0),
+    ]
+}
+
 /// Direct-orbit-traps **merge mode** (doc §3 compositing). Each per-iteration trap
 /// hit blends its gradient sample RGB against the accumulator RGB through this mode,
 /// then alpha-overs with the sample's `α = opacity·(1−d/threshold)`. With `Normal`
@@ -774,6 +876,16 @@ pub struct ColoringParams {
     /// `--coloring` on the composite modes, which cannot go through the Python
     /// dump→recolor tail. Default `false` (byte-identical to the prior path).
     pub reverse: bool,
+    // --- highlight rolloff (screen-family blowout recovery) ---
+    /// Luminance-domain highlight compression applied to the final linear RGB, before
+    /// downsample/sRGB. Gated to the clipping-prone screen family (composite
+    /// `combine=screen` and `direct_trap` `merge_mode=screen`): only those two paths
+    /// consult it. Default [`Rolloff::None`] (identity → byte-identical to the prior
+    /// path). See [`Rolloff`].
+    pub rolloff: Rolloff,
+    /// The rolloff operator's one knob (white point / exposure / knee — see the
+    /// [`Rolloff`] variant docs). Default `1.0`.
+    pub rolloff_strength: f64,
     // --- v2 composite (field-modulates-field) ---
     /// Optional **texture** field that modulates the base ([`Self::field`]).
     /// `None` → the v1 single-field path (byte-identical, separate branch). When
@@ -824,6 +936,8 @@ impl Default for ColoringParams {
             palette_cycles: 1.0,
             palette_offset: 0.0,
             reverse: false,
+            rolloff: Rolloff::None,
+            rolloff_strength: 1.0,
             texture_field: None,
             texture_transform: Transform::Linear,
             texture_gamma: 1.0,
@@ -899,6 +1013,7 @@ impl ColoringParams {
              \"merge_order\":\"{}\",\"shape\":\"{}\",\"start_color\":\"{}\",\"transform\":\"{}\",\"gamma\":{},\
              \"shade\":\"{}\",\"light_azimuth\":{},\"light_height\":{},\
              \"palette_cycles\":{},\"palette_offset\":{},\"reverse\":{},\
+             \"rolloff\":\"{}\",\"rolloff_strength\":{},\
              \"texture_field\":\"{}\",\"texture_transform\":\"{}\",\"texture_gamma\":{},\
              \"combine\":\"{}\",\"texture_weight\":{}}}",
             self.bailout_b,
@@ -923,6 +1038,8 @@ impl ColoringParams {
             self.palette_cycles,
             self.palette_offset,
             self.reverse,
+            self.rolloff.as_str(),
+            self.rolloff_strength,
             self.texture_field.map_or("none", Field::as_str),
             self.texture_transform.as_str(),
             self.texture_gamma,
@@ -1034,6 +1151,14 @@ impl ColoringParams {
             }
             if let Some(v) = jsonl::field_bool(s, "reverse") {
                 p.reverse = v;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_str(s, "rolloff") {
+                p.rolloff = Rolloff::parse(&v)?;
+                named = true;
+            }
+            if let Some(v) = jsonl::field_f64(s, "rolloff_strength") {
+                p.rolloff_strength = v;
                 named = true;
             }
             // v2 composite. `texture_field` absent or "none" → single-field (None).
@@ -2170,7 +2295,19 @@ fn render_direct_trap(
             row
         })
         .collect();
-    let linear: Vec<[f64; 3]> = rows.iter().flatten().map(|(acc, _)| *acc).collect();
+    // Highlight rolloff — gated to the additive `screen` merge (the accumulator that
+    // asymptotes to white as trap hits stack). Off / byte-identical for every other
+    // merge mode or when `rolloff == None`.
+    let (rolloff, rolloff_strength) = if mode == MergeMode::Screen {
+        (params.rolloff, params.rolloff_strength)
+    } else {
+        (Rolloff::None, 1.0)
+    };
+    let linear: Vec<[f64; 3]> = rows
+        .iter()
+        .flatten()
+        .map(|(acc, _)| apply_rolloff(*acc, rolloff, rolloff_strength))
+        .collect();
 
     if stats {
         let mut mins: Vec<f64> = rows
@@ -2456,6 +2593,13 @@ fn render_beautiful_composite(
     let tex_g = params.texture_gamma;
     let combine = params.combine;
     let weight = params.texture_weight;
+    // Highlight rolloff — gated to the screen combine (the blowout-prone op). Off for
+    // every other combine (and byte-identical when `rolloff == None`).
+    let (rolloff, rolloff_strength) = if combine == Combine::Screen {
+        (params.rolloff, params.rolloff_strength)
+    } else {
+        (Rolloff::None, 1.0)
+    };
 
     // --- shade each subpixel to linear RGB ---
     let linear: Vec<[f64; 3]> = pix
@@ -2486,7 +2630,7 @@ fn render_beautiful_composite(
             }
 
             let tt = (gray * cycles + offset).rem_euclid(1.0);
-            palette.lookup_linear(tt)
+            apply_rolloff(palette.lookup_linear(tt), rolloff, rolloff_strength)
         })
         .collect();
 
