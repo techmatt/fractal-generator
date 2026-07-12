@@ -2167,6 +2167,25 @@ pub fn smooth_field_f64_supersampled(
     Ok((flat, sub_w as u32, sub_h as u32))
 }
 
+/// Source-side saturation cap for the `direct_trap_screen` mode (**cross shape +
+/// `screen` merge only**). The additive screen accumulator asymptotes to white as
+/// trap hits stack, and the cross shape `min(|Re z|,|Im z|)` traps a large fraction
+/// of the orbit, so cross+screen drives fully to `(1,1,1)` once opacity/threshold
+/// climb. A fully-saturated raster is **unrecoverable** post-hoc — the `soft_knee`
+/// rolloff only rescues the partially-blown tier. Measured on worst-case saturating
+/// locations (controlled per-location opacity sweep, threshold 0.08): hard-blowout
+/// (min-channel > 0.996) is ~0% at opacity ≤ 0.08, ~6% at 0.15, then takes off —
+/// 14% at 0.20, 39% at 0.30, 71% at 0.45. On the threshold axis at opacity 0.15:
+/// 0% at ≤ 0.05, 6% at 0.08, 19% at 0.12. So the non-saturating regime is
+/// **opacity ≤ 0.15, threshold ≤ 0.08** (the spec default 0.15 / 0.05 is the clean
+/// corner: 0% hard-blowout even worst-case). Cross+screen is clamped to this regime
+/// so the mode can never emit a blown raster; the clamp is byte-identical at/below
+/// the cap. `ring`/`lines`/`multiply` don't saturate (fewer hits / non-brightening
+/// merge) and are left untouched — low opacity is deploy-exploration guidance for
+/// them, not a hard cap.
+pub const DTS_SCREEN_OPACITY_CAP: f64 = 0.15;
+pub const DTS_SCREEN_THRESHOLD_CAP: f64 = 0.08;
+
 /// **Direct Orbit Traps** — the one colour-valued path (doc §"Direct Orbit Traps").
 /// Unlike the scalar fields, this composites a gradient sample into a per-pixel
 /// RGBA accumulator on every iteration the orbit enters the trap, and emits the
@@ -2200,12 +2219,21 @@ fn render_direct_trap(
     let center = frame.center;
     let b = params.bailout_b;
     let b2 = b * b;
-    let threshold = params.direct_threshold.max(1e-12);
-    let opacity = params.direct_opacity.clamp(0.0, 1.0);
     let mode = params.merge_mode;
     let order = params.merge_order;
     let start_color = params.start_color;
     let shape = params.direct_shape;
+    // Source-side saturation cap: clamp cross+screen (the `direct_trap_screen` mode)
+    // to the confirmed non-saturating regime so it never emits an unrecoverable
+    // (1,1,1) raster. Byte-identical at/below the cap; other shapes/merges untouched.
+    // See [`DTS_SCREEN_OPACITY_CAP`] / [`DTS_SCREEN_THRESHOLD_CAP`].
+    let (opacity_cap, threshold_cap) = if mode == MergeMode::Screen && shape == DirectShape::Cross {
+        (DTS_SCREEN_OPACITY_CAP, DTS_SCREEN_THRESHOLD_CAP)
+    } else {
+        (1.0, f64::INFINITY)
+    };
+    let threshold = params.direct_threshold.max(1e-12).min(threshold_cap);
+    let opacity = params.direct_opacity.clamp(0.0, 1.0).min(opacity_cap);
     let radius = params.trap_radius;
     // Catalog instrumentation (off in normal renders): when `FRACTAL_DT_STATS` is
     // set, also collect each pixel's *closest approach* (min trap distance over the
@@ -3298,6 +3326,61 @@ mod tests {
         assert!(
             img_mw.pixels().any(|px| px.0 != [0, 0, 0]),
             "multiply on white start collapsed to all-black"
+        );
+    }
+
+    /// Source-side saturation cap: `direct_trap_screen` (cross + screen) is clamped
+    /// to the non-saturating regime, so an over-cap spec renders identically to the
+    /// cap. Below-cap params are untouched (distinct params → distinct output), and
+    /// the cap is gated strictly to cross+screen — ring+screen is NOT clamped.
+    #[test]
+    fn direct_trap_screen_saturation_cap() {
+        let frame = Frame {
+            center: Complex::new(-0.74, 0.13),
+            frame_width: 0.03,
+            out_width: 24,
+            out_height: 16,
+        };
+        let palette = crate::palette::builtin("default", false).unwrap();
+        let render = |p: &ColoringParams| {
+            render_beautiful(&frame, 2, 400, Family::Mandelbrot, p, &palette, DownsampleFilter::Box)
+                .into_raw()
+        };
+        let cross_screen = |op: f64, th: f64| {
+            let mut p = ColoringParams::beautiful(Field::DirectTrap);
+            p.merge_mode = MergeMode::Screen;
+            p.direct_shape = DirectShape::Cross;
+            p.direct_opacity = op;
+            p.direct_threshold = th;
+            p
+        };
+
+        // Over-cap (op 0.45 / th 0.12) is clamped to (0.15 / 0.08) byte-for-byte.
+        assert_eq!(
+            render(&cross_screen(0.45, 0.12)),
+            render(&cross_screen(DTS_SCREEN_OPACITY_CAP, DTS_SCREEN_THRESHOLD_CAP)),
+            "cross+screen above the cap must render identically to the cap"
+        );
+        // Below the cap is untouched: distinct sub-cap opacities render differently.
+        assert_ne!(
+            render(&cross_screen(0.05, 0.05)),
+            render(&cross_screen(DTS_SCREEN_OPACITY_CAP, 0.05)),
+            "sub-cap cross+screen opacity must not be flattened by the clamp"
+        );
+        // Gated to cross+screen only: ring+screen is NOT capped (op 0.45 ≠ op 0.15).
+        let ring_screen = |op: f64| {
+            let mut p = ColoringParams::beautiful(Field::DirectTrap);
+            p.merge_mode = MergeMode::Screen;
+            p.direct_shape = DirectShape::Ring;
+            p.trap_radius = 1.0;
+            p.direct_opacity = op;
+            p.direct_threshold = 0.12;
+            p
+        };
+        assert_ne!(
+            render(&ring_screen(0.45)),
+            render(&ring_screen(0.15)),
+            "ring+screen must be untouched by the cross+screen cap"
         );
     }
 

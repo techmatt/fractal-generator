@@ -148,6 +148,12 @@ RULES: list[Rule] = [
     Rule(r"^data/wallpaper_harvest/", SCRATCH, "wallpaper-harvest scratch (superseded by corpus)"),
     Rule(r"^data/discovery/runs/", NEVER, "per-run discovery ledgers (append-only provenance)"),
     Rule(r"^out/", SCRATCH, "disposable out/ scratch tree"),
+    # scratchpad is the canonical disposable temp dir: image renders (contact
+    # sheets, montages, sweep frames, dumped-field previews) are scratch. Data /
+    # plan / script files (*.json, *.jsonl, *.py) get NO rule here on purpose, so
+    # they fall through to `ambiguous` (report-only, never auto-deleted) — a
+    # load-bearing plan or cache must be a human call, not a path guess.
+    Rule(r"^scratchpad/.*\.(png|jpe?g)$", SCRATCH, "scratchpad render output (disposable temp dir)"),
     Rule(r"(^|/)[^/]*\.log$", SCRATCH, "log file"),
 ]
 

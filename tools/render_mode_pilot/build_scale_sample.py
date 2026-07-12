@@ -44,7 +44,7 @@ GATE_PASSERS = REPO / "scratchpad/gate_passers_v3.json"
 PILOT_IMAGES = REPO / "data/render_mode_corpus/batches/2026-07-10_render_mode_pilot_v1/images.jsonl"
 PILOT_LABELS = REPO / "labels/render_mode_pilot_v1.json"
 OUT_PLAN = REPO / "scratchpad/rms_sample_plan.jsonl"
-OUT_SPLIT = REPO / "scratchpad/rms_split_map.json"
+OUT_SPLIT = REPO / "data/render_mode_corpus/rms_split_map.json"
 
 # ---- locked 13-mode roster ------------------------------------------------- #
 DIRECT_OPACITY = [0.15, 0.30, 0.45]
