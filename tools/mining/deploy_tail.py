@@ -1,13 +1,31 @@
-"""Post-emission strange-mode deploy tail (pilot, STANDALONE — not wired into emit_v1).
+"""Render-mode deploy tail — production curation pass over the emission corpus.
 
-For each ALREADY-EMITTED location (smooth winner + its approved palette/params chosen
+Runs ON DEMAND over the ACCUMULATED corpus of emitted wallpapers (the smooth winners
+`emit_v1` has already produced). NOT wired inline into `emit_v1`'s loop: at ~15-24
+emissions/run the 25% budget's per-mode floors round to 0 and never engage; they only
+bite across the accumulated corpus (floor >= 1 needs N >~ 4*(n+2) = 32 at n=6). `emit_v1`
+and the smooth emission path stay untouched — this pass only ADDS strange-mode alternates
+alongside the smooth wallpapers, never overwriting them.
+
+For each already-emitted location (smooth winner + its approved palette/params chosen
 upstream by emit_v1), render a lean set of strange-mode candidate variants over the
 INHERITED approved palette, score each with the LOCKED `mining_v1` gate
 (`tools/mining/mining_gate.MiningScorer`, threshold 0.50 on marginal p_ge3), and keep
-gate-passers as alternate wallpapers. Smooth keeps shipping via emit_v1's normal path;
-this tail only ADDS strange-mode alternates.
+gate-passers as alternate wallpapers.
 
-Load-bearing (see prompts/render_mode_deploy_tail_prompt.md + the memories):
+Incremental / idempotent state (the load-bearing production delta over the pilot):
+  * The durable state is `alternates.jsonl` (the kept strange alternates). On each run
+    the pass reads it; existing alternates are FIXED — counted toward the 25% budget B
+    and toward their modes' floors (via tail_alloc's `existing=`), their locations
+    locked out. Only locations WITHOUT an alternate are re-rendered/scored, and only the
+    remaining shortfall (B - #existing) is allocated over them. Never churns or re-emits
+    an existing alternate; deterministic.
+  * Re-running over an UNCHANGED corpus is a no-op: budget is a ceiling that a correct
+    prior run already filled (or exhausted supply), so the shortfall is 0 -> no new
+    allocation; scoring crops are cached (skip-if-exists) and the full-res keeper render
+    is skip-if-exists too -> no new renders, no re-emits. Verified each run (§checks).
+
+Load-bearing (see prompts/deploy_tail_emit_wirein_prompt.md + the memories):
   * GATE IS LOCKED — we IMPORT `MiningScorer`; never retrain / re-threshold. Keepers
     carry `gate_stamp(p_ge3)`.
   * SCORE CHEAP, FULL-RES ONLY FOR KEEPERS — candidates render + score at the head's
@@ -34,9 +52,10 @@ Keep / diversity allocation (tail_alloc.allocate_strange):
     quality. Starved modes degrade gracefully; total passers < B -> keep all, never
     pad. Because a location may pass in several modes, this is a BATCH-LEVEL
     assignment (each location fills at most one mode's slot). See tail_alloc.py.
+    Existing (fixed) alternates seed the allocation via `existing=` (above).
 
-    uv run python -u tools/mining/deploy_tail.py            # full pilot
-    uv run python -u tools/mining/deploy_tail.py --score-only   # skip full-res render
+    uv run python -u tools/mining/deploy_tail.py            # curate the current corpus
+    uv run python -u tools/mining/deploy_tail.py --score-only   # gate/select only, no full-res
 """
 from __future__ import annotations
 
@@ -70,9 +89,10 @@ POOL_CMAPS = str(REPO / "data/palettes/pool_colormaps.json")
 EMIT_MANIFEST = REPO / "out/wallpaper/emit_v1/manifest.jsonl"
 OUT_DIR = REPO / "out/mining/deploy_tail"
 SCORE_CROPS = OUT_DIR / "scoring_crops"     # 1280x720 candidate jpgs (kept for eyeball+parity)
-FIELD_TMP = OUT_DIR / "_fields"             # disposable field dumps
-KEEP_DIR = OUT_DIR / "keepers"              # full-res keeper pngs
+FIELD_TMP = OUT_DIR / "_fields"             # disposable field dumps (deploy-tail-owned, token'd)
+KEEP_DIR = OUT_DIR / "keepers"              # full-res keeper pngs (alternates, alongside smooth)
 SBS_DIR = OUT_DIR / "sidebyside"            # smooth-vs-kept comparisons
+ALTERNATES = OUT_DIR / "alternates.jsonl"   # DURABLE state: the kept strange alternates
 
 # scoring geometry == render_mode dataset_v1 (the head's label crops).
 SC_W, SC_H, SC_SS, SC_FILT = 1280, 720, 2, "lanczos3"
@@ -265,8 +285,48 @@ def side_by_side(smooth_png: Path, keep_png: Path, out_png: Path, caption: str):
 
 
 # --------------------------------------------------------------------------- #
+# Durable incremental state — the kept strange alternates (alternates.jsonl).
+# --------------------------------------------------------------------------- #
+def load_alternates() -> dict:
+    """loc_id -> alternate record for every already-emitted strange alternate.
+    This IS the incremental state: these are FIXED (never re-rendered / re-allocated)."""
+    if not ALTERNATES.exists():
+        return {}
+    out = {}
+    for line in ALTERNATES.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            r = json.loads(line)
+            out[r["loc_id"]] = r
+    return out
+
+
+def save_alternates(recs: dict):
+    """Rewrite alternates.jsonl from loc_id -> record (sorted for a stable diff)."""
+    ALTERNATES.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps(recs[k]) for k in sorted(recs)]
+    ALTERNATES.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def _sha1_file(p: Path) -> str:
+    return hashlib.sha1(p.read_bytes()).hexdigest()
+
+
+def _snapshot(paths) -> dict:
+    """path -> sha1 for the paths that exist (correctness before/after diff)."""
+    return {str(p): _sha1_file(p) for p in paths if Path(p).exists()}
+
+
+def _dir_snapshot(d: Path) -> dict:
+    """name -> (size, sha1) over a directory's files (emit field-dir tamper check)."""
+    if not d.exists():
+        return {}
+    return {f.name: (f.stat().st_size, _sha1_file(f)) for f in sorted(d.iterdir()) if f.is_file()}
+
+
+# --------------------------------------------------------------------------- #
 def main():
-    ap = argparse.ArgumentParser(description="Post-emission strange-mode deploy tail (pilot).")
+    ap = argparse.ArgumentParser(
+        description="Render-mode deploy tail — production curation pass over the emission corpus.")
     ap.add_argument("--manifest", type=Path, default=EMIT_MANIFEST)
     ap.add_argument("--score-only", action="store_true", help="gate/select only; skip full-res")
     ap.add_argument("--limit", type=int, default=0, help="only the first N emitted locations")
@@ -277,18 +337,50 @@ def main():
         except Exception:
             pass
 
+    # 1. Enumerate the accumulated emission corpus (the smooth winners emit_v1 produced).
     rows = [json.loads(l) for l in args.manifest.read_text().splitlines() if l.strip()]
     if args.limit:
         rows = rows[:args.limit]
-    n_emit = len(rows)
-    SCORE_CROPS.mkdir(parents=True, exist_ok=True)
-    print(f"[tail] {n_emit} emitted locations x {len(ROSTER)} modes "
-          f"= {n_emit*len(ROSTER)} candidates @ {SC_W}x{SC_H} ss{SC_SS}")
+    n_emit = len(rows)                                    # N = corpus size
+    corpus_ids = {r["image_id"] for r in rows}
+    modes = [m for m, _ in ROSTER]
 
-    # 1. render every candidate at scoring res.
-    cands = []   # dicts: emit_index, image_id(loc), mode, kind, crop path, palette, info
+    # 2. Read the strange alternates that already exist (the DURABLE incremental state).
+    #    These are FIXED: never re-rendered / re-allocated / re-emitted. Drop any stale
+    #    row whose location is no longer in the corpus (corpus can only grow in practice,
+    #    but stay robust to a shrunk/re-pointed manifest).
+    all_alts = load_alternates()
+    existing_alts = {k: v for k, v in all_alts.items() if k in corpus_ids}
+    existing_list = [{"loc_id": k, "mode": v["mode"]} for k, v in existing_alts.items()]
+
+    # Correctness snapshots taken BEFORE any work: the smooth wallpapers and emit_v1's
+    # own field dir must be byte-unchanged after the pass (§checks).
+    smooth_paths = [REPO / r["png"].replace("\\", "/") for r in rows]
+    smooth_before = _snapshot(smooth_paths)
+    emit_field_dir = args.manifest.parent / "fields"
+    emit_fields_before = _dir_snapshot(emit_field_dir)
+    # Field-bin self-containment (static guarantees): the pass dumps its OWN strange
+    # fields under a deploy-tail-owned dir, disjoint from emit_v1's, and every pure-mode
+    # dump carries a non-empty render-mode token so its key can NEVER collide with the
+    # cached smooth field. Assert both up front rather than trusting them.
+    assert FIELD_TMP.resolve() != emit_field_dir.resolve(), FIELD_TMP
+    assert emit_field_dir.resolve() not in FIELD_TMP.resolve().parents, FIELD_TMP
+    for mode, kind in ROSTER:
+        if kind == "pure":
+            assert loc_mod.field_mode_token(mode) not in ("", None), \
+                f"pure mode {mode!r} has empty field token — would collide with smooth"
+
+    # 3. Candidate locations = corpus locations WITHOUT an existing alternate. Only these
+    #    are (re-)rendered and scored; already-curated locations are left untouched.
+    new_rows = [r for r in rows if r["image_id"] not in existing_alts]
+    SCORE_CROPS.mkdir(parents=True, exist_ok=True)
+    print(f"[tail] corpus N={n_emit} · {len(existing_alts)} existing alternate(s) fixed · "
+          f"{len(new_rows)} not-yet-curated location(s) x {len(ROSTER)} modes "
+          f"= {len(new_rows)*len(ROSTER)} candidates @ {SC_W}x{SC_H} ss{SC_SS}")
+
+    cands = []   # dicts: emit_index, loc_id, mode, kind, crop path, palette, info
     t0 = time.time()
-    for row in rows:
+    for row in new_rows:
         loc = loc_mod.from_render_block(row["location"])
         palette = row["params"]["palette"]
         cp = _color_params(row["params"])
@@ -298,7 +390,7 @@ def main():
             tc = time.time()
             # transfer_dropped is deterministic (rust modes drop grad; inherited is pct
             # here so it is False) — reconstructable without re-rendering, so a crop that
-            # already exists on disk is reused (resume / cheap backfill of a failed crop).
+            # already exists on disk is reused (resume / idempotent re-run / cheap backfill).
             info = {"transfer_dropped": (kind != "pure" and cp["transfer"] == "grad")}
             if not crop.exists():
                 try:
@@ -312,10 +404,10 @@ def main():
                           "secs": time.time() - tc})
     print(f"[tail] rendered {len(cands)} candidates in {time.time()-t0:.0f}s")
 
-    # 2. score all candidates through the LOCKED gate.
+    # 4. Score the new candidates through the LOCKED gate.
     scorer = MiningScorer()
     print(f"[gate] {scorer.__class__.__name__} thr={scorer.threshold} on {scorer.device}")
-    scores = scorer.score_paths([str(c["crop"]) for c in cands])
+    scores = scorer.score_paths([str(c["crop"]) for c in cands]) if cands else []
     for c, s in zip(cands, scores):
         c["p_ge3"], c["p_ge2"], c["ord"], c["passed"] = s.p_ge3, s.p_ge2, s.score, s.passed
 
@@ -323,24 +415,30 @@ def main():
     for c in cands:
         by_loc.setdefault(c["loc_id"], []).append(c)
 
-    # 3-4. batch-level diversity allocation: spread strange keepers across modes.
-    #      Each candidate carries loc_id/mode/p_ge3 -> allocate_strange assigns each
-    #      location to at most one mode's slot, floors first then surplus by quality.
-    passers = [c for c in cands if c["passed"]]
-    keepers, alloc = allocate_strange(passers, n_emit, [m for m, _ in ROSTER],
-                                      STRANGE_BUDGET_FRAC)
+    # 5. Shortfall allocation: existing alternates are FIXED (count toward budget B and
+    #    per-mode floors); allocate only B-#existing over the new passers, spread across
+    #    modes for diversity. A location may pass in several modes -> batch-level (each
+    #    location fills at most one mode's slot).
+    passers = [c for c in cands if c.get("passed")]
+    keepers, alloc = allocate_strange(passers, n_emit, modes, STRANGE_BUDGET_FRAC,
+                                      existing=existing_list)
     keepers.sort(key=lambda c: -c["p_ge3"])   # render/report in quality order
     n_loc_passer = len({c["loc_id"] for c in passers})
-    achieved = alloc["achieved"]
+    achieved = alloc["achieved"]               # corpus-wide (existing + new)
+    thr_bite = 4 * (alloc["n_modes"] + 2)      # N at which floor >= 1 (round(0.25 N) >= n+2)
+    floors_engaged = alloc["floor"] >= 1
     print(f"[keep] budget B={alloc['B']} (round({STRANGE_BUDGET_FRAC:.0%} x {n_emit})) "
-          f"floor={alloc['floor']}/mode ; {n_loc_passer} locations have a passer "
-          f"-> keeping {len(keepers)}")
+          f"floor={alloc['floor']}/mode · floors {'ENGAGED' if floors_engaged else 'dormant'} "
+          f"(bite at N>~{thr_bite}) · {len(existing_alts)} fixed + {len(keepers)} new "
+          f"= {len(existing_alts)+len(keepers)} alternate(s) over {n_loc_passer} new passer-locs")
     for m, _ in ROSTER:
         supply = len({c['loc_id'] for c in passers if c['mode'] == m})
+        n_ex = sum(1 for v in existing_alts.values() if v["mode"] == m)
         print(f"       {m:32} floor={alloc['floor']} achieved={achieved[m]} "
-              f"(supply={supply} distinct-loc passers)")
+              f"(existing={n_ex}, new-supply={supply} distinct-loc passers)")
 
-    # 5. full-res render the keepers + side-by-side.
+    # 6. Full-res render the NEW keepers alongside the smooth wallpaper (skip-if-exists so
+    #    a re-run / adopted pilot keeper never re-renders), + side-by-side for eyeball.
     if not args.score_only:
         KEEP_DIR.mkdir(parents=True, exist_ok=True)
         SBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -348,8 +446,10 @@ def main():
             loc = loc_mod.from_render_block(c["row"]["location"])
             keep_png = KEEP_DIR / f"{c['cid']}_{EMIT_W}x{EMIT_H}.png"
             tk = time.time()
-            render_candidate(loc, c["mode"], c["kind"], c["palette"], c["cp"], keep_png,
-                             EMIT_W, EMIT_H, EMIT_SS, EMIT_FILT)
+            skipped = keep_png.exists()
+            if not skipped:
+                render_candidate(loc, c["mode"], c["kind"], c["palette"], c["cp"], keep_png,
+                                 EMIT_W, EMIT_H, EMIT_SS, EMIT_FILT)
             c["keep_png"] = str(keep_png.relative_to(REPO))
             smooth_png = REPO / c["row"]["png"].replace("\\", "/")
             sbs = SBS_DIR / f"{c['cid']}_sbs.png"
@@ -358,15 +458,89 @@ def main():
             if smooth_png.exists():
                 side_by_side(smooth_png, keep_png, sbs, cap_txt)
                 c["sbs"] = str(sbs.relative_to(REPO))
-            print(f"[emit] {c['cid']:34} p_ge3={c['p_ge3']:.3f}  [{time.time()-tk:.0f}s] "
-                  f"-> {keep_png.name}")
+            c["gate_stamp"] = gate_stamp(c["p_ge3"], scorer.threshold)
+            tag = "skip (exists)" if skipped else f"{time.time()-tk:.0f}s"
+            print(f"[emit] {c['cid']:34} p_ge3={c['p_ge3']:.3f}  [{tag}] -> {keep_png.name}")
 
-    # 6. parity: re-score 1-2 kept scoring crops through the standalone gate CLI
+        # 7. Persist the new keepers into the durable alternates state (existing FIXED
+        #    rows preserved verbatim). Idempotent: a re-run reads these back as `existing`.
+        for c in keepers:
+            all_alts[c["loc_id"]] = {
+                "loc_id": c["loc_id"], "mode": c["mode"], "kind": c["kind"],
+                "family": c["row"]["location"].get("fractal_type"),
+                "palette": c["palette"], "p_ge3": round(c["p_ge3"], 6),
+                "gate_stamp": c["gate_stamp"], "curated_at_N": n_emit,
+                "smooth_png": c["row"]["png"], "keeper_png": c.get("keep_png"),
+                "sidebyside": c.get("sbs"),
+            }
+        save_alternates(all_alts)
+        print(f"[state] alternates.jsonl now holds {len(all_alts)} alternate(s)")
+
+    # 8. Correctness checks (ship with checks, not just reasoning).
+    checks = run_checks(smooth_before, smooth_paths, emit_fields_before, emit_field_dir,
+                        passers, keepers, existing_list, n_emit, modes, args)
+
+    # 9. Parity: re-score 1-2 kept scoring crops through the standalone gate CLI
     #    (deploy path == measurement path across two independent entry points).
     parity = run_parity(keepers)
 
-    # 7. report.
-    write_report(rows, cands, by_loc, keepers, alloc, n_loc_passer, scorer, parity, args)
+    # 10. Report.
+    write_report(rows, cands, by_loc, keepers, existing_alts, alloc, n_loc_passer,
+                 scorer, parity, checks, thr_bite, floors_engaged, args)
+
+
+def run_checks(smooth_before, smooth_paths, emit_fields_before, emit_field_dir,
+               passers, keepers, existing_list, n_emit, modes, args):
+    """Ship the correctness guarantees as verified checks, not just reasoning.
+
+      * additive/smooth untouched — every smooth wallpaper is byte-unchanged.
+      * field-bin self-containment — emit_v1's field dir is byte-unchanged (the pass
+        reached for no pre-existing smooth field bin) and the deploy-tail field dir is
+        empty afterward (every strange dump was token'd and cleaned up).
+      * idempotent — simulate the NEXT run's allocation given the just-persisted state:
+        existing = current alternates + these new keepers, passers = the same passers
+        minus the kept locations. A correct run leaves 0 shortfall -> the next run
+        allocates nothing new (and its scoring crops are cached, full-res is
+        skip-if-exists) -> a genuine no-op.
+    """
+    # -- smooth untouched.
+    smooth_after = _snapshot(smooth_paths)
+    smooth_changed = [p for p in smooth_before if smooth_before[p] != smooth_after.get(p)]
+    smooth_ok = not smooth_changed
+
+    # -- emit_v1 field dir untouched (no reach for a pre-existing smooth field bin).
+    emit_fields_after = _dir_snapshot(emit_field_dir)
+    emit_fields_ok = emit_fields_before == emit_fields_after
+
+    # -- deploy-tail field dir empty afterward (all token'd strange dumps cleaned up).
+    leftover = [f.name for f in FIELD_TMP.iterdir() if f.is_file()] if FIELD_TMP.exists() else []
+    field_tmp_clean = not leftover
+
+    # -- idempotency: next-run allocation over the persisted state is empty.
+    kept_ids = {c["loc_id"] for c in keepers}
+    existing_after = existing_list + [{"loc_id": c["loc_id"], "mode": c["mode"]} for c in keepers]
+    passers_after = [{"loc_id": c["loc_id"], "mode": c["mode"], "p_ge3": c["p_ge3"]}
+                     for c in passers if c["loc_id"] not in kept_ids]
+    sel2, _ = allocate_strange(passers_after, n_emit, modes, STRANGE_BUDGET_FRAC,
+                               existing=existing_after)
+    idempotent = (len(sel2) == 0)
+
+    checks = {
+        "smooth_untouched": {"ok": smooth_ok, "n_checked": len(smooth_before),
+                             "changed": smooth_changed},
+        "emit_field_dir_untouched": {"ok": emit_fields_ok, "n_files": len(emit_fields_before)},
+        "field_tmp_clean": {"ok": field_tmp_clean, "leftover": leftover},
+        "idempotent": {"ok": idempotent, "next_run_new_allocations": len(sel2)},
+    }
+    all_ok = all(v["ok"] for v in checks.values())
+    print(f"[check] smooth-untouched={smooth_ok} ({len(smooth_before)} pngs) · "
+          f"emit-field-dir-untouched={emit_fields_ok} · field-tmp-clean={field_tmp_clean} · "
+          f"idempotent={idempotent}  ->  {'ALL PASS' if all_ok else 'FAILED'}")
+    if not all_ok:
+        print(f"[check][WARN] failing checks: "
+              f"{[k for k, v in checks.items() if not v['ok']]}")
+    checks["all_ok"] = all_ok
+    return checks
 
 
 def run_parity(keepers):
@@ -389,42 +563,68 @@ def run_parity(keepers):
     return out
 
 
-def write_report(rows, cands, by_loc, keepers, alloc, n_loc_passer, scorer, parity, args):
+def write_report(rows, cands, by_loc, keepers, existing_alts, alloc, n_loc_passer,
+                 scorer, parity, checks, thr_bite, floors_engaged, args):
     keep_ids = {c["cid"] for c in keepers}
+    n_total_alt = len(existing_alts) + len(keepers)
+    degenerate = not floors_engaged
+    # corpus-wide existing count per mode (existing alternates aren't in `cands`).
+    ex_by_mode = {m: sum(1 for v in existing_alts.values() if v["mode"] == m) for m, _ in ROSTER}
     rep = {
         "gate": {"version": "mining_v1", "threshold": scorer.threshold},
+        "curation_pass": {
+            "score_only": bool(args.score_only),
+            "n_existing_alternates": len(existing_alts),
+            "n_new_keepers": len(keepers),
+            "n_total_alternates": n_total_alt,
+        },
         "allocation": {
             "budget_frac": alloc["budget_frac"], "n_emitted": len(rows),
             "budget_B": alloc["B"], "floor_per_mode": alloc["floor"],
             "n_modes": alloc["n_modes"],
-            "n_locations_with_passer": n_loc_passer,
-            "n_strange_kept": len(keepers),
-            "pct_kept": (len(keepers) / len(rows)) if rows else 0.0,
+            "floor_bite_threshold_N": thr_bite,       # floor >= 1 needs N >~ 4*(n+2)
+            "floors_engaged": floors_engaged,
+            "degenerate_small_N": degenerate,
+            "n_new_locations_with_passer": n_loc_passer,
+            "n_strange_kept_total": n_total_alt,
+            "pct_kept": (n_total_alt / len(rows)) if rows else 0.0,
             "per_mode": [
                 {"mode": m, "floor": alloc["floor"], "achieved": alloc["achieved"][m],
-                 "supply": len({c["loc_id"] for c in cands
-                                if c["mode"] == m and c["passed"]}),
+                 "existing": ex_by_mode[m],
+                 "new_supply": len({c["loc_id"] for c in cands
+                                    if c["mode"] == m and c.get("passed")}),
                  "degraded": alloc["achieved"][m] < alloc["floor"]}
                 for m, _ in ROSTER],
         },
+        "checks": checks,
         "parity": parity,
         "per_location": [],
     }
     for row in rows:
         lid = row["image_id"]
-        cs = sorted(by_loc.get(lid, []), key=lambda c: -c["p_ge3"])
         entry = {"loc_id": lid, "family": row["location"].get("fractal_type"),
                  "palette": row["params"]["palette"], "smooth_png": row["png"],
-                 "candidates": [], "kept": None}
+                 "state": "new", "candidates": [], "kept": None}
+        if lid in existing_alts:                       # already-curated (fixed) — not re-scored.
+            ea = existing_alts[lid]
+            entry["state"] = "existing_alternate"
+            entry["kept"] = {"mode": ea["mode"], "kind": ea.get("kind"),
+                             "p_ge3": ea.get("p_ge3"), "gate_stamp": ea.get("gate_stamp"),
+                             "keeper_png": ea.get("keeper_png"),
+                             "sidebyside": ea.get("sidebyside"), "fixed": True}
+            rep["per_location"].append(entry)
+            continue
+        cs = sorted(by_loc.get(lid, []), key=lambda c: -c["p_ge3"])
         for c in cs:
             cd = {"mode": c["mode"], "kind": c["kind"], "p_ge3": round(c["p_ge3"], 4),
                   "p_ge2": round(c["p_ge2"], 4), "E_ord": round(c["ord"], 4),
                   "passed": c["passed"], "kept": c["cid"] in keep_ids,
                   "transfer_dropped": c["info"].get("transfer_dropped", False)}
             if c["cid"] in keep_ids:
-                cd["gate_stamp"] = gate_stamp(c["p_ge3"], scorer.threshold)
+                cd["gate_stamp"] = c.get("gate_stamp", gate_stamp(c["p_ge3"], scorer.threshold))
                 cd["keeper_png"] = c.get("keep_png")
                 cd["sidebyside"] = c.get("sbs")
+                cd["fixed"] = False
                 entry["kept"] = cd
             entry["candidates"].append(cd)
         rep["per_location"].append(entry)
@@ -433,19 +633,39 @@ def write_report(rows, cands, by_loc, keepers, alloc, n_loc_passer, scorer, pari
 
     # markdown
     L = []
-    L.append("# Render-mode deploy tail — pilot report\n")
+    L.append("# Render-mode deploy tail — production curation pass\n")
     q = rep["allocation"]
+    ck = checks
     L.append(f"**Gate** `mining_v1` (LOCKED) · threshold `{scorer.threshold}` on marginal p_ge3\n")
-    L.append(f"**Diversity allocation** — emitted **{q['n_emitted']}** · budget "
+    L.append(f"**Corpus** N=**{q['n_emitted']}** emitted · budget "
              f"B=round({q['budget_frac']:.0%}×{q['n_emitted']})=**{q['budget_B']}** · "
-             f"floor=**{q['floor_per_mode']}**/mode (n={q['n_modes']}) · locations with a "
-             f"gate-passer **{q['n_locations_with_passer']}** · strange kept "
-             f"**{q['n_strange_kept']}** (**{q['pct_kept']:.0%}**)\n")
-    L.append("| mode | floor | achieved | supply | degraded |")
-    L.append("|------|:-----:|:--------:|:------:|:--------:|")
+             f"floor=**{q['floor_per_mode']}**/mode (n={q['n_modes']}) · floor-bite at "
+             f"**N≥~{q['floor_bite_threshold_N']}** → floors "
+             f"**{'ENGAGED' if floors_engaged else 'DORMANT'}** at this N\n")
+    L.append(f"**Alternates** {rep['curation_pass']['n_existing_alternates']} fixed + "
+             f"{rep['curation_pass']['n_new_keepers']} new = **{n_total_alt}** total "
+             f"(**{q['pct_kept']:.0%}** of corpus) · new passer-locations "
+             f"**{q['n_new_locations_with_passer']}**\n")
+    if degenerate:
+        L.append(f"> ⚠️ **Degenerate small-N regime.** N={q['n_emitted']} < "
+                 f"{q['floor_bite_threshold_N']}, so the per-mode floor rounds to 0 and the "
+                 f"diversity spread degrades to a global top-{q['budget_B']}-by-quality fill. "
+                 f"The pass is **correct but degenerate** — the live floor/surplus/degradation "
+                 f"mechanics only show once the corpus grows past ~{q['floor_bite_threshold_N']} "
+                 f"emissions (via more `emit_v1` runs). The floor logic is exercised by "
+                 f"`test_tail_alloc.py` at synthetic N.\n")
+    L.append("**Correctness checks** — "
+             f"smooth-untouched **{_mk(ck['smooth_untouched']['ok'])}** "
+             f"({ck['smooth_untouched']['n_checked']} pngs) · "
+             f"emit-field-dir-untouched **{_mk(ck['emit_field_dir_untouched']['ok'])}** · "
+             f"field-tmp-clean **{_mk(ck['field_tmp_clean']['ok'])}** · "
+             f"idempotent **{_mk(ck['idempotent']['ok'])}** "
+             f"(next-run new allocs = {ck['idempotent']['next_run_new_allocations']})\n")
+    L.append("| mode | floor | achieved | existing | new-supply | degraded |")
+    L.append("|------|:-----:|:--------:|:--------:|:----------:|:--------:|")
     for pm in q["per_mode"]:
-        L.append(f"| {pm['mode']} | {pm['floor']} | {pm['achieved']} | {pm['supply']} | "
-                 f"{'⚠️' if pm['degraded'] else ''} |")
+        L.append(f"| {pm['mode']} | {pm['floor']} | {pm['achieved']} | {pm['existing']} | "
+                 f"{pm['new_supply']} | {'⚠️' if pm['degraded'] else ''} |")
     L.append("")
     if parity:
         L.append("**Parity** (in-proc MiningScorer vs `mining_gate.py` CLI):")
@@ -455,7 +675,13 @@ def write_report(rows, cands, by_loc, keepers, alloc, n_loc_passer, scorer, pari
         L.append("")
     L.append("## Per-location\n")
     for e in rep["per_location"]:
-        star = "  ✅ KEEPER" if e["kept"] else ""
+        if e["state"] == "existing_alternate":
+            k = e["kept"]
+            L.append(f"### {e['loc_id']} · {e['family']} · `{e['palette'][:32]}`  🔒 FIXED ALTERNATE")
+            L.append(f"\n→ existing **{k['mode']}** (p_ge3={k.get('p_ge3')}) · side-by-side "
+                     f"`{k.get('sidebyside')}` — carried over, not re-rendered.\n")
+            continue
+        star = "  ✅ NEW KEEPER" if e["kept"] else ""
         L.append(f"### {e['loc_id']} · {e['family']} · `{e['palette'][:32]}`{star}")
         L.append("")
         L.append("| mode | kind | p_ge3 | p_ge2 | E[ord] | pass | kept |")
@@ -468,7 +694,12 @@ def write_report(rows, cands, by_loc, keepers, alloc, n_loc_passer, scorer, pari
         L.append("")
     (OUT_DIR / "report.md").write_text("\n".join(L), encoding="utf-8")
     print(f"\n[report] {OUT_DIR/'report.md'}  +  report.json")
-    print(f"[done] {len(keepers)}/{len(rows)} strange keepers ({q['pct_kept']:.0%})")
+    print(f"[done] {n_total_alt}/{len(rows)} strange alternates "
+          f"({rep['curation_pass']['n_new_keepers']} new this pass, {q['pct_kept']:.0%} of corpus)")
+
+
+def _mk(ok: bool) -> str:
+    return "✅" if ok else "❌"
 
 
 if __name__ == "__main__":

@@ -154,6 +154,82 @@ def test_small_n_floor_is_subunit_trivial():
     assert counts(selected)["tia"] == 2
 
 
+def test_existing_counts_toward_budget_and_floor():
+    """Incremental: a fixed existing alternate consumes one budget slot AND satisfies
+    its mode's floor — so the shortfall is B-1 and that mode is NOT floor-filled again."""
+    N = 80                       # B=20, floor=2
+    B = budget(N)
+    floor = mode_floor(B, len(ROSTER))
+    assert (B, floor) == (20, 2)
+    # tia already has 2 fixed alternates (meets its floor of 2) from a prior run.
+    existing = [{"loc_id": "E0", "mode": "tia"}, {"loc_id": "E1", "mode": "tia"}]
+    # fresh supply on distinct (new) locations, over-supplied on every mode.
+    passers, lid = [], 100
+    for m in ROSTER:
+        for k in range(6):
+            passers.append(cand(f"L{lid}", m, 0.5 + 0.01 * k)); lid += 1
+    selected, meta = allocate_strange(passers, N, ROSTER, existing=existing)
+
+    assert meta["n_fixed"] == 2
+    assert len(selected) == B - 2                         # shortfall only
+    # no NEW pick reuses a fixed location.
+    assert not ({c["loc_id"] for c in selected} & {"E0", "E1"})
+    c = counts(selected)
+    # tia's floor was already met by `existing`, so it gets NO new floor pick; other
+    # modes still reach their floor from the fresh supply.
+    for m in ROSTER[1:]:
+        assert c[m] >= floor, (m, c[m])
+    # corpus-wide achieved (existing + new) respects the budget.
+    assert sum(meta["achieved"].values()) == B
+    assert meta["achieved"]["tia"] >= 2                   # the 2 fixed still counted
+
+
+def test_existing_never_reassigns_a_curated_location():
+    """A location that already has an alternate is locked out even if it would now be
+    the top passer in a different mode — never churn."""
+    N = 40                       # B=10
+    B = budget(N)
+    existing = [{"loc_id": "Lx", "mode": "tia"}]
+    # Lx passes strongly in stripe too, but it's already curated -> ineligible.
+    passers = [cand("Lx", "stripe", 0.99), cand("Ly", "c13", 0.60),
+               cand("Lz", "c17", 0.58)]
+    selected, meta = allocate_strange(passers, N, ROSTER, existing=existing)
+    assert "Lx" not in {c["loc_id"] for c in selected}
+    assert _distinct_locs(selected) == len(selected)
+    assert meta["achieved"]["tia"] == 1                   # only the fixed one
+
+
+def test_rerun_unchanged_corpus_is_noop():
+    """Idempotency: feed back the full prior selection as `existing` with the SAME
+    remaining supply — the shortfall is 0, so nothing new is allocated."""
+    N = 10                       # B=2, floor=0
+    B = budget(N)
+    passers = [cand("La", "tia", 0.95), cand("Lb", "tia", 0.86),
+               cand("Lc", "c13", 0.60)]
+    first, _ = allocate_strange(passers, N, ROSTER)
+    assert len(first) == B
+    # second run: prior picks are now FIXED existing; only un-picked locs remain eligible.
+    existing = [{"loc_id": c["loc_id"], "mode": c["mode"]} for c in first]
+    kept_ids = {c["loc_id"] for c in first}
+    remaining_passers = [c for c in passers if c["loc_id"] not in kept_ids]
+    second, meta = allocate_strange(remaining_passers, N, ROSTER, existing=existing)
+    assert second == []                                   # no-op
+    assert meta["n_fixed"] == B
+
+
+def test_existing_default_is_backward_compatible():
+    """existing=() must reproduce the from-scratch result exactly."""
+    N = 80
+    passers, lid = [], 0
+    for m in ROSTER:
+        for k in range(4):
+            passers.append(cand(f"L{lid}", m, 0.5 + 0.01 * k)); lid += 1
+    a, ma = allocate_strange(passers, N, ROSTER)
+    b, mb = allocate_strange(passers, N, ROSTER, existing=())
+    assert [c["loc_id"] for c in a] == [c["loc_id"] for c in b]
+    assert ma["achieved"] == mb["achieved"]
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
