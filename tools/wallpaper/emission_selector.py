@@ -166,20 +166,45 @@ def select(
     grid: Optional[ColorGrid] = None,
     palette_cap_frac: float = 0.05,
     palette_cap_floor: int = 2,
+    palette_family_of: Optional[Callable[[Candidate], str]] = None,
+    palette_family_cap: Optional[int] = 3,
 ) -> SelectionResult:
-    """Greedy joint MAP-Elites selection. See module docstring for the contract."""
+    """Greedy joint MAP-Elites selection. See module docstring for the contract.
+
+    ``palette_family_of`` + ``palette_family_cap`` add the tunable palette-family
+    diversity control (Stage-2d portfolio dial): a hard cap of at most
+    ``palette_family_cap`` emitted renders per *palette* family (as classified by
+    ``palette_family_of``), mirroring the per-palette reuse cap one level up. The
+    behavior axis (MAP-Elites cell = fractal-family x color-cell) is unchanged;
+    this only prunes the greedy walk so the *same few palette families can't win
+    every location narrowly*. The quality floor (``gate``) is applied first, so
+    the family cap trades away fitness preference, never quality.
+
+    ``palette_family_cap`` defaults to **3**: a gentle family-diversity guardrail.
+    At current production volume (0.90 gate, ~7 picks) it is a *no-op* — it does
+    not bind until some family would exceed 3 emitted renders, and today's max
+    family count is already <=3. It auto-engages as emission volume scales, then
+    trading a small pref-rank cost + minor portfolio shrinkage for family spread.
+    Retunable via the kwarg (cap=2 is the knee if more spread is wanted). Note the
+    deliberate default change off (``None``) -> 3: the "byte-identical to the
+    pre-existing / control-OFF behavior" guarantee now holds only when the cap is
+    *explicitly* set to ``None``. The control is OFF iff ``palette_family_of is
+    None`` or ``palette_family_cap is None``.
+    """
     cands = list(candidates)
     survivors = [c for c in cands if (gate is None or gate(c))]
 
     reachable = {c.behavior_cell for c in survivors}
     n_reachable = len(reachable)
     cap = max(palette_cap_floor, math.ceil(palette_cap_frac * n_reachable))
+    fam_control = palette_family_of is not None and palette_family_cap is not None
 
     # fitness desc; deterministic tiebreak so runs are reproducible.
     order = sorted(survivors, key=lambda c: (-c.fitness, c.image_id, c.location_id, c.palette_id))
 
     used_loc: set[str] = set()
     pal_ct: Counter[str] = Counter()
+    fam_ct: Counter[str] = Counter()
     filled: dict[tuple[str, int], Candidate] = {}
     for c in order:
         cell = c.behavior_cell
@@ -189,12 +214,20 @@ def select(
             continue
         if pal_ct[c.palette_id] >= cap:          # palette cap
             continue
+        if fam_control and fam_ct[palette_family_of(c)] >= palette_family_cap:
+            continue                             # palette-family cap (diversity dial)
         filled[cell] = c                         # location spent only on acceptance
         used_loc.add(c.location_id)
         pal_ct[c.palette_id] += 1
+        if fam_control:
+            fam_ct[palette_family_of(c)] += 1
 
     picks = list(filled.values())
     report = _build_report(cands, survivors, picks, cap, n_reachable, grid)
+    report["palette_family_cap"] = palette_family_cap
+    if fam_control:
+        report["palette_family_spread"] = dict(
+            Counter(palette_family_of(c) for c in picks).most_common())
     return SelectionResult(picks=picks, palette_cap=cap, n_reachable_cells=n_reachable, report=report)
 
 
