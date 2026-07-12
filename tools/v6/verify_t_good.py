@@ -27,8 +27,10 @@ sys.path.insert(0, str(ROOT / "tools" / "atlas"))
 
 from score_lib import corn_decode                      # noqa: E402
 from production_seeder import (                         # noqa: E402
-    t_good_for, T_GOOD_DEG2, T_GOOD_BASELINE, julia_partition,
+    t_good_for, T_GOOD_OVERRIDES, T_GOOD_BASELINE, julia_partition,
 )
+
+T_GOOD_DEG2 = T_GOOD_OVERRIDES["mandelbrot"]  # 0.24; the deg-2 knee this test exercises
 
 EVAL = ROOT / "data" / "classifier" / "v6" / "eval_scores_v6.jsonl"
 
@@ -43,14 +45,22 @@ def main() -> int:
     # --- routing: every partition the seeder can emit resolves correctly. --- #
     print("-- t_good_for routing --")
     deg2 = ["mandelbrot", julia_partition("mandelbrot")]           # julia:mandelbrot
+    # jm3 carries its own revival threshold (0.30); every other high-degree partition
+    # is still held at the baseline.
+    jm3 = julia_partition("multibrot3")                            # julia:multibrot3 -> 0.30
     hi = ["multibrot3", "multibrot4", "multibrot5",
-          julia_partition("multibrot3"), julia_partition("multibrot4"),
+          julia_partition("multibrot4"),
           julia_partition("multibrot5"), "phoenix"]
     for p in deg2:
         got = t_good_for(p)
         flag = "OK" if got == T_GOOD_DEG2 else "FAIL"
         ok &= got == T_GOOD_DEG2
         print(f"  {p:<22} -> {got}  ({flag}, expect {T_GOOD_DEG2})")
+    got = t_good_for(jm3)
+    expect_jm3 = T_GOOD_OVERRIDES["julia:multibrot3"]
+    flag = "OK" if got == expect_jm3 else "FAIL"
+    ok &= got == expect_jm3
+    print(f"  {jm3:<22} -> {got}  ({flag}, expect {expect_jm3})")
     for p in hi:
         got = t_good_for(p)
         flag = "OK" if got == T_GOOD_BASELINE else "FAIL"

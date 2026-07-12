@@ -205,27 +205,41 @@ def julia_partition(fam: str) -> str:
 
 
 # =========================================================================== #
-# Per-degree q3 operating point (t_good), keyed on the ledger `family` partition.
-# The v6 threshold sweep (tools/v6/threshold_sweep.py, on the labeled eval split) found
-# the deg-2 slice — where the classifier is actually POWERED — has a knee at p_good=0.24:
-# ~2.5x the baseline q3 recall at equal precision. High-degree families are unpowered on
-# the eval (near-noise good-counts), so lowering there could over-call with no evidence it
-# helps; they are HELD at the baseline 0.50. Wired as a lookup even where value==baseline so
-# retuning any family later is a value change, not a code round-trip. Stamped per outcome
-# row (`t_good`) so the ledger self-describes across the 0.50-era / 0.24-era mix.
+# Per-partition q3 operating point (t_good), keyed on the ledger `family` partition.
+# A partition earns a non-baseline threshold only from its OWN labeled sweep; anything
+# unswept falls through to the conservative baseline (0.50). The table is the single
+# source of truth — adding a family after its sweep is a one-line entry, not a branch.
+# Every value is stamped per outcome row (`t_good`) so the ledger self-describes across
+# the mixed-threshold eras.
+#
+# Provenance of each override:
+#   mandelbrot / julia:mandelbrot -> 0.24
+#     v6 threshold sweep (tools/v6/threshold_sweep.py, labeled eval split): the deg-2
+#     slice — where the classifier is actually POWERED — has a knee at p_good=0.24,
+#     ~2.5x the baseline q3 recall at equal precision. deg-2 = the c-plane quadratic
+#     Mandelbrot and its dynamical Julia twin.
+#   julia:multibrot3 -> 0.30
+#     jm3 revival sweep (scratchpad/jm3_tgood_sweep.py vs labels/jm3_band_v1.json,
+#     2026-07-11): the band is 64% q3 yet the baseline 0.50 rejected all of it; p_good
+#     carries directional resolution and the sweep supports anywhere in 0.28-0.36. 0.30
+#     is a deliberately round mid-low pick, not a fitted decimal.
+#
+# High-degree families NOT listed (c-plane multibrot3/4/5, julia:multibrot4/5, phoenix)
+# stay unpowered on the eval and are HELD at the baseline until their own sweeps land.
 # =========================================================================== #
-T_GOOD_DEG2 = 0.24        # sweep knee — 2.5x baseline recall at equal precision
-T_GOOD_BASELINE = 0.50    # conservative default for every unpowered / high-degree family
-# The degree-2 partitions the eval actually powered: the c-plane quadratic Mandelbrot and
-# its dynamical twin. Phoenix (also degree-2, but seeder-exempt and NOT in the swept eval)
-# and every multibrot{d}/julia:multibrot{d} fall through to the baseline.
-DEG2_PARTITIONS = frozenset({"mandelbrot", "julia:mandelbrot"})
+T_GOOD_BASELINE = 0.50    # conservative default for every unswept / high-degree partition
+T_GOOD_OVERRIDES = {
+    "mandelbrot": 0.24,        # v6 deg-2 sweep knee
+    "julia:mandelbrot": 0.24,  # deg-2 dynamical twin
+    "julia:multibrot3": 0.30,  # jm3 revival sweep (2026-07-11)
+}
 
 
 def t_good_for(partition: str) -> float:
-    """q3 p_good threshold for a cloud partition (family+degree). deg-2 (mandelbrot /
-    julia:mandelbrot) -> 0.24; everything else -> 0.50 (baseline). See the block above."""
-    return T_GOOD_DEG2 if partition in DEG2_PARTITIONS else T_GOOD_BASELINE
+    """q3 p_good threshold for a cloud partition (family+degree). Swept partitions get
+    their own value from T_GOOD_OVERRIDES; everything else -> 0.50 (baseline). See the
+    block above for per-partition provenance."""
+    return T_GOOD_OVERRIDES.get(partition, T_GOOD_BASELINE)
 
 
 # flags        : extra guided-descend CLI flags (family/julia grammar; [] for mandelbrot).
