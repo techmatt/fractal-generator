@@ -3,9 +3,16 @@
 Runs ON DEMAND over the ACCUMULATED corpus of emitted wallpapers (the smooth winners
 `emit_v1` has already produced). NOT wired inline into `emit_v1`'s loop: at ~15-24
 emissions/run the 25% budget's per-mode floors round to 0 and never engage; they only
-bite across the accumulated corpus (floor >= 1 needs N >~ 4*(n+2) = 32 at n=6). `emit_v1`
+bite across the accumulated corpus (floor >= 1 needs N >~ 4*(n+2) = 36 at n=7). `emit_v1`
 and the smooth emission path stay untouched — this pass only ADDS strange-mode alternates
 alongside the smooth wallpapers, never overwriting them.
+
+The candidate roster is DERIVED from the mode registry (specs/modes_registry.json,
+`tier == "promoted"`), NOT hardcoded — deploy_tail follows whatever set is promoted there
+(the single source of truth), minus `smooth` (the base carrier emit_v1 already ships). See
+`load_promoted_roster`. Kept alternates are DURABLE product: they live in emit_v1's emission
+home alongside the smooth wallpapers they are alternates of (co-located manifest + pngs,
+shared lifecycle), not in the disposable mining scratch tree.
 
 For each already-emitted location (smooth winner + its approved palette/params chosen
 upstream by emit_v1), render a lean set of strange-mode candidate variants over the
@@ -63,6 +70,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -85,14 +93,23 @@ from tools.mining.tail_alloc import allocate_strange, BUDGET_FRAC  # noqa: E402
 
 EXE = str(REPO / "target/release/fractal-generator.exe")
 POOL_CMAPS = str(REPO / "data/palettes/pool_colormaps.json")
+MODES_REGISTRY = REPO / "specs" / "modes_registry.json"   # SOURCE OF TRUTH for mode promotion
 
 EMIT_MANIFEST = REPO / "out/wallpaper/emit_v1/manifest.jsonl"
-OUT_DIR = REPO / "out/mining/deploy_tail"
+OUT_DIR = REPO / "out/mining/deploy_tail"   # DISPOSABLE scratch (scoring crops, fields, sbs, reports)
 SCORE_CROPS = OUT_DIR / "scoring_crops"     # 1280x720 candidate jpgs (kept for eyeball+parity)
 FIELD_TMP = OUT_DIR / "_fields"             # disposable field dumps (deploy-tail-owned, token'd)
-KEEP_DIR = OUT_DIR / "keepers"              # full-res keeper pngs (alternates, alongside smooth)
-SBS_DIR = OUT_DIR / "sidebyside"            # smooth-vs-kept comparisons
-ALTERNATES = OUT_DIR / "alternates.jsonl"   # DURABLE state: the kept strange alternates
+SBS_DIR = OUT_DIR / "sidebyside"            # smooth-vs-kept comparisons (regenerable eyeball view)
+
+# DURABLE product lives in emit_v1's emission home, NOT the mining scratch tree: a finished
+# 2560x1440 alternate is product and must sit ALONGSIDE the smooth wallpaper it is an alternate
+# of, so the two share one lifecycle (co-located manifest + pngs; a manifest that outlives its
+# pngs is dangling state). Bound in main() from the manifest's parent so they track wherever
+# emit_v1 emits (default out/wallpaper/emit_v1/).
+KEEP_DIR = None                             # <emit_home>/alternates  — full-res keeper pngs
+ALTERNATES = None                           # <emit_home>/alternates.jsonl — DURABLE incremental state
+LEGACY_KEEP_DIR = OUT_DIR / "keepers"       # pilot home (pre-relocation) — migrated on first run
+LEGACY_ALTERNATES = OUT_DIR / "alternates.jsonl"
 
 # scoring geometry == render_mode dataset_v1 (the head's label crops).
 SC_W, SC_H, SC_SS, SC_FILT = 1280, 720, 2, "lanczos3"
@@ -103,32 +120,55 @@ EMIT_W, EMIT_H, EMIT_SS, EMIT_FILT = 2560, 1440, 4, "lanczos3"
 # strange budget as a fraction of emitted locations (diversity allocation, tail_alloc).
 STRANGE_BUDGET_FRAC = BUDGET_FRAC            # 0.25
 
-# ---- candidate roster (lean, weighted to high-yield) ---------------------- #
+# ---- candidate roster (DERIVED from the mode registry, not hardcoded) ------ #
 # kind: pure -> dump field + colormap tail; composite/direct -> Rust --coloring.
+# The recipe tables below are the dataset_v1 render recipes (== render_scale_batch.py, the
+# recipe the mining_v1 head learned); the ACTIVE roster is the registry-PROMOTED subset of
+# them (load_promoted_roster). Recipes are kept even for non-promoted modes so a future
+# promotion in modes_registry.json needs no code change here.
 PURE_FIELD_SPEC = {
     "tia": {"field": "tia", "skip": 1},
     "stripe": {"field": "stripe", "stripe_density": 6},
 }
 SPEC_FILE = {
+    "smooth_mean_angle": "smooth_mean_angle",
+    "smooth_angle_min": "smooth_angle_min",
+    "composite_c7_smooth_trap_circle": "composite_c7_smooth_trap_circle",
     "composite_c13_smooth_stripe": "composite_c13_smooth_stripe",
     "composite_c17_smooth_curvature": "composite_c17_smooth_curvature",
     "direct_trap_multiply": "direct_trap_multiply",
     "direct_trap_screen": "direct_trap_screen",
 }
-# highlight rolloff, gated to the screen-family blowout — matches dataset_v1 exactly.
+# highlight rolloff / mode params: INERT unless the keyed mode is promoted into the roster
+# (the direct_trap family is currently `niche`); kept == dataset_v1 for recipe fidelity so a
+# future promotion is a no-code-change flip. direct_trap sweet spot: opacity 0.15 / thr 0.08.
 ROLLOFF = {"direct_trap_screen": ("soft_knee", 0.35)}
-# direct_trap sweet spot: opacity 0.15 / threshold 0.08, at/under the source cap.
 MODE_PARAMS = {"direct_trap_screen": {"direct_threshold": 0.08, "direct_opacity": 0.15}}
 
-# (mode, kind). Order = display order in the report.
-ROSTER = [
-    ("tia", "pure"),
-    ("stripe", "pure"),
-    ("composite_c13_smooth_stripe", "composite"),
-    ("composite_c17_smooth_curvature", "composite"),
-    ("direct_trap_multiply", "direct"),
-    ("direct_trap_screen", "direct"),
-]
+
+def load_promoted_roster():
+    """Candidate roster = the modes promoted in the SOURCE OF TRUTH (modes_registry.json,
+    `tier == "promoted"`), NOT a hardcoded list. `smooth` is the base carrier emit_v1 already
+    ships, so it is excluded (an alternate that re-rendered smooth would dupe the shipped
+    wallpaper) — deploy_tail only adds STRANGE alternates alongside smooth. Each promoted mode
+    maps to its dataset_v1 render recipe (pure field vs composite/direct spec); a promoted mode
+    with NO recipe here is REPORTED and skipped, never guessed. Returns (roster, unmapped)."""
+    reg = json.loads(MODES_REGISTRY.read_text(encoding="utf-8"))
+    promoted = [e["spec"] for e in reg if e.get("tier") == "promoted" and e["spec"] != "smooth"]
+    roster, unmapped = [], []
+    for m in promoted:
+        if m in PURE_FIELD_SPEC:
+            roster.append((m, "pure"))
+        elif m in SPEC_FILE:
+            roster.append((m, "direct" if m.startswith("direct_trap") else "composite"))
+        else:
+            unmapped.append(m)
+    return roster, unmapped
+
+
+# (mode, kind), display/report order = registry order. Derived at import; the registry is the
+# only knob — promote/demote a mode there and this roster follows with no edit here.
+ROSTER, UNMAPPED_PROMOTED = load_promoted_roster()
 
 _LIB = None
 
@@ -307,6 +347,45 @@ def save_alternates(recs: dict):
     ALTERNATES.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
+def _reset_state():
+    """Deliberate start-fresh (--reset): wipe the durable alternates state — manifest +
+    keeper pngs — in BOTH the emission home and the legacy pilot home. Explicit flag so a
+    wipe is a deliberate act, never a side effect of clearing out/."""
+    for p in (ALTERNATES, LEGACY_ALTERNATES):
+        Path(p).unlink(missing_ok=True)
+    for d in (KEEP_DIR, LEGACY_KEEP_DIR):
+        if Path(d).exists():
+            shutil.rmtree(d)
+    print("[reset] cleared durable alternates state (alternates.jsonl + keeper pngs)")
+
+
+def _migrate_legacy_home():
+    """One-time carry-over: relocate the pilot's alternates (out/mining/deploy_tail/) into the
+    durable emission home. Move each keeper png + rewrite its `keeper_png` path, then drop the
+    legacy manifest. Idempotent — no-op once the emission-home manifest exists. Any png that
+    fails to move is left for the self-heal pass to re-render from the surviving record."""
+    if ALTERNATES.exists() or not LEGACY_ALTERNATES.exists():
+        return
+    recs = [json.loads(l) for l in LEGACY_ALTERNATES.read_text(encoding="utf-8").splitlines()
+            if l.strip()]
+    KEEP_DIR.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for r in recs:
+        old = r.get("keeper_png")
+        if not old:
+            continue
+        src = REPO / old.replace("\\", "/")
+        dst = KEEP_DIR / src.name
+        if src.exists() and not dst.exists():
+            src.replace(dst)
+            moved += 1
+        r["keeper_png"] = str(dst.relative_to(REPO))
+    save_alternates({r["loc_id"]: r for r in recs})
+    LEGACY_ALTERNATES.unlink(missing_ok=True)
+    print(f"[migrate] carried {len(recs)} alternate(s) into {ALTERNATES.parent} "
+          f"({moved} png(s) moved from the legacy home)")
+
+
 def _sha1_file(p: Path) -> str:
     return hashlib.sha1(p.read_bytes()).hexdigest()
 
@@ -330,12 +409,30 @@ def main():
     ap.add_argument("--manifest", type=Path, default=EMIT_MANIFEST)
     ap.add_argument("--score-only", action="store_true", help="gate/select only; skip full-res")
     ap.add_argument("--limit", type=int, default=0, help="only the first N emitted locations")
+    ap.add_argument("--reset", action="store_true",
+                    help="deliberately wipe the durable alternates state and start fresh")
     args = ap.parse_args()
     for s in (sys.stdout, sys.stderr):
         try:
             s.reconfigure(encoding="utf-8")
         except Exception:
             pass
+
+    # Bind the DURABLE product paths to emit_v1's emission home (the manifest's parent), so
+    # alternates sit alongside the smooth wallpapers they are alternates of and share their
+    # lifecycle — not in the disposable mining scratch tree.
+    global KEEP_DIR, ALTERNATES
+    emit_home = args.manifest.resolve().parent
+    KEEP_DIR = emit_home / "alternates"
+    ALTERNATES = emit_home / "alternates.jsonl"
+    if args.reset:
+        _reset_state()
+    else:
+        _migrate_legacy_home()
+    print(f"[roster] {len(ROSTER)} promoted strange mode(s) from {MODES_REGISTRY.name}: "
+          f"{', '.join(m for m, _ in ROSTER)}")
+    if UNMAPPED_PROMOTED:
+        print(f"[roster][WARN] promoted but no render recipe here (skipped): {UNMAPPED_PROMOTED}")
 
     # 1. Enumerate the accumulated emission corpus (the smooth winners emit_v1 produced).
     rows = [json.loads(l) for l in args.manifest.read_text().splitlines() if l.strip()]
@@ -442,6 +539,32 @@ def main():
     if not args.score_only:
         KEEP_DIR.mkdir(parents=True, exist_ok=True)
         SBS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 6a. Self-heal: an EXISTING (fixed) alternate whose keeper png is MISSING on disk —
+        #     state desynced from reality (partial wipe, failed move) — is re-rendered from its
+        #     surviving record. Skip-if-exists keys on the PNG itself, not the manifest row, so
+        #     a lone missing png re-renders just that one alternate. Records are otherwise fixed
+        #     (same mode/palette; no re-score, no re-allocation).
+        row_by_id = {r["image_id"]: r for r in rows}
+        healed = 0
+        for lid, rec in existing_alts.items():
+            row = row_by_id.get(lid)
+            if row is None:
+                continue
+            keep_png = KEEP_DIR / f"{lid}__{rec['mode']}_{EMIT_W}x{EMIT_H}.png"
+            rec["keeper_png"] = str(keep_png.relative_to(REPO))   # pin to the durable home
+            if keep_png.exists():
+                continue
+            loc = loc_mod.from_render_block(row["location"])
+            render_candidate(loc, rec["mode"], rec["kind"], rec["palette"],
+                             _color_params(row["params"]), keep_png,
+                             EMIT_W, EMIT_H, EMIT_SS, EMIT_FILT)
+            healed += 1
+            print(f"[heal] {lid}__{rec['mode']}: keeper png missing -> re-rendered "
+                  f"-> {keep_png.name}")
+        if healed:
+            print(f"[heal] re-rendered {healed} missing keeper png(s) from surviving records")
+
         for c in keepers:
             loc = loc_mod.from_render_block(c["row"]["location"])
             keep_png = KEEP_DIR / f"{c['cid']}_{EMIT_W}x{EMIT_H}.png"
