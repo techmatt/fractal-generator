@@ -140,6 +140,52 @@ def test_cache_key_noncollision():
 
 
 # --------------------------------------------------------------------------- #
+# 3b. Field-mode token — the render-mode / field-identity token that keeps a
+#     strange pure-field dump (tia/stripe/…) from colliding with the cached
+#     SMOOTH field. Parity gate: the smooth key is byte-identical to its
+#     pre-token value (both beam + emit paths), and distinct modes key distinctly.
+# --------------------------------------------------------------------------- #
+def test_field_mode_token_semantics():
+    # smooth (default / None / explicit "smooth") -> empty token; strange -> itself.
+    assert loc_mod.field_mode_token(None) == ""
+    assert loc_mod.field_mode_token("smooth") == ""
+    assert loc_mod.field_mode_token("tia") == "tia"
+    assert loc_mod.field_mode_token("stripe") == "stripe"
+
+
+# Known input, frozen pre-token stems (computed on the live smooth path). These
+# literals are the invariant: if a key edit moves the smooth stem, every cached
+# field is orphaned — this test must fail before that ships.
+_KNOWN = loc_mod.Location(family="mandelbrot", cx="-0.743643887",
+                          cy="0.131825904", fw="1e-6", maxiter=2000)
+_BEAM_SMOOTH = "mandelbrot_90d714081a89180f"
+_EMIT_SMOOTH = "mandelbrot_3c882a9fb29412d4_2560x1440ss4"
+
+
+def test_field_key_smooth_parity_beam():
+    # default and explicit "smooth" both reproduce the frozen pre-token stem.
+    assert aq._field_key(_KNOWN) == _BEAM_SMOOTH
+    assert aq._field_key(_KNOWN, "smooth") == _BEAM_SMOOTH
+    assert aq._field_key(_KNOWN, None) == _BEAM_SMOOTH
+    # distinct modes -> distinct stems, pairwise disjoint (incl. vs smooth).
+    stems = {aq._field_key(_KNOWN, m) for m in (None, "smooth", "tia", "stripe", "curvature")}
+    assert len(stems) == 4  # {smooth, tia, stripe, curvature}
+    assert _BEAM_SMOOTH in stems
+
+
+def test_field_key_smooth_parity_emit():
+    import importlib
+    sys.path.insert(0, os.path.join(_TOOLS, "wallpaper"))
+    ev = importlib.import_module("emit_v1")   # lazy: keeps torch off the collection path
+    assert ev._emit_field_stem(_KNOWN) == _EMIT_SMOOTH
+    assert ev._emit_field_stem(_KNOWN, "smooth") == _EMIT_SMOOTH
+    assert ev._emit_field_stem(_KNOWN, None) == _EMIT_SMOOTH
+    stems = {ev._emit_field_stem(_KNOWN, m) for m in (None, "smooth", "tia", "stripe", "curvature")}
+    assert len(stems) == 4
+    assert _EMIT_SMOOTH in stems
+
+
+# --------------------------------------------------------------------------- #
 # 4. Render-block / sidecar parse round-trip — the new families load correctly,
 #    Phoenix's p survives parse -> key -> flags.
 # --------------------------------------------------------------------------- #
@@ -233,6 +279,9 @@ def main():
         test_existing_keys_byte_identical,
         test_existing_families_are_only_m_j,
         test_cache_key_noncollision,
+        test_field_mode_token_semantics,
+        test_field_key_smooth_parity_beam,
+        test_field_key_smooth_parity_emit,
         test_from_render_block_families,
         test_sidecar_phoenix_p_survives,
         test_to_location_ref_recipe_stable,

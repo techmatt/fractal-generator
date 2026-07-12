@@ -144,6 +144,34 @@ def location_key(loc) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Field-identity token. The field caches (beam `assemble_queries._field_key`,
+# emit `emit_v1.ensure_emit_field`) hash the field-*identifying* params
+# (family/geometry/maxiter/c/family_params/ss/W/H) but silently assumed the
+# smooth field. The moment a non-smooth pure-field dump (tia/stripe/curvature/…)
+# reuses one of those caches it collides on an identical key with the cached
+# SMOOTH field and serves the wrong field, silently. The token below closes that
+# by making the dumped-field identity part of the key.
+#
+# Load-bearing invariant: the token is the EMPTY string for the smooth field (or
+# None) and is appended AFTER every existing key part — so a smooth key is
+# byte-identical to the pre-token scheme (no cache invalidation, zero behaviour
+# change on the live smooth path). Only pure single-field modes carry a token;
+# composites don't dump a single field, so they never key through here.
+# ---------------------------------------------------------------------------
+SMOOTH_FIELD = "smooth"
+
+
+def field_mode_token(mode) -> str:
+    """Field-identity token for a dumped pure field. `""` for the smooth field
+    (default / None) so the smooth key is unchanged; otherwise the mode string
+    itself, so smooth ⊥ every strange mode and distinct strange modes
+    (tia vs stripe) key pairwise-disjointly."""
+    if mode is None or mode == SMOOTH_FIELD:
+        return ""
+    return str(mode)
+
+
+# ---------------------------------------------------------------------------
 # The ONE render-one flag builder. Five cases (Step 3 of the prompt):
 #   mandelbrot   -> --family mandelbrot
 #   julia        -> --family mandelbrot --julia --c <c_re> <c_im>   (unchanged mechanism)

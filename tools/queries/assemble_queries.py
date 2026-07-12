@@ -46,7 +46,7 @@ OUT_RECORDS = OUT_QUERIES / "records"
 # Field cache — one ss2 dump per unique location, reused everywhere.
 # ---------------------------------------------------------------------------
 
-def _field_key(ref):
+def _field_key(ref, field_mode=None):
     """Stable filename stem for a location's ss2/eval field dump.
 
     Keyed on the canonical location (family + geometry + family_params) so
@@ -54,7 +54,13 @@ def _field_key(ref):
     only in `p`, get distinct dumps. `family_params` is appended AFTER the c fields
     and BEFORE ss/W/H, so for empty-params families (mandelbrot/julia) the joined
     string — and therefore the sha1 filename — is byte-identical to the pre-slot
-    scheme (no cached field is orphaned)."""
+    scheme (no cached field is orphaned).
+
+    `field_mode` is the render-mode / field-identity token for the field being
+    dumped (`loc_mod.field_mode_token`): the smooth field (default/None) appends
+    NOTHING — so the smooth stem is byte-identical to the pre-token scheme — while
+    a strange pure-field mode (tia/stripe/…) appends its token so it never
+    collides with the cached smooth field."""
     fam = loc_mod.family_of(ref)
     p = loc_mod.params_of(ref)
     parts = [fam, ref.cx, ref.cy, ref.fw, str(ref.maxiter),
@@ -63,6 +69,9 @@ def _field_key(ref):
         v = p.get(k)
         parts.append("" if v is None else str(v))
     parts += [str(qs.CANDIDATE_SS), str(qs.EVAL_WIDTH), str(qs.EVAL_HEIGHT)]
+    tok = loc_mod.field_mode_token(field_mode)
+    if tok:
+        parts.append(tok)
     h = hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
     return f"{fam}_{h}"
 

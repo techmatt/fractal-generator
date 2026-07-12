@@ -216,13 +216,26 @@ def _parity_check(rows, p_ge3, ssum):
 # ===========================================================================
 # 4. Emit — full-res render_candidate (Recipe 2) for each selected winner.
 # ===========================================================================
-def ensure_emit_field(loc):
-    """Dump (or reuse) the wallpaper-canon smooth field for `loc` — ONE dump per
-    emitted location (field invariance). 2560x1440 ss4 -> 10240x5760 raw field."""
-    FIELD_DIR.mkdir(parents=True, exist_ok=True)
+def _emit_field_stem(loc, field_mode=None):
+    """Filename stem for `loc`'s emit field dump (pure, no I/O — the parity gate
+    tests this directly).
+
+    `field_mode` is the render-mode / field-identity token (`loc_mod.field_mode_token`):
+    the smooth field (default/None) appends NOTHING to the hashed key — so the smooth
+    stem is byte-identical to the pre-token scheme — while a strange pure-field mode
+    keys distinctly and never collides with the cached smooth field."""
     import hashlib
-    h = hashlib.sha1(f"{loc.key()}|{EMIT_W}x{EMIT_H}ss{EMIT_SS}|{loc.maxiter}".encode()).hexdigest()[:16]
-    stem = f"{loc.family}_{h}_{EMIT_W}x{EMIT_H}ss{EMIT_SS}"
+    tok = loc_mod.field_mode_token(field_mode)
+    suffix = f"|{tok}" if tok else ""
+    h = hashlib.sha1(f"{loc.key()}|{EMIT_W}x{EMIT_H}ss{EMIT_SS}|{loc.maxiter}{suffix}".encode()).hexdigest()[:16]
+    return f"{loc.family}_{h}_{EMIT_W}x{EMIT_H}ss{EMIT_SS}"
+
+
+def ensure_emit_field(loc, field_mode=None):
+    """Dump (or reuse) the wallpaper-canon field for `loc` — ONE dump per emitted
+    location (field invariance). 2560x1440 ss4 -> 10240x5760 raw field."""
+    FIELD_DIR.mkdir(parents=True, exist_ok=True)
+    stem = _emit_field_stem(loc, field_mode)
     bin_path, json_path = FIELD_DIR / f"{stem}.bin", FIELD_DIR / f"{stem}.json"
     if not (bin_path.exists() and json_path.exists()):
         cmd = [str(EXE), "render-one",
