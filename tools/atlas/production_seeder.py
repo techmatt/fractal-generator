@@ -223,15 +223,23 @@ def julia_partition(fam: str) -> str:
 #     2026-07-11): the band is 64% q3 yet the baseline 0.50 rejected all of it; p_good
 #     carries directional resolution and the sweep supports anywhere in 0.28-0.36. 0.30
 #     is a deliberately round mid-low pick, not a fitted decimal.
+#   julia:multibrot4 / julia:multibrot5 -> 0.30
+#     jm4/jm5 revival sweep (scratchpad/jm45_tgood_sweep.py vs labels/jm45_band_v1.json,
+#     2026-07-12): both bands are 86% q3 (19/22 locations) yet the baseline 0.50 rejected
+#     all of it — even richer than jm3. Both take jm3's lean-low 0.30 (sweep admits with
+#     0.86-0.88 q3 precision and no q1 leak at 0.30); the Stage-2 quality gate nets any
+#     location-level FPs. Independent calls that happen to land on the same value.
 #
-# High-degree families NOT listed (c-plane multibrot3/4/5, julia:multibrot4/5, phoenix)
-# stay unpowered on the eval and are HELD at the baseline until their own sweeps land.
+# High-degree families NOT listed (c-plane multibrot3/4/5, phoenix) stay unpowered on
+# the eval and are HELD at the baseline until their own sweeps land.
 # =========================================================================== #
 T_GOOD_BASELINE = 0.50    # conservative default for every unswept / high-degree partition
 T_GOOD_OVERRIDES = {
     "mandelbrot": 0.24,        # v6 deg-2 sweep knee
     "julia:mandelbrot": 0.24,  # deg-2 dynamical twin
     "julia:multibrot3": 0.30,  # jm3 revival sweep (2026-07-11)
+    "julia:multibrot4": 0.30,  # jm4 revival sweep (2026-07-12)
+    "julia:multibrot5": 0.30,  # jm5 revival sweep (2026-07-12)
 }
 
 

@@ -45,22 +45,23 @@ def main() -> int:
     # --- routing: every partition the seeder can emit resolves correctly. --- #
     print("-- t_good_for routing --")
     deg2 = ["mandelbrot", julia_partition("mandelbrot")]           # julia:mandelbrot
-    # jm3 carries its own revival threshold (0.30); every other high-degree partition
-    # is still held at the baseline.
-    jm3 = julia_partition("multibrot3")                            # julia:multibrot3 -> 0.30
-    hi = ["multibrot3", "multibrot4", "multibrot5",
-          julia_partition("multibrot4"),
-          julia_partition("multibrot5"), "phoenix"]
+    # jm3/jm4/jm5 each carry their own revival threshold (0.30); the c-plane
+    # multibrot degrees and phoenix are still held at the baseline.
+    revived = [julia_partition("multibrot3"),                       # julia:multibrot3 -> 0.30
+               julia_partition("multibrot4"),                       # julia:multibrot4 -> 0.30
+               julia_partition("multibrot5")]                       # julia:multibrot5 -> 0.30
+    hi = ["multibrot3", "multibrot4", "multibrot5", "phoenix"]
     for p in deg2:
         got = t_good_for(p)
         flag = "OK" if got == T_GOOD_DEG2 else "FAIL"
         ok &= got == T_GOOD_DEG2
         print(f"  {p:<22} -> {got}  ({flag}, expect {T_GOOD_DEG2})")
-    got = t_good_for(jm3)
-    expect_jm3 = T_GOOD_OVERRIDES["julia:multibrot3"]
-    flag = "OK" if got == expect_jm3 else "FAIL"
-    ok &= got == expect_jm3
-    print(f"  {jm3:<22} -> {got}  ({flag}, expect {expect_jm3})")
+    for p in revived:
+        got = t_good_for(p)
+        expect = T_GOOD_OVERRIDES[p]
+        flag = "OK" if got == expect else "FAIL"
+        ok &= got == expect
+        print(f"  {p:<22} -> {got}  ({flag}, expect {expect})")
     for p in hi:
         got = t_good_for(p)
         flag = "OK" if got == T_GOOD_BASELINE else "FAIL"
