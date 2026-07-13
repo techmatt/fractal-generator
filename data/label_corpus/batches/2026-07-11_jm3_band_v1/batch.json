@@ -1,0 +1,34 @@
+{
+ "created": "2026-07-11",
+ "labeler": null,
+ "generator_version": "jm3_band_v1",
+ "source_run": "data/discovery/gather/multibrot3 + data/discovery (v6-decoded, guard-pass, p_good in [0.24,0.50))",
+ "schema_extension": "render block adds fractal_type + c_re/c_im for Julia (multibrot3 twin).",
+ "purpose": "jm3 threshold-revival band sizing: label to run t_good sweep for julia:multibrot3.",
+ "band": {
+  "family": "julia:multibrot3",
+  "require_v6": true,
+  "guard_pass": true,
+  "p_good_range": [
+   0.24,
+   0.5
+  ],
+  "n_rows": 58,
+  "n_distinct_locations_c": 28
+ },
+ "render_defaults": {
+  "width": 1280,
+  "height": 720,
+  "ss": 4,
+  "maxiter": 8000,
+  "filter": "lanczos3",
+  "composition": "center",
+  "interior_mode": "black",
+  "jpg_quality": 90
+ },
+ "render_recipe": {
+  "path": "render-one --palette --colormaps",
+  "palette_source": "data/palettes/score3_colormaps.json",
+  "jpg_quality": 90
+ }
+}
