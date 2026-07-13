@@ -86,6 +86,16 @@ BATCH_ID = "2026-07-07_wallpaper_fresh_discovery_v1"
 GENERATOR_VERSION = "wallpaper_fresh_discovery_v1"
 IMG_PREFIX = "wfd"
 
+# Output batch dir. Default = the committed wallpaper-corpus batch dir; overridden by
+# --batch-dir so an orchestrator can write each cycle's pool to its own disposable dir
+# (no image_id / crop collisions across cycles). None -> the default path is derived from
+# BATCH_ID at use time (see _batch_dir).
+BATCH_DIR = None
+# Skip the first N ledger lines in source selection (the per-cycle watermark): an
+# orchestrator sets this so a cycle pools ONLY the fresh q3s its discovery phase just
+# appended, never rows from earlier cycles of the same run. 0 -> whole ledger.
+LEDGER_START_LINE = 0
+
 # --- selection knobs -------------------------------------------------------
 # ALL families flow (no family filter): mandelbrot, multibrot3/4/5, julia:mandelbrot,
 # julia:multibrot3/4/5, phoenix. The ledger->render mapping (family name + viewport +
@@ -103,6 +113,11 @@ SEED = 7
 # ===========================================================================
 # 1. Unseen machine-q3 source selection.
 # ===========================================================================
+
+def _batch_dir() -> Path:
+    """The output batch dir: --batch-dir override, else the default committed corpus path."""
+    return BATCH_DIR if BATCH_DIR is not None else (WALLPAPER_CORPUS / "batches" / BATCH_ID)
+
 
 def _render_coords(row):
     """(cx, cy, fw, c, render_family) the ledger row will be RENDERED at — for ALL
@@ -189,7 +204,8 @@ def select_sources(seed, count):
     seen = set()
     n_raw = 0
     n_excl_key = n_excl_spatial = n_dup = 0
-    for line in DISCOVERY_LEDGER.read_text(encoding="utf-8").splitlines():
+    ledger_lines = DISCOVERY_LEDGER.read_text(encoding="utf-8").splitlines()[LEDGER_START_LINE:]
+    for line in ledger_lines:
         if not line.strip():
             continue
         d = json.loads(line)
@@ -230,6 +246,7 @@ def select_sources(seed, count):
 
     report = {
         "source_ledger": str(DISCOVERY_LEDGER.relative_to(ROOT)),
+        "ledger_start_line": LEDGER_START_LINE,
         "filter": "scorer_version==v6 & decoded_class==3 & guard_pass (all families)",
         "raw_matches": n_raw,
         "within_set_dups_dropped": n_dup,
@@ -302,7 +319,7 @@ def provenance_block(src, loc, pick):
 
 
 def write_batch(rows, report, wall_s, args):
-    batch_dir = WALLPAPER_CORPUS / "batches" / BATCH_ID
+    batch_dir = _batch_dir()
     (batch_dir / "crops").mkdir(parents=True, exist_ok=True)
     with (batch_dir / "images.jsonl").open("w", encoding="utf-8") as fh:
         for r in rows:
@@ -382,6 +399,15 @@ def main():
                     help="beam->selector handoff / emission pool depth (deployed default 12)")
     ap.add_argument("--limit", type=int, default=0, help="cap locations actually run (smoke)")
     ap.add_argument("--estimate", action="store_true", help="print composition + est and exit")
+    ap.add_argument("--batch-dir", type=Path, default=None,
+                    help="write the pool batch (images.jsonl + crops/ + batch.json) to this dir "
+                         "instead of the committed corpus path. Use a disposable per-cycle dir so "
+                         "an orchestrator's cycles never collide on image_ids/crops. BATCH_ID is "
+                         "taken from the dir name.")
+    ap.add_argument("--ledger-start-line", type=int, default=0,
+                    help="skip the first N ledger lines in source selection (the per-cycle "
+                         "watermark): pool ONLY the fresh q3s appended after this offset, so a "
+                         "cycle never re-emits an earlier cycle's locations.")
     args = ap.parse_args()
     k = args.pool_k
 
@@ -390,6 +416,13 @@ def main():
     if args.ledger is not None:
         global DISCOVERY_LEDGER
         DISCOVERY_LEDGER = args.ledger.resolve()
+    if args.batch_dir is not None:
+        global BATCH_DIR, BATCH_ID
+        BATCH_DIR = args.batch_dir.resolve()
+        BATCH_ID = BATCH_DIR.name          # keep provenance batch_id == output dir name
+    if args.ledger_start_line:
+        global LEDGER_START_LINE
+        LEDGER_START_LINE = int(args.ledger_start_line)
 
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -436,7 +469,7 @@ def main():
 
         field = ensure_label_field(loc)
         label_prep = cm.stretch_field(field)
-        crops_dir = WALLPAPER_CORPUS / "batches" / BATCH_ID / "crops"
+        crops_dir = _batch_dir() / "crops"
         crops_dir.mkdir(parents=True, exist_ok=True)
 
         def _render_pick(pi_pick):

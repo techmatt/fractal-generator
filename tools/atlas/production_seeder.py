@@ -1736,6 +1736,14 @@ def main():
     ap.add_argument("--seed", type=int, default=0, help="rng + engine seed")
     ap.add_argument("--batch", type=int, default=0, help="seeds per batch (0 = default)")
     ap.add_argument("--budget", type=float, default=None, help="wallclock budget minutes override")
+    ap.add_argument("--discovery-dir", type=Path, default=None,
+                    help="redirect the durable discovery store (outcome_ledger.jsonl, "
+                         "outcome_feats.npz, probe_rejects.jsonl, runs/) to this dir instead of "
+                         "data/discovery. Point at a FRESH, EMPTY dir for a run-scoped ledger so a "
+                         "downstream pool build (build_fresh_discovery --ledger) reads ONLY this "
+                         "run's fresh q3s — the fresh-generation precondition. The q3 rejection "
+                         "cloud is rebuilt from THIS dir, so cross-run repulsion is intentionally "
+                         "reset to the run's own accumulating cloud.")
     # --- family grammar (mirrors render_one / guided_descend; see resolve_family) ---
     ap.add_argument("--family", default="mandelbrot",
                     choices=["mandelbrot", "multibrot3", "multibrot4", "multibrot5"],
@@ -1755,6 +1763,18 @@ def main():
                          "a degree-only julia:{fam} partition (strictly additive; default off — "
                          "c-plane runs are byte-unchanged when off).")
     args = ap.parse_args()
+    if args.discovery_dir is not None:
+        # Run-scoped store redirect: rebind the durable-discovery globals BEFORE any
+        # dispatch so Ledgers/append_outcome/_finalize/RUNS_DIR all target the fresh dir.
+        global DISCOVERY_DIR, OUTCOME_LEDGER, OUTCOME_FEATS, PROBE_REJECTS, RUNS_DIR
+        DISCOVERY_DIR = args.discovery_dir.resolve()
+        OUTCOME_LEDGER = DISCOVERY_DIR / "outcome_ledger.jsonl"
+        OUTCOME_FEATS = DISCOVERY_DIR / "outcome_feats.npz"
+        PROBE_REJECTS = DISCOVERY_DIR / "probe_rejects.jsonl"
+        RUNS_DIR = DISCOVERY_DIR / "runs"
+        DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"[seeder] discovery store -> {DISCOVERY_DIR}  (run-scoped ledger; "
+              f"cloud rebuilt from this dir only)")
     if args.finalize:
         _finalize(args.finalize)
     elif args.gather:
