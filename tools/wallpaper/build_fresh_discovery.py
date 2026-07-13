@@ -11,12 +11,16 @@ runs UNCHANGED — its gate-pass rate on this pool is the honest number.
 Only new code here is the front-end (unseen-location selection + pool generation);
 everything downstream (v2 gate, MAP-Elites selector, full-res emit) is emit_v1's.
 
-Location set (unseen, machine-q3, deg-2):
-  * Source = data/discovery/outcome_ledger.jsonl (the production seeder standing loop
-    — the v6-scored ledger; the gather/<class> ledgers are v5-decoded for deg-2 and
-    carry no scorer_version stamp).
+Location set (unseen, machine-q3, ALL families):
+  * Source = data/discovery/outcome_ledger.jsonl by default; override with --ledger to
+    point at a single fresh-discovery run's ledger (the run-isolation precondition — the
+    accumulated default sweeps in every historical v6 q3). The gather/<class> ledgers are
+    v5-decoded and carry no scorer_version stamp, so they never leak in.
   * decoded_class == 3  ∧  guard_pass  ∧  scorer_version == "v6".
-  * Families: mandelbrot + julia:mandelbrot only (deg-2 — abundant q3, head powered).
+  * Families: ALL 9 (mandelbrot, multibrot3/4/5, julia:mandelbrot, julia:multibrot3/4/5,
+    phoenix). Each ledger row maps to render coords via the canonical
+    gather_select.render_family + outcome_geometry (Julia -> z-plane viewport at fixed
+    c=outcome; c-plane -> outcome viewport). Phoenix has no v6 rows in this ledger yet.
   * EXCLUDE every location in the wallpaper head's corpus (bootstrap ∪ humanq3, all
     rows) by location_key AND by same-family spatial proximity (belt-and-suspenders —
     this is what keeps the precision honest). Dedup within the set by key.
@@ -62,6 +66,7 @@ import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteS
 import colormap as cm                 # noqa: E402  (stretch_field)
 import location as loc_mod            # noqa: E402  (canonical Location, from_render_block, location_key)
 import corpus_common as cc            # noqa: E402  (is_v6_decoded — v6-stamp guard)
+import gather_select as gs            # noqa: E402  (canonical ledger->render family map + outcome_geometry)
 from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
 from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
     LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER,
@@ -82,7 +87,9 @@ GENERATOR_VERSION = "wallpaper_fresh_discovery_v1"
 IMG_PREFIX = "wfd"
 
 # --- selection knobs -------------------------------------------------------
-DEG2_FAMILIES = ("mandelbrot", "julia:mandelbrot")   # ledger family names (deg-2 only)
+# ALL families flow (no family filter): mandelbrot, multibrot3/4/5, julia:mandelbrot,
+# julia:multibrot3/4/5, phoenix. The ledger->render mapping (family name + viewport +
+# fixed c) is the canonical gather_select.render_family/outcome_geometry — see _render_coords.
 PILOT_COUNT = 20            # default pilot size (config knob; scale later)
 DEDUP_FRAC = 0.5           # two same-family coords within DEDUP_FRAC*fw = the "same spot"
 
@@ -98,17 +105,19 @@ SEED = 7
 # ===========================================================================
 
 def _render_coords(row):
-    """(cx, cy, fw, c, render_family) the ledger row will be RENDERED at. julia:mandelbrot
-    renders the z-plane viewport (julia_z_*) at the fixed parameter c = outcome_* (render
-    family "julia"); mandelbrot renders the parameter plane (render family "mandelbrot").
-    Returns None if a julia row lacks its z-plane viewport."""
-    if row["family"] == "julia:mandelbrot":
-        if row.get("julia_z_cx") is None:
-            return None
-        return (float(row["julia_z_cx"]), float(row["julia_z_cy"]), float(row["julia_z_fw"]),
-                (float(row["outcome_cx"]), float(row["outcome_cy"])), "julia")
-    return (float(row["outcome_cx"]), float(row["outcome_cy"]), float(row["outcome_fw"]),
-            None, "mandelbrot")
+    """(cx, cy, fw, c, render_family) the ledger row will be RENDERED at — for ALL
+    families. Reuses the canonical ledger->render mapping (gather_select.render_family +
+    outcome_geometry, the same one gather_v6/v6-manifest render through): every Julia
+    family (julia:mandelbrot, julia:multibrot3/4/5) renders the z-plane viewport
+    (julia_z_*) at the fixed parameter c = the parent c-plane spot (outcome_*), render
+    family julia / julia_multibrot{d}; c-plane families (mandelbrot, multibrot3/4/5,
+    phoenix) render the outcome viewport directly with no c. Returns None if a Julia row
+    lacks its z-plane viewport."""
+    if gs.is_julia(row["family"]) and row.get("julia_z_cx") is None:
+        return None
+    cx, cy, fw, c_re, c_im = gs.outcome_geometry(row)
+    c = None if c_re is None else (float(c_re), float(c_im))
+    return (float(cx), float(cy), float(fw), c, gs.render_family(row["family"]))
 
 
 def _to_location(row):
@@ -168,9 +177,9 @@ def _spatially_in(loc, corpus_coords):
 
 
 def select_sources(seed, count):
-    """Unseen machine-q3 deg-2 locations, family-balanced round-robin to `count`.
+    """Unseen machine-q3 locations (all families), family-balanced round-robin to `count`.
 
-    Filter: scorer_version=="v6" ∧ decoded_class==3 ∧ guard_pass ∧ family∈deg-2.
+    Filter: scorer_version=="v6" ∧ decoded_class==3 ∧ guard_pass (ALL families).
     Exclude: any location in the head corpus (exact key OR same-family spatial proximity).
     Dedup: within-set by key. Returns (sources, report) where each source is
     {loc, key, family, oid, p_good}."""
@@ -185,7 +194,7 @@ def select_sources(seed, count):
             continue
         d = json.loads(line)
         if (not cc.is_v6_decoded(d) or d.get("decoded_class") != 3
-                or not d.get("guard_pass") or d.get("family") not in DEG2_FAMILIES):
+                or not d.get("guard_pass")):
             continue
         tl = _to_location(d)
         if tl is None:
@@ -221,7 +230,7 @@ def select_sources(seed, count):
 
     report = {
         "source_ledger": str(DISCOVERY_LEDGER.relative_to(ROOT)),
-        "filter": "scorer_version==v6 & decoded_class==3 & guard_pass & family∈{mandelbrot,julia:mandelbrot}",
+        "filter": "scorer_version==v6 & decoded_class==3 & guard_pass (all families)",
         "raw_matches": n_raw,
         "within_set_dups_dropped": n_dup,
         "excluded_head_corpus_by_key": n_excl_key,
@@ -307,8 +316,8 @@ def write_batch(rows, report, wall_s, args):
                        "by pref-v2 — the SAME pool rule/format as the humanq3 emission "
                        "pool, so emit_v1 --pool runs unchanged. Coloring params live in "
                        "provenance.params (crop = pure function of render + params).",
-        "source_run": "data/discovery/outcome_ledger.jsonl (v6-scored production seeder; "
-                      "decoded_class==3 & guard_pass & deg-2)",
+        "source_run": f"{report['source_ledger']} (v6-scored production seeder; "
+                      "decoded_class==3 & guard_pass; all families)",
         "sampling_metaparameters": {
             "beam": {"N_GEN0": SL.N_GEN0, "TOP_KEEP": SL.TOP_KEEP,
                      "K_VARIANTS": SL.K_VARIANTS, "R_MAX": SL.R_MAX, "seed": args.seed},
@@ -349,7 +358,7 @@ def _print_composition(report, count):
     print("=" * 74)
     print(f"source: {report['source_ledger']}")
     print(f"filter: {report['filter']}")
-    print(f"raw v6/class-3/guard-pass deg-2 matches : {report['raw_matches']:4}")
+    print(f"raw v6/class-3/guard-pass matches (all fam): {report['raw_matches']:4}")
     print(f"  within-set key dups dropped           : {report['within_set_dups_dropped']:4}")
     print(f"  excluded (in head corpus, exact key)  : {report['excluded_head_corpus_by_key']:4}")
     print(f"  excluded (head corpus, spatial prox)  : {report['excluded_head_corpus_by_proximity']:4}")
@@ -362,6 +371,12 @@ def _print_composition(report, count):
 def main():
     ap = argparse.ArgumentParser(description="Fresh-discovery colorize front-end (unseen machine-q3).")
     ap.add_argument("--seed", type=int, default=SEED)
+    ap.add_argument("--ledger", type=Path, default=None,
+                    help="run-scoped outcome ledger to source locations from (default: the "
+                         "accumulated data/discovery/outcome_ledger.jsonl). Point this at a "
+                         "single fresh-discovery run's ledger to guarantee the emit pool "
+                         "contains ONLY that run — the accumulated default sweeps in every "
+                         "historical v6 q3 (jm3/4/5 revival, julia_recall, prior runs).")
     ap.add_argument("--count", type=int, default=PILOT_COUNT, help="pilot location count")
     ap.add_argument("--pool-k", type=int, default=K,
                     help="beam->selector handoff / emission pool depth (deployed default 12)")
@@ -369,6 +384,12 @@ def main():
     ap.add_argument("--estimate", action="store_true", help="print composition + est and exit")
     args = ap.parse_args()
     k = args.pool_k
+
+    # Run-isolation hook: a run-scoped ledger overrides the accumulated default so the
+    # emit pool is exactly one fresh-discovery run (the fresh-generation precondition).
+    if args.ledger is not None:
+        global DISCOVERY_LEDGER
+        DISCOVERY_LEDGER = args.ledger.resolve()
 
     for stream in (sys.stdout, sys.stderr):
         try:
