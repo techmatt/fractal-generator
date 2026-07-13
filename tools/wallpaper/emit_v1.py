@@ -153,6 +153,13 @@ def load_v2_scorer(device):
 # ===========================================================================
 # 2/3. Build candidates (color cells cached) + run the selector.
 # ===========================================================================
+def _f(x):
+    """Decimal-string coord -> float for the fractal-identity guard (None passes through;
+    None c_re/c_im means 'no seed axis' — mandelbrot/multibrot/phoenix — and matches only
+    other None)."""
+    return None if x is None else float(x)
+
+
 def _thumb_rgb(jpg: Path, w: int = 96) -> np.ndarray:
     with Image.open(jpg) as im:
         im = im.convert("RGB")
@@ -196,13 +203,18 @@ def build_and_select(pool_dir: Path, gate_thr: float):
     cands = []
     for i, r in enumerate(rows):
         prov = r.get("provenance", {}) or {}
+        loc = loc_mod.from_render_block(r["render"])
         cands.append(es.Candidate(
-            location_id=loc_mod.from_render_block(r["render"]).key(),
+            location_id=loc.key(),
             palette_id=r["render"]["palette"],
             family=prov.get("family") or r["render"].get("fractal_type") or "mandelbrot",
             fitness=float(ssum[i]),
             color_cell=cells[r["image_id"]],
             image_id=r["image_id"],
+            # fractal-identity geometry: feeds the seeder-parity <=1/distinct-fractal
+            # guard (sibling recolors converge on the same place at jittered coords).
+            cx=_f(loc.cx), cy=_f(loc.cy), fw=_f(loc.fw),
+            c_re=_f(loc.c_re), c_im=_f(loc.c_im),
             meta={"p_ge3": float(p_ge3[i]), "row": r},
         ))
 

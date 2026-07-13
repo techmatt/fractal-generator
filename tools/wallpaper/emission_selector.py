@@ -12,20 +12,31 @@ Behavior space = MAP-Elites cells over ``family x color_cell``:
   - dominant color = median pixel in Lab (swappable to k-means top cluster).
 
 Constraints:
-  - <=1 render per location (hard).
+  - <=1 render per DISTINCT FRACTAL (hard). "Distinct" mirrors the SEEDER's own
+    per-family dedup identity (`atlas.production_seeder.near_dup`), NOT exact
+    location-key equality: sibling descent walks converge on the same fractal at
+    slightly different final (cx,cy,fw) (and, for julia, the identical seed `c`),
+    each recolored into a different palette -> a different Lab cell -> the old
+    exact-key `<=1/location` guard never collided and the selector kept them all as
+    separate niches. `same_fractal` (below) is the real identity. See its docstring
+    for the per-family rule.
   - palette cap (hard): <= max(2, ceil(0.05 * N)) renders per palette, where N =
     number of reachable (family x color) cells. Palette diversity beats cell fill.
   - gate: a pluggable predicate applied before selection (quality floor), kept
     decoupled from the selection logic.
 
 Selection = greedy joint assignment (pure per-cell argmax fails: a cell's best
-candidate may reuse a spent location or an over-quota palette). Gate-filter, sort
+candidate may reuse a spent fractal or an over-quota palette). Gate-filter, sort
 survivors by fitness desc, walk top-down; a candidate is accepted only when it
-fills an *empty* cell AND its location is unused AND its palette is under quota —
-and a location is spent only on acceptance, so a candidate whose cell is already
-filled steps aside and keeps its location free for an empty cell later. When a
-cell's best is blocked by a constraint, the next-best for that cell gets its turn
-further down the walk. Output = one elite per occupied cell.
+fills an *empty* cell AND its fractal is not already emitted AND its palette is
+under quota — and a fractal is spent only on acceptance, so a candidate whose cell
+is already filled steps aside and keeps its fractal free for an empty cell later.
+When a cell's best is blocked by a constraint, the next-best for that cell gets its
+turn further down the walk. Output = one elite per occupied cell. Because the
+fractal-identity guard walks in fitness order, the single kept render of a
+same-fractal cluster is its highest-fitness recolor; the other recolors are
+rejected and the cells they alone would have filled empty out — intended, so
+color-cell coverage becomes honest instead of counting the same geometry N times.
 """
 from __future__ import annotations
 
@@ -133,6 +144,89 @@ class ColorGrid:
 
 
 # --------------------------------------------------------------------------- #
+# fractal identity — mirrors the seeder's per-family dedup                     #
+# --------------------------------------------------------------------------- #
+# The seeder's coverage state is a q3 cloud deduped by `production_seeder.near_dup`
+# (plane distance < DEDUP_K * max(fw), a "one point per distinct place" rule), but
+# that dedup runs on the c-PLANE and never sees the julia z-plane viewport or the
+# phoenix z-plane. So the emission-side identity re-derives it per family:
+#
+#   c-plane (mandelbrot / multibrot{3,4,5}): the seeder rule VERBATIM — same place
+#     iff plane dist(cx,cy) < K*max(fw). Same-center/different-zoom merges, exactly
+#     as the seeder intends — and safe here because the pool's c-plane candidates are
+#     ALREADY this-rule-deduped upstream (they are q3-cloud members), so a big-fw
+#     frame can never swallow a genuinely-distinct deep one at emission: it was never
+#     admitted to the cloud in the first place.
+#
+#   julia* (julia, julia_multibrot{3,4,5}) AND phoenix: z-plane viewports that the
+#     seeder NEVER deduped, so their fw spans ~3 decades within one plane and a flat
+#     K*max(fw) lets one shallow (big-fw) base view swallow genuinely-distinct deep
+#     zooms at different sub-locations (observed on the pilot run: a fw=0.86 julia
+#     base view merging fit~2.9 deep zooms 5800x finer). Use a SCALE-AWARE viewport
+#     rule instead (`_same_viewport`): same place iff the centers are close at the
+#     FINER frame (dist < K*min(fw)) AND the two zooms are comparable
+#     (max(fw) <= ZOOM_RATIO*min(fw)). Recolor siblings (~same center, ~same fw, the
+#     redundancy we DO want to kill) still merge; a decade-deeper zoom stays distinct.
+#     Julia additionally requires a seed-`c` match FIRST: `c` IS the fractal, so two
+#     DIFFERENT-c views are distinct even when both sit at the base-scale (0,0) frame
+#     (all base-scale julias share viewport (0,0,~3)). Match c, not viewport alone.
+#
+#   NOTE ON THE SPEC. The fix prompt prescribed a flat 1.5*max(fw) for julia and
+#   carved out only phoenix as scale-aware. But julia's z-plane viewport has the
+#   identical never-upstream-deduped / decade-spanning structure as phoenix, and on
+#   the pilot run the flat rule DROPPED several high-fitness genuinely-distinct julia
+#   viewports (see the validation report) — which the same prompt forbids ("do NOT
+#   collapse genuinely-distinct locations"). So julia gets the same scale-aware
+#   viewport rule as phoenix; the c-plane rule is unchanged and matches the seeder.
+DEDUP_K = 1.5                # mirrors production_seeder.DEDUP_K
+ZOOM_RATIO = 4.0            # z-plane (julia/phoenix): frames farther apart than this in zoom are distinct places
+_C_TOL = 1e-9               # julia seed-c match tolerance (siblings share the exact seed; distinct c differ by >>tol)
+
+
+def _is_julia(family: str) -> bool:
+    return family.startswith("julia")
+
+
+def _plane_dist(a: "Candidate", b: "Candidate") -> float:
+    return math.hypot(a.cx - b.cx, a.cy - b.cy)
+
+
+def _c_match(a: "Candidate", b: "Candidate") -> bool:
+    if a.c_re is None or a.c_im is None or b.c_re is None or b.c_im is None:
+        return a.c_re == b.c_re and a.c_im == b.c_im       # both None -> match; one None -> distinct
+    return abs(a.c_re - b.c_re) <= _C_TOL and abs(a.c_im - b.c_im) <= _C_TOL
+
+
+def _same_viewport(a: "Candidate", b: "Candidate", k: float) -> bool:
+    """Scale-aware viewport identity for never-upstream-deduped z-planes (julia/phoenix):
+    centers close at the FINER frame AND zooms comparable — so a base view can't swallow
+    a genuinely-distinct deep zoom of a different sub-location."""
+    lo, hi = min(a.fw, b.fw), max(a.fw, b.fw)
+    if lo <= 0.0:
+        return _plane_dist(a, b) < k * hi
+    return _plane_dist(a, b) < k * lo and hi <= ZOOM_RATIO * lo
+
+
+def same_fractal(a: "Candidate", b: "Candidate", k: float = DEDUP_K) -> bool:
+    """Do `a` and `b` render the SAME fractal (up to recolor / sibling-descent jitter)?
+
+    Per-family identity (see the block comment above). Falls back to exact
+    location-id equality when either candidate carries no viewport geometry, so
+    geometry-free callers keep the historical <=1/location behavior exactly.
+    """
+    if a.family != b.family:
+        return False
+    if not (a.has_geometry and b.has_geometry):
+        return a.location_id == b.location_id
+    if _is_julia(a.family):
+        return _c_match(a, b) and _same_viewport(a, b, k)
+    if a.family == "phoenix":
+        return _same_viewport(a, b, k)
+    # c-plane: the seeder rule verbatim (pool candidates already max(fw)-deduped upstream).
+    return _plane_dist(a, b) < k * max(a.fw, b.fw)
+
+
+# --------------------------------------------------------------------------- #
 # candidates + selection                                                      #
 # --------------------------------------------------------------------------- #
 
@@ -145,10 +239,24 @@ class Candidate:
     color_cell: int
     image_id: str = ""
     meta: dict = field(default_factory=dict)   # carried through for reporting only
+    # --- fractal-identity geometry (for `same_fractal`) --------------------- #
+    # The viewport + (julia) seed constant. Optional so pre-existing callers that
+    # only pass `location_id` keep working: with no finite geometry, `same_fractal`
+    # falls back to exact location-id equality (the historical <=1/location rule),
+    # so a no-geometry candidate set selects byte-identically to before.
+    cx: float = float("nan")
+    cy: float = float("nan")
+    fw: float = float("nan")
+    c_re: Optional[float] = None    # julia seed c (the fractal identity for julia*)
+    c_im: Optional[float] = None
 
     @property
     def behavior_cell(self) -> tuple[str, int]:
         return (self.family, self.color_cell)
+
+    @property
+    def has_geometry(self) -> bool:
+        return math.isfinite(self.cx) and math.isfinite(self.cy) and math.isfinite(self.fw)
 
 
 @dataclass
@@ -202,7 +310,8 @@ def select(
     # fitness desc; deterministic tiebreak so runs are reproducible.
     order = sorted(survivors, key=lambda c: (-c.fitness, c.image_id, c.location_id, c.palette_id))
 
-    used_loc: set[str] = set()
+    emitted: list[Candidate] = []                # accepted fractal representatives (identity guard)
+    n_dup_rejected = 0                            # candidates blocked as same-fractal near-dups
     pal_ct: Counter[str] = Counter()
     fam_ct: Counter[str] = Counter()
     filled: dict[tuple[str, int], Candidate] = {}
@@ -210,20 +319,22 @@ def select(
         cell = c.behavior_cell
         if cell in filled:                       # cell already has a better elite
             continue
-        if c.location_id in used_loc:            # <=1 render per location
+        if any(same_fractal(c, e) for e in emitted):   # <=1 render per DISTINCT FRACTAL
+            n_dup_rejected += 1                   # (seeder-identity dedup, not exact-key)
             continue
         if pal_ct[c.palette_id] >= cap:          # palette cap
             continue
         if fam_control and fam_ct[palette_family_of(c)] >= palette_family_cap:
             continue                             # palette-family cap (diversity dial)
-        filled[cell] = c                         # location spent only on acceptance
-        used_loc.add(c.location_id)
+        filled[cell] = c                         # fractal spent only on acceptance
+        emitted.append(c)
         pal_ct[c.palette_id] += 1
         if fam_control:
             fam_ct[palette_family_of(c)] += 1
 
     picks = list(filled.values())
     report = _build_report(cands, survivors, picks, cap, n_reachable, grid)
+    report["n_dup_rejected"] = n_dup_rejected
     report["palette_family_cap"] = palette_family_cap
     if fam_control:
         report["palette_family_spread"] = dict(
