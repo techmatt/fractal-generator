@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,14 @@ PY = sys.executable   # the uv venv python this orchestrator runs under (torch c
 SEEDER = ROOT / "tools" / "atlas" / "production_seeder.py"
 POOL_BUILDER = ROOT / "tools" / "wallpaper" / "build_fresh_discovery.py"
 EMITTER = ROOT / "tools" / "wallpaper" / "emit_v1.py"
+
+# The seeder's transient render-scratch root (mirror of production_seeder.SCRATCH_ROOT;
+# kept literal here so the orchestrator needn't import the heavy in-process scorer graph
+# just for a path — keep in sync if the seeder moves it). A CLEAN seeder self-purges its
+# own <ts>/ scratch on exit; a HARD-KILLED one (the orchestrator's KILL_MULT backstop)
+# leaves it behind, which the startup sweep reclaims. Run dirs are named YYYYMMDD_HHMMSS.
+SEEDER_SCRATCH_ROOT = ROOT / "out" / "atlas" / "production_seeder"
+_RUN_TS_RX = re.compile(r"^\d{8}_\d{6}$")
 
 # All c-plane families; --julia-hook on each yields the julia:{fam} found-points too.
 FAMILIES = ["mandelbrot", "multibrot3", "multibrot4", "multibrot5"]
@@ -149,6 +158,41 @@ class Timing:
             self.fh.close()
         except Exception:
             pass
+
+
+# =========================================================================== #
+# Startup sweep: reclaim orphaned seeder render-scratch from prior KILLED runs.
+# =========================================================================== #
+def sweep_orphan_seeder_scratch(log: Log):
+    """Remove transient seeder render-scratch dirs left under SEEDER_SCRATCH_ROOT by
+    earlier runs whose seeder was hard-killed before it could self-purge (a clean seeder
+    exit purges its own <ts>/ via production_seeder._purge_run_scratch). Called ONCE at
+    orchestrator start, before any seeder is spawned this run, so every timestamped dir
+    present is a pre-existing orphan — safe to remove. Only matches the seeder's
+    YYYYMMDD_HHMMSS run dirs (a manual diagnostic's differently-named subdir is left
+    alone). A cleanly-finished run's dir holds only a tiny outcome_tiles/ by now; that is
+    disposable too (only the manual --finalize rereads it, which the loop never runs).
+    Best-effort: an unlink failure (Windows lock) is logged, never fatal."""
+    root = SEEDER_SCRATCH_ROOT
+    if not root.exists():
+        log(f"startup sweep: no seeder scratch root at {root} (nothing to reclaim)")
+        return
+    freed = removed = 0
+    for child in sorted(root.iterdir()):
+        if not (child.is_dir() and _RUN_TS_RX.match(child.name)):
+            continue
+        try:
+            freed += sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
+            shutil.rmtree(child, ignore_errors=True)
+            removed += 1
+        except OSError as e:
+            log(f"  startup sweep: could not remove {child.name}: {e}", "WARN")
+    if removed:
+        log(f"startup sweep: reclaimed {removed} orphaned seeder scratch dir(s), "
+            f"~{freed/2**30:.2f} GiB under {root} (hard-killed-run leftovers; clean runs "
+            f"self-purge on exit)")
+    else:
+        log(f"startup sweep: no orphaned seeder scratch under {root}")
 
 
 # =========================================================================== #
@@ -357,6 +401,10 @@ def orchestrate(args):
         log(f"  output tree: {run_dir}")
         save_state(state_path, {"run_id": args.run_id, "deadline_epoch": deadline,
                                 "cycles_done": 0, "started": time.strftime('%Y-%m-%dT%H:%M:%S')})
+
+    # Reclaim any seeder scratch orphaned by a prior hard-killed run before we start
+    # spawning this run's seeders (clean seeder exits self-purge; killed ones don't).
+    sweep_orphan_seeder_scratch(log)
 
     baseline_gpu = gpu_used_mib()
     log(f"GPU baseline: {baseline_gpu} MiB" + ("" if baseline_gpu is not None
