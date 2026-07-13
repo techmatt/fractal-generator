@@ -114,6 +114,44 @@ class Log:
 
 
 # =========================================================================== #
+# Timing (durable, structured per-phase wall-clock: timing.jsonl next to the
+# aggregate manifest). One row per phase completion, appended+flushed on the
+# spot — same crash/resume-safe pattern as the manifest, never held in memory.
+# Pure instrumentation: wall-clock only, no extra render/scoring/GPU work, and
+# no effect on any selection / gate / emit path.
+# =========================================================================== #
+class Timing:
+    def __init__(self, path: Path, run_id: str):
+        self.path = path
+        self.run_id = run_id
+        self.fh = open(path, "a", encoding="utf-8")
+
+    def record(self, cycle: int, phase: str, res: dict, **yields):
+        """Append one phase-completion row. `res` is a run_phase() result (carries
+        start/end epoch + duration + rc/killed/ok); `yields` are whatever cost/yield
+        counts are already on hand at the call site (ledger rows, fresh q3, emits)."""
+        se, ee = res.get("start_epoch"), res.get("end_epoch")
+        row = {
+            "run_id": self.run_id, "cycle": cycle, "phase": phase,
+            "start": None if se is None else time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(se)),
+            "end": None if ee is None else time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(ee)),
+            "start_epoch": None if se is None else round(se, 3),
+            "end_epoch": None if ee is None else round(ee, 3),
+            "duration_s": None if res.get("elapsed_s") is None else round(res["elapsed_s"], 3),
+            "rc": res.get("rc"), "killed": res.get("killed"), "ok": res.get("ok"),
+        }
+        row.update(yields)
+        self.fh.write(json.dumps(row) + "\n")
+        self.fh.flush()
+
+    def close(self):
+        try:
+            self.fh.close()
+        except Exception:
+            pass
+
+
+# =========================================================================== #
 # GPU residency (best-effort; skipped if nvidia-smi is absent)
 # =========================================================================== #
 def gpu_used_mib():
@@ -173,7 +211,8 @@ def run_phase(log: Log, name: str, cmd: list, expected_s: float) -> dict:
     ok = (not killed) and (rc == 0)
     log(f"PHASE end   '{name}'  rc={rc} killed={killed}  [{dt/60:.1f}m]",
         "INFO" if ok else "WARN")
-    return {"ok": ok, "rc": rc, "elapsed_s": dt, "killed": killed}
+    return {"ok": ok, "rc": rc, "elapsed_s": dt, "killed": killed,
+            "start_epoch": t0, "end_epoch": t0 + dt}
 
 
 def gpu_boundary(log: Log, baseline: int | None, when: str):
@@ -285,6 +324,7 @@ def orchestrate(args):
     run_manifest = run_dir / "manifest.jsonl"
     state_path = run_dir / "state.json"
     log = Log(run_dir / "orchestrator.log")
+    timing = Timing(run_dir / "timing.jsonl", args.run_id)   # durable per-phase wall-clock
 
     families = args.families
     per_family_s = args.per_family_min * 60.0
@@ -362,8 +402,12 @@ def orchestrate(args):
             if args.disc_batch:
                 cmd += ["--batch", str(args.disc_batch)]
             gpu_boundary(log, baseline_gpu, f"pre-discovery[{fam}]")
+            fam_pre = ledger_line_count(ledger)   # cheap: attributes this family's yield
             try:
                 res = run_phase(log, f"discovery:{fam}", cmd, per_family_s)
+                timing.record(cycle, f"discovery:{fam}", res,
+                              ledger_rows_added=ledger_line_count(ledger) - fam_pre,
+                              fresh_q3=len(new_fresh_q3(ledger, fam_pre)))
                 if not res["ok"]:
                     totals["phase_failures"] += 1
                     log(f"  discovery:{fam} FAILED (isolated) — continuing", "WARN")
@@ -391,8 +435,12 @@ def orchestrate(args):
             if args.disc_batch:
                 cmd += ["--batch", str(args.disc_batch)]             # walks/round (phoenix reuse)
             gpu_boundary(log, baseline_gpu, "pre-discovery[phoenix]")
+            ph_pre = ledger_line_count(ledger)
             try:
                 res = run_phase(log, "discovery:phoenix", cmd, phoenix_s)
+                timing.record(cycle, "discovery:phoenix", res,
+                              ledger_rows_added=ledger_line_count(ledger) - ph_pre,
+                              fresh_q3=len(new_fresh_q3(ledger, ph_pre)))
                 if not res["ok"]:
                     totals["phase_failures"] += 1
                     log("  discovery:phoenix FAILED (isolated) — continuing", "WARN")
@@ -435,6 +483,9 @@ def orchestrate(args):
             res = {"ok": False}
             log(f"  pool build EXCEPTION (isolated): {type(e).__name__}: {e}", "WARN")
         gpu_boundary(log, baseline_gpu, "post-pool")
+        pool_locs = ledger_line_count(batch_dir / "images.jsonl")   # locations pooled this cycle
+        timing.record(cycle, f"pool:cycle{cycle}", res,
+                      fresh_q3_in=len(fresh), pool_locations=pool_locs)
         if not res["ok"] or not (batch_dir / "images.jsonl").exists():
             totals["phase_failures"] += 1
             log(f"  pool build failed / no batch (isolated) — skipping emit this cycle.", "WARN")
@@ -465,6 +516,8 @@ def orchestrate(args):
 
         n_emitted = append_manifest(run_manifest, cycle, emit_dir)
         totals["emitted"] += n_emitted
+        timing.record(cycle, f"emit:cycle{cycle}", res,
+                      pool_locations=pool_locs, emitted=n_emitted, emit_limit=emit_limit)
         if not res["ok"]:
             totals["phase_failures"] += 1
             log(f"  emit reported failure (isolated); {n_emitted} rows still persisted.", "WARN")
@@ -496,6 +549,8 @@ def orchestrate(args):
         "phase_failures": totals["phase_failures"],
         "aggregate_manifest": str(run_manifest.relative_to(ROOT)),
         "aggregate_manifest_rows": ledger_line_count(run_manifest),
+        "timing_jsonl": str((run_dir / "timing.jsonl").relative_to(ROOT)),
+        "timing_rows": ledger_line_count(run_dir / "timing.jsonl"),
         "run_ledger": str(ledger),
         "run_ledger_rows": ledger_line_count(ledger),
         "output_tree": str(run_dir),
@@ -507,8 +562,10 @@ def orchestrate(args):
         f"{totals['phase_failures']} phase failures")
     log(f"  aggregate manifest ({summary['aggregate_manifest_rows']} recipes) -> {run_manifest}")
     log(f"  wallpapers -> {run_dir / 'emit'}/cycle_*/wallpapers/")
+    log(f"  per-phase timing -> {run_dir / 'timing.jsonl'} ({ledger_line_count(run_dir / 'timing.jsonl')} rows)")
     log(f"  run summary -> {run_dir / 'run_summary.json'}")
     log.close()
+    timing.close()
     return summary
 
 
