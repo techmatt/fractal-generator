@@ -40,6 +40,7 @@
 //! touching sampler structure. Thresholds are fit to 50 frames — re-check per batch.
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::Path;
 
 use astro_float::BigFloat;
@@ -323,8 +324,10 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
     let ln_lo = args.fw_lo.ln();
     let ln_hi = args.fw_hi.ln();
 
+    let locations_path = out_dir.join("locations.jsonl");
+    let resume_path = out_dir.join("resume.json");
+
     let mut rng = probe::SplitMix64(args.seed);
-    let mut keepers: Vec<Keeper> = Vec::with_capacity(args.keepers);
     let mut keeper_thumbs: Vec<RgbImage> = Vec::with_capacity(args.keepers);
     // Reject tally per primary mode (for the stdout summary).
     let mut reject_modes = [0usize; 3]; // interior_black, instant_escape, flat
@@ -333,10 +336,63 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         "instant_escape" => 1,
         _ => 2,
     };
-
     let mut draw = 0usize;
+    // Keepers already on disk from a prior (resumed) run. New keepers this session
+    // live in `keepers`; the authoritative total is `resumed_keepers + keepers.len()`.
+    let mut resumed_keepers = 0usize;
+
+    if args.resume {
+        let txt = std::fs::read_to_string(&resume_path).map_err(|e| {
+            format!(
+                "--resume: no checkpoint at {} ({e}). Omit --resume to start fresh.",
+                resume_path.display()
+            )
+        })?;
+        let st = parse_resume(&txt)
+            .ok_or_else(|| format!("--resume: could not parse {}", resume_path.display()))?;
+        if st.seed != args.seed {
+            return Err(format!(
+                "--resume: seed mismatch (checkpoint seed {}, --seed {}). The RNG stream \
+                 would diverge; resume with the original seed.",
+                st.seed, args.seed
+            ));
+        }
+        // Authoritative keeper count = lines already in locations.jsonl (the checkpoint
+        // is always written *before* the keeper's own line, so an interrupted keeper is
+        // skipped, never duplicated).
+        resumed_keepers = std::fs::read_to_string(&locations_path)
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0);
+        rng = probe::SplitMix64(st.rng_state);
+        draw = st.draw;
+        reject_modes = st.reject_modes;
+        // Reload prior keeper thumbnails so the final contact sheet is complete.
+        for i in 0..resumed_keepers {
+            let p = thumbs_dir.join(format!("keep_{i:04}.png"));
+            if let Ok(img) = image::open(&p) {
+                keeper_thumbs.push(img.to_rgb8());
+            }
+        }
+        eprintln!(
+            "RESUME: {resumed_keepers} keepers on disk, draw={draw}, rng restored — \
+             appending toward K={}",
+            args.keepers
+        );
+    }
+
+    // locations.jsonl handle: append when resuming, truncate for a fresh run.
+    let mut loc_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(args.resume)
+        .write(true)
+        .truncate(!args.resume)
+        .open(&locations_path)
+        .map_err(|e| format!("open {}: {e}", locations_path.display()))?;
+    let checkpoint_every = args.checkpoint_every.max(1);
+
+    let mut keepers: Vec<Keeper> = Vec::with_capacity(args.keepers);
     let mut max_draws_hit = false;
-    while keepers.len() < args.keepers {
+    while resumed_keepers + keepers.len() < args.keepers {
         if draw >= max_draws {
             max_draws_hit = true;
             break;
@@ -350,6 +406,14 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         let center = Complex::new(re, im);
         let this_draw = draw;
         draw += 1;
+
+        // Periodic crash-safe checkpoint on the reject stream (bounds worst-case
+        // redo on resume to ~checkpoint_every draws). Keeper acceptance writes its
+        // own checkpoint below.
+        if this_draw % checkpoint_every == 0 {
+            write_resume(&resume_path, args.seed, args.keepers, rng.0, draw,
+                         resumed_keepers + keepers.len(), reject_modes)?;
+        }
 
         // --- cheap low-res neighborhood screen (every draw) ---
         let prec = hp::prec_bits(screen_w, frame_width);
@@ -388,7 +452,7 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
             .map(|cs| distance(&sig, cs, &WEIGHTS))
             .fold(f64::INFINITY, f64::min);
 
-        let keeper_index = keepers.len();
+        let keeper_index = resumed_keepers + keepers.len();
         let mut kth = image::imageops::resize(&krgb, thumb_w, thumb_h, FilterType::Triangle);
         annotate(&mut kth, keeper_index, frame_width, interior_frac, esc.spread, sparse_pct);
         kth.save(thumbs_dir.join(format!("keep_{keeper_index:04}.png")))
@@ -421,10 +485,23 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
             sparse_pct,
             nn_emd,
         });
+
+        // Checkpoint BEFORE appending this keeper's line: a kill in the gap re-skips
+        // exactly this one keeper (never duplicates it). resume.json is the RNG/draw
+        // source of truth; locations.jsonl's line count is the keeper source of truth.
+        write_resume(&resume_path, args.seed, args.keepers, rng.0, draw,
+                     resumed_keepers + keepers.len(), reject_modes)?;
+        let line = keeper_jsonl_line(keepers.last().unwrap());
+        loc_file
+            .write_all(line.as_bytes())
+            .and_then(|_| loc_file.write_all(b"\n"))
+            .and_then(|_| loc_file.flush())
+            .map_err(|e| format!("append keeper to {}: {e}", locations_path.display()))?;
     }
 
+    let total_keepers = resumed_keepers + keepers.len();
     let total_draws = draw;
-    let accept_rate = keepers.len() as f64 / total_draws.max(1) as f64;
+    let accept_rate = total_keepers as f64 / total_draws.max(1) as f64;
 
     // --- artifact 1: keeper contact sheet ---
     if !keeper_thumbs.is_empty() {
@@ -434,34 +511,38 @@ pub fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         eprintln!("keeper sheet: {} ({} tiles)", p.display(), keeper_thumbs.len());
     }
 
-    // --- artifact 2: locations.jsonl (one keeper per row) ---
-    let jsonl = build_jsonl(&keepers);
-    let jsonl_path = out_dir.join("locations.jsonl");
-    std::fs::write(&jsonl_path, jsonl).map_err(|e| format!("write locations.jsonl: {e}"))?;
+    // --- artifact 2: locations.jsonl — already written incrementally (crash-safe
+    // checkpointing); the handle is flushed per keeper, so nothing to write here. ---
+    let jsonl_path = locations_path;
 
     // --- artifact 3: run manifest (run-level config, fully reproducible) ---
     let manifest = build_manifest(
         args, &band, (re_lo, re_hi, im_lo, im_hi), screen_w, screen_h, max_draws, total_draws,
-        keepers.len(), accept_rate, max_draws_hit, corpus.len(),
+        total_keepers, accept_rate, max_draws_hit, corpus.len(),
     );
     let manifest_path = out_dir.join("manifest.json");
     std::fs::write(&manifest_path, manifest).map_err(|e| format!("write manifest.json: {e}"))?;
 
+    // Clean finish: drop the checkpoint so a stray later `--resume` can't append to a
+    // completed run. (A max-draws-truncated run keeps it, so it can be resumed.)
+    if !max_draws_hit {
+        let _ = std::fs::remove_file(&resume_path);
+    }
+
     // --- stdout summary ---
     println!("=== generate ===");
-    println!("seed={}  K={} keepers", args.seed, keepers.len());
+    println!("seed={}  K={} keepers", args.seed, total_keepers);
     if max_draws_hit {
         println!(
             "WARNING: max-draws safeguard hit ({total_draws} draws) before reaching K={} — \
-             produced {} keepers. Raise --max-draws or loosen the band.",
-            args.keepers,
-            keepers.len()
+             produced {} keepers. Raise --max-draws or loosen the band, then --resume.",
+            args.keepers, total_keepers
         );
     }
     println!(
         "draws={total_draws}  accept_rate={:.1}%  draws-per-keeper~{:.1}",
         accept_rate * 100.0,
-        total_draws as f64 / keepers.len().max(1) as f64
+        total_draws as f64 / total_keepers.max(1) as f64
     );
     println!(
         "scale-range: fw log-uniform [{},{}] (geo-center ~ {:.4})",
@@ -603,10 +684,13 @@ fn jarr(v: &[f64]) -> String {
 }
 
 /// `locations.jsonl`: one keeper per line (newline-delimited JSON objects).
-fn build_jsonl(keepers: &[Keeper]) -> String {
+/// One keeper → one `locations.jsonl` line (no trailing newline). Factored out of
+/// the old batch `build_jsonl` so keepers can be appended incrementally (crash-safe
+/// checkpointing) instead of all at once at the end.
+fn keeper_jsonl_line(c: &Keeper) -> String {
     let mut s = String::new();
-    for c in keepers {
-        let _ = writeln!(
+    {
+        let _ = write!(
             s,
             "{{ \"keeper_index\": {}, \"draw_index\": {}, \"accept_position\": {}, \
              \"center_re\": {}, \"center_im\": {}, \"frame_width\": {}, \"scale_u\": {}, \
@@ -649,6 +733,71 @@ fn build_jsonl(keepers: &[Keeper]) -> String {
         );
     }
     s
+}
+
+/// Restored checkpoint state (see [`write_resume`] / [`parse_resume`]). The RNG is
+/// a single `u64` (SplitMix64), so a full resume is exact and cheap — no replay.
+struct ResumeState {
+    seed: u64,
+    rng_state: u64,
+    draw: usize,
+    reject_modes: [usize; 3],
+}
+
+/// Serialize a `u64` field from a flat one-object JSON string (`"key": <digits>`).
+/// Hand-rolled (project convention: no serde for these logs); only unsigned ints.
+fn parse_u64_field(txt: &str, key: &str) -> Option<u64> {
+    let pat = format!("\"{key}\"");
+    let start = txt.find(&pat)? + pat.len();
+    let after = &txt[start..];
+    let colon = after.find(':')? + 1;
+    after[colon..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+/// Parse a `resume.json` checkpoint. Returns `None` on any missing/garbled field.
+fn parse_resume(txt: &str) -> Option<ResumeState> {
+    Some(ResumeState {
+        seed: parse_u64_field(txt, "seed")?,
+        rng_state: parse_u64_field(txt, "rng_state")?,
+        draw: parse_u64_field(txt, "draw")? as usize,
+        reject_modes: [
+            parse_u64_field(txt, "reject_interior")? as usize,
+            parse_u64_field(txt, "reject_instant")? as usize,
+            parse_u64_field(txt, "reject_flat")? as usize,
+        ],
+    })
+}
+
+/// Atomically write the checkpoint (`tmp` + rename), so a kill mid-write can never
+/// corrupt `resume.json`. `n_keepers` is advisory — the authoritative keeper count
+/// on resume is the line count of `locations.jsonl`; this write always precedes the
+/// keeper's own line append, so at most the single in-flight keeper is re-skipped
+/// (never duplicated) after a hard kill.
+fn write_resume(
+    path: &Path,
+    seed: u64,
+    keepers_target: usize,
+    rng_state: u64,
+    draw: usize,
+    n_keepers: usize,
+    reject_modes: [usize; 3],
+) -> Result<(), String> {
+    let s = format!(
+        "{{ \"seed\": {seed}, \"keepers_target\": {keepers_target}, \"rng_state\": {rng_state}, \
+         \"draw\": {draw}, \"n_keepers\": {n_keepers}, \"reject_interior\": {}, \
+         \"reject_instant\": {}, \"reject_flat\": {} }}\n",
+        reject_modes[0], reject_modes[1], reject_modes[2]
+    );
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, s).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename resume checkpoint: {e}"))?;
+    Ok(())
 }
 
 /// `manifest.json`: run-level config so any batch is fully reproducible and
@@ -812,6 +961,19 @@ pub struct GenerateArgs {
     /// Use a distinct dir per batch.
     #[arg(long, default_value = "data/generated/run0")]
     pub out_dir: String,
+
+    /// Resume an interrupted run from `<out-dir>/resume.json`: restores the RNG
+    /// state, draw count, keeper count and reject tallies, and *appends* new
+    /// keepers to the existing `locations.jsonl`. Errors if no checkpoint exists.
+    /// Without this flag the run starts fresh and truncates prior artifacts.
+    #[arg(long, default_value_t = false)]
+    pub resume: bool,
+
+    /// Checkpoint cadence in draws: rewrite `resume.json` at least this often
+    /// (also written after every keeper). Bounds the worst-case redo on resume to
+    /// ~this many rejected draws. Checkpointing is always on.
+    #[arg(long, default_value_t = 200)]
+    pub checkpoint_every: usize,
 }
 
 impl GenerateArgs {
