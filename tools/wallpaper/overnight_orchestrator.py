@@ -28,10 +28,15 @@ The three load-bearing invariants (see prompts/pipeline_orchestrator_prompt.md):
      remaining budget is never started. A hung unit (> KILL_MULT x its expected time) is
      hard-killed (process tree) and the loop continues.
 
-Families: all c-plane families (mandelbrot, multibrot3/4/5) each with --julia-hook (adds
-the julia:{fam} twins). Phoenix is EXCLUDED — production discovery (`--run`) has no
-parameter plane to prospect for it (resolve_family rejects --phoenix), so it cannot be
-freshly discovered through this loop at all (see the prompt's Phoenix confirm).
+Families: the c-plane families (mandelbrot, multibrot3/4/5) each with --julia-hook (adds
+the julia:{fam} twins) run through the c-plane radius-rejection loop (`--run`). Phoenix has
+NO parameter plane to prospect (resolve_family rejects --phoenix under --run), so it can't
+ride that loop — but it IS freshly discoverable, just via a different recipe: a dedicated
+phoenix phase runs the native z-plane descent (`--run-phoenix`) into the SAME run-scoped
+ledger at its provisional t_good=0.18. That completes the 9-family set. Phoenix is a
+low-yield, variety-poor garnish (~7 descents/keeper), so its phase gets an elevated-but-
+bounded per-cycle descent budget (PHOENIX_PER_CYCLE_MIN) and its share of each emit pool is
+capped by build_fresh_discovery's family-balanced round-robin (it can't dominate the loop).
 
     # validate first (short throwaway mini-run; backgrounded):
     uv run python -u tools/wallpaper/overnight_orchestrator.py --mini
@@ -71,6 +76,10 @@ FAMILIES = ["mandelbrot", "multibrot3", "multibrot4", "multibrot5"]
 # --- production defaults (tunable) ---
 CAP_HOURS = 6.0
 PER_FAMILY_MIN = 7.0        # discovery budget per family per cycle
+PHOENIX_PER_CYCLE_MIN = 10.0  # ELEVATED per-cycle phoenix z-descent budget (> PER_FAMILY_MIN):
+                              # phoenix is a low-yield garnish (~7 descents/keeper at t_good=0.18),
+                              # so it earns more time per keeper than a c-plane family. Bounded so
+                              # it stays a modest stream (0 disables the phoenix phase entirely).
 POOL_COUNT = 40             # build_fresh_discovery --count (family-balanced pool cap/cycle)
 GATE = 0.90                 # emit_v1 --gate (v3 quality floor; smooth stem)
 EST_EMIT_RENDER_S = 45.0    # per-winner eval-res (1024x576 ss2) render estimate; refined at runtime
@@ -366,6 +375,35 @@ def orchestrate(args):
             gpu_boundary(log, baseline_gpu, f"post-discovery[{fam}]")
         totals["discovery_families"] += fams_run
 
+        # ---- PHASE 1b: phoenix discovery (native z-descent -> the SAME run-scoped ledger) ----
+        # Phoenix has no parameter plane, so it can't ride the c-plane radius-rejection loop;
+        # its own --run-phoenix phase descends the fixed Ushiki z-plane and appends v6-scored
+        # rows (t_good=0.18) to the run-scoped ledger. new_fresh_q3 + assert_fresh_isolation
+        # then admit phoenix rows exactly like the other families (both scan the whole ledger
+        # past the watermark, family-agnostic). Elevated budget; skipped when the cap is tight.
+        phoenix_s = args.phoenix_min * 60.0
+        if args.phoenix_min > 0 and remaining() >= phoenix_s:
+            pseed = args.seed + cycle * 1000 + 900     # distinct from every c-plane family seed
+            cmd = [PY, "-u", str(SEEDER), "--run-phoenix", "--discovery-dir", str(disc_dir),
+                   "--budget", str(args.phoenix_min), "--seed", str(pseed)]
+            if args.phoenix_walks:
+                cmd += ["--phoenix-walks", str(args.phoenix_walks)]  # deterministic keeper floor (mini)
+            if args.disc_batch:
+                cmd += ["--batch", str(args.disc_batch)]             # walks/round (phoenix reuse)
+            gpu_boundary(log, baseline_gpu, "pre-discovery[phoenix]")
+            try:
+                res = run_phase(log, "discovery:phoenix", cmd, phoenix_s)
+                if not res["ok"]:
+                    totals["phase_failures"] += 1
+                    log("  discovery:phoenix FAILED (isolated) — continuing", "WARN")
+            except Exception as e:
+                totals["phase_failures"] += 1
+                log(f"  discovery:phoenix EXCEPTION (isolated): {type(e).__name__}: {e}", "WARN")
+            gpu_boundary(log, baseline_gpu, "post-discovery[phoenix]")
+        elif args.phoenix_min > 0:
+            log(f"  CAP: {remaining()/60:.1f}m < phoenix budget {args.phoenix_min}m — "
+                f"skipping phoenix discovery this cycle.")
+
         # ---- fresh-q3 count over ONLY this cycle's appended rows ----
         fresh = new_fresh_q3(ledger, watermark)
         log(f"  cycle {cycle} discovery: {fams_run}/{len(families)} families ran, "
@@ -484,6 +522,11 @@ def main():
     ap.add_argument("--cap-hours", type=float, default=CAP_HOURS, help="wall-clock cap (hours)")
     ap.add_argument("--per-family-min", type=float, default=PER_FAMILY_MIN,
                     help="discovery budget per family per cycle (minutes)")
+    ap.add_argument("--phoenix-min", type=float, default=PHOENIX_PER_CYCLE_MIN,
+                    help="per-cycle phoenix z-descent budget (minutes); 0 disables the phoenix phase")
+    ap.add_argument("--phoenix-walks", type=int, default=0,
+                    help="cap total phoenix walks per cycle (production_seeder --phoenix-walks; "
+                         "0 = budget-only). The mini sets this to guarantee >=1 phoenix keeper.")
     ap.add_argument("--pool-count", type=int, default=POOL_COUNT,
                     help="build_fresh_discovery --count (family-balanced pool cap per cycle)")
     ap.add_argument("--gate", type=float, default=GATE, help="emit_v1 v3 quality-floor gate")
@@ -520,7 +563,8 @@ def main():
         args.out_root = str(scratch / "out")
         args.discovery_root = str(scratch / "disc")
         if args.cap_hours == CAP_HOURS:
-            args.cap_hours = 0.5                       # ~30 min (room for >=2 full cycles)
+            args.cap_hours = 0.75                      # ~45 min (room for >=2 full cycles now that
+                                                       # the phoenix phase adds ~4 min/cycle)
         if args.per_family_min == PER_FAMILY_MIN:
             args.per_family_min = 2.0
         if args.pool_count == POOL_COUNT:
@@ -528,9 +572,22 @@ def main():
         if args.disc_batch == 0:
             args.disc_batch = 6                        # small batch -> budget honored fast
         if args.pool_limit == 0:
-            args.pool_limit = 2                        # render <=2 locations/cycle (mechanism test)
+            args.pool_limit = 4                        # render <=4 locations/cycle (room for a
+                                                       # phoenix keeper alongside mandelbrot ones)
         if args.families == FAMILIES:
             args.families = ["mandelbrot"]
+        # Phoenix mechanism test: a walk cap (not budget) is the deterministic keeper floor.
+        # 8/cycle over >=2 cycles -> ~16+ descents; at the study's ~0.14 yield P(>=1 keeper)
+        # ~0.9 (the guarded smoke ran hotter). Generous budget so the WALK CAP binds first.
+        if args.phoenix_min == PHOENIX_PER_CYCLE_MIN:
+            args.phoenix_min = 15.0
+        if args.phoenix_walks == 0:
+            args.phoenix_walks = 8
+        # Low emit gate so a phoenix keeper's colored crop actually EMITS: the wallpaper head's
+        # 0.90 crop-gate would otherwise reject samey phoenix crops and no phoenix recipe would
+        # reach the manifest — this is a plumbing test, not a quality gate. Production keeps 0.90.
+        if args.gate == GATE:
+            args.gate = 0.05
         print(f"[mini] throwaway roots under {scratch}")
     elif args.disc_batch == 0:
         # Production: bound the per-family discovery batch to ~half the seeder default (24)

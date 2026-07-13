@@ -45,12 +45,13 @@ def main() -> int:
     # --- routing: every partition the seeder can emit resolves correctly. --- #
     print("-- t_good_for routing --")
     deg2 = ["mandelbrot", julia_partition("mandelbrot")]           # julia:mandelbrot
-    # jm3/jm4/jm5 each carry their own revival threshold (0.30); the c-plane
-    # multibrot degrees and phoenix are still held at the baseline.
+    # jm3/jm4/jm5 each carry their own revival threshold (0.30) and phoenix its
+    # provisional 0.18; the c-plane multibrot degrees are still held at the baseline.
     revived = [julia_partition("multibrot3"),                       # julia:multibrot3 -> 0.30
                julia_partition("multibrot4"),                       # julia:multibrot4 -> 0.30
-               julia_partition("multibrot5")]                       # julia:multibrot5 -> 0.30
-    hi = ["multibrot3", "multibrot4", "multibrot5", "phoenix"]
+               julia_partition("multibrot5"),                       # julia:multibrot5 -> 0.30
+               "phoenix"]                                           # phoenix -> 0.18 (provisional)
+    hi = ["multibrot3", "multibrot4", "multibrot5"]
     for p in deg2:
         got = t_good_for(p)
         flag = "OK" if got == T_GOOD_DEG2 else "FAIL"

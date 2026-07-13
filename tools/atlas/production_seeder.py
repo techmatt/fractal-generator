@@ -229,9 +229,17 @@ def julia_partition(fam: str) -> str:
 #     all of it — even richer than jm3. Both take jm3's lean-low 0.30 (sweep admits with
 #     0.86-0.88 q3 precision and no q1 leak at 0.30); the Stage-2 quality gate nets any
 #     location-level FPs. Independent calls that happen to land on the same value.
+#   phoenix -> 0.18  (PROVISIONAL)
+#     phoenix "take-the-best" study (prompts/phoenix_study_prompt.md, 2026-07-12; N=36,
+#     NOT converged). The fixed Ushiki z-plane is a variety-poor garnish: bulk p_good
+#     continuum 0.042-0.148, a good tail 0.171-0.220, then a lone gap to two standouts at
+#     0.321/0.365. 0.18 sits just above the bulk p75 (0.138), capturing the good tail +
+#     standouts at ~0.14 raw yield (~7 descents/keeper). PROVISIONAL: the 6h run is itself
+#     the big phoenix sampler (every emission records its recipe), so re-threshold post-hoc
+#     if 0.18 proves off. See [[phoenix-tgood-yield-study]].
 #
-# High-degree families NOT listed (c-plane multibrot3/4/5, phoenix) stay unpowered on
-# the eval and are HELD at the baseline until their own sweeps land.
+# High-degree families NOT listed (c-plane multibrot3/4/5) stay unpowered on the eval and
+# are HELD at the baseline until their own sweeps land.
 # =========================================================================== #
 T_GOOD_BASELINE = 0.50    # conservative default for every unswept / high-degree partition
 T_GOOD_OVERRIDES = {
@@ -240,6 +248,7 @@ T_GOOD_OVERRIDES = {
     "julia:multibrot3": 0.30,  # jm3 revival sweep (2026-07-11)
     "julia:multibrot4": 0.30,  # jm4 revival sweep (2026-07-12)
     "julia:multibrot5": 0.30,  # jm5 revival sweep (2026-07-12)
+    "phoenix": 0.18,           # phoenix take-the-best study (2026-07-12, PROVISIONAL)
 }
 
 
@@ -1665,6 +1674,136 @@ def _gather_phoenix(args):
     return summary
 
 
+def _run_phoenix(args):
+    """Fresh-discovery Phoenix z-plane descent -> the RUN-SCOPED discovery ledger.
+
+    The phoenix analogue of `_run`. Phoenix has no parameter plane, so it cannot ride the
+    c-plane spatial radius-rejection loop (resolve_family rejects `--phoenix` under `--run`);
+    instead it repeatedly descends the single fixed Ushiki z-plane and scores each outcome
+    with the SAME guarded v6 scorer + per-degree t_good the c-plane `_run` uses. Every
+    scored outcome is appended to the run-scoped OUTCOME_LEDGER (redirected by
+    --discovery-dir) with the c-plane row schema (id / family=phoenix / decoded_class /
+    p_good / t_good / guard_pass, + scorer_version="v6" stamped by append_outcome), so the
+    orchestrator's per-cycle watermark (new_fresh_q3) and fresh-isolation assertion admit
+    phoenix rows exactly like the other families and build_fresh_discovery renders them as
+    the 9th family (gs.render_family("phoenix") -> outcome viewport, no c).
+
+    Writes FRESH to the run-scoped ledger — NEVER the banked GATHER_DIR/phoenix subtree
+    (reusing banked q3s would violate the fresh-generation precondition). Phoenix is a
+    low-yield, variety-poor garnish (~7 descents / keeper at t_good=0.18), so the
+    orchestrator gives this phase an elevated per-cycle descent budget; dominance is capped
+    downstream by build_fresh_discovery's family-balanced round-robin.
+
+    Bounded by --budget (minutes) and/or --phoenix-walks (total-walk cap; 0 = budget-only).
+    The walk cap is the deterministic lever the mini-run uses to guarantee >=1 keeper."""
+    run_ts = time.strftime("%Y%m%d_%H%M%S")
+    run_dir = RUNS_DIR / run_ts
+    run_dir.mkdir(parents=True, exist_ok=True)
+    scratch = SCRATCH_ROOT / run_ts
+    scratch.mkdir(parents=True, exist_ok=True)
+    budget_min = args.budget if args.budget is not None else WALLCLOCK_BUDGET_MIN
+    walks_per = args.batch or 12               # native --phoenix walks per descent round
+    walks_cap = args.phoenix_walks or 0        # 0 -> budget-only (prod); >0 caps total (mini)
+
+    print(f"=== atlas production seeder (RUN-PHOENIX) ts={run_ts} ===")
+    print(f"phoenix native (fixed Ushiki z-plane; no parameter plane -> no rejection/hook)  "
+          f"walks/round={walks_per} budget={budget_min}min walks_cap={walks_cap or 'none'}")
+
+    # Guarded scorer — byte-identical scoring path to the c-plane _run (degenerate crops
+    # -> GUARD_SENTINEL; guard_pass = k3 > sentinel), so phoenix q3s are guard-clean.
+    assert reframe.GUARD_FIELD_SUFFIX == guard.FIELD_SIDECAR_SUFFIX, (
+        f"guard field suffix drift: reframe {reframe.GUARD_FIELD_SUFFIX!r} != "
+        f"guard {guard.FIELD_SIDECAR_SUFFIX!r}")
+    reframe.DUMP_GUARD_FIELD = True
+    scorer = guard.make_guarded_scorer(SCORER_PATH)
+    t_good = t_good_for("phoenix")
+    print(f"scorer: GUARDED CORN ({SCORER_PATH}, {SCORER_VERSION})  t_good={t_good}")
+    print(f"run ledger (run-scoped): {OUTCOME_LEDGER}")
+
+    ledgers = Ledgers()                        # OUTCOME_LEDGER is the fresh run-scoped file
+    loc_of = make_loc_of("phoenix", None)
+
+    totals = {"walked": 0, "q3": 0, "not_q3": 0, "guarded": 0, "walk_errors": 0}
+    t0 = time.time()
+    seq = 0
+    rnd = 0
+    while True:
+        rnd += 1
+        try:
+            pool = run_phoenix_descent(args.seed + rnd, scratch / f"round_{rnd:03d}", walks_per)
+            by_walk = load_frames_by_walk(pool)
+        except (SystemExit, Exception) as e:
+            totals["engine_errors"] = totals.get("engine_errors", 0) + 1
+            print(f"  ENGINE FAILURE round {rnd} (likely resource exhaustion); ending cleanly: "
+                  f"{type(e).__name__}: {str(e)[:160]}")
+            break
+        b_q3 = 0
+        for wid in sorted(by_walk):
+          # A transient render / CUDA failure must not abort the phase (mirrors _run).
+          try:
+            frames = by_walk[wid]
+            rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
+                                      scratch / f"reward_r{rnd:03d}", loc_of)
+            # Guard verdict: k3 collapses to the sentinel iff EVERY framing of the top-3
+            # failed the guard. A guarded outcome carries decoded_class=None (never q3).
+            guard_pass = rew["reward_k3"] > guard.GUARD_SENTINEL + 1e-6
+            decoded = corn_decode(rew["p_notbad"], rew["p_good"], t_good) if guard_pass else None
+            is_q3 = guard_pass and decoded == 3
+            oid = f"ph_{run_ts}_{seq:06d}"; seq += 1
+            row = {
+                "id": oid, "ts": run_ts, "family": "phoenix", "descend_mode": "phoenix",
+                "outcome_cx": rew["outcome_cx"], "outcome_cy": rew["outcome_cy"],
+                "outcome_fw": rew["outcome_fw"], "k3": rew["reward_k3"],
+                "raw_top3": rew["raw_top3"], "reached_depth": rew["reached_depth"],
+                "decoded_class": decoded,
+                "p_notbad": rew["p_notbad"], "p_good": rew["p_good"], "t_good": t_good,
+                # No spatial cloud for a single fixed plane: `distinct` mirrors is_q3 for
+                # schema parity; near-dup pile-up is collapsed downstream by
+                # build_fresh_discovery's key-dedup + family-balanced round-robin.
+                "distinct": is_q3, "dup_of": None,
+                "guard_pass": guard_pass, "guard_fail": None if guard_pass else "sentinel",
+            }
+            ledgers.append_outcome(row, None)   # stamps scorer_version="v6"; no feature store
+            totals["walked"] += 1
+            if is_q3:
+                totals["q3"] += 1; b_q3 += 1
+            elif not guard_pass:
+                totals["guarded"] += 1
+            else:
+                totals["not_q3"] += 1
+          except (SystemExit, Exception) as e:
+            totals["walk_errors"] += 1
+            print(f"  WARN phoenix round {rnd} walk {wid} skipped "
+                  f"({totals['walk_errors']} total): {type(e).__name__}: {str(e)[:140]}")
+            continue
+        el_min = (time.time() - t0) / 60
+        print(f"  round {rnd}: walked={len(by_walk)} q3+{b_q3}  "
+              f"(cum walked={totals['walked']} q3={totals['q3']}) | elapsed {el_min:.1f}m")
+        if walks_cap and totals["walked"] >= walks_cap:
+            print(f"  walks cap {walks_cap} reached ({totals['walked']} walked); stopping.")
+            break
+        if budget_min and el_min >= budget_min:
+            print(f"  wallclock budget {budget_min}min reached; stopping.")
+            break
+
+    yld = totals["q3"] / totals["walked"] if totals["walked"] else 0.0
+    per_keeper = (1.0 / yld) if yld else float("inf")
+    summary = {
+        "ts": run_ts, "mode": "run-phoenix", "family": "phoenix",
+        "wallclock_s": round(time.time() - t0, 1), "rounds": rnd, "t_good": t_good,
+        "walks_per_round": walks_per, "walks_cap": walks_cap,
+        "totals": totals, "yield_q3_per_walk": round(yld, 4),
+        "run_ledger": str(OUTCOME_LEDGER),
+    }
+    _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
+    print("\n=== RUN-PHOENIX SUMMARY ===")
+    print(f"  walked={totals['walked']} q3={totals['q3']} not_q3={totals['not_q3']} "
+          f"guarded={totals['guarded']} walk_errors={totals['walk_errors']}")
+    print(f"  yield {yld:.3f} q3/walk (~{per_keeper:.1f} descents/keeper) @ t_good={t_good}")
+    print(f"  ledger -> {OUTCOME_LEDGER}\n  summary -> {run_dir / 'summary.json'}")
+    return summary
+
+
 def _finalize(run_ts: str):
     """Rebuild a run's summary.json + contact_sheet.png from the DURABLE ledger + the
     on-disk outcome tiles. The ledger is written per-outcome, so a kill in the cosmetic
@@ -1730,6 +1869,14 @@ def main():
                          "as a PRIOR (not a gate), density rejection keyed on decoded_class==3 alone, "
                          "durable per-class GATHER_DIR/<class> ledger + full walks.jsonl, NO image/"
                          "feature dumps. Honors --family / --julia-hook / --phoenix / --budget / --smoke.")
+    ap.add_argument("--run-phoenix", action="store_true",
+                    help="fresh-discovery Phoenix z-plane descent -> the run-scoped ledger "
+                         "(pair with --discovery-dir). The phoenix analogue of --run: guarded "
+                         "v6 scoring at t_good=0.18, run-scoped OUTCOME_LEDGER, honors --budget "
+                         "and --phoenix-walks. NEVER touches the banked gather/phoenix subtree.")
+    ap.add_argument("--phoenix-walks", type=int, default=0,
+                    help="cap total phoenix walks (outcomes) for --run-phoenix (0 = budget-only). "
+                         "The deterministic knob the mini-run uses to guarantee >=1 keeper.")
     ap.add_argument("--time-only", action="store_true", help="project per-batch wallclock")
     ap.add_argument("--finalize", metavar="RUN_TS", default=None,
                     help="rebuild summary + contact sheet for a run from the durable ledger")
@@ -1777,6 +1924,10 @@ def main():
               f"cloud rebuilt from this dir only)")
     if args.finalize:
         _finalize(args.finalize)
+    elif args.run_phoenix:
+        # Fresh-discovery phoenix z-descent -> run-scoped ledger (the wired production path;
+        # resolve_family still rejects --phoenix under --run/--gather's c-plane loop).
+        _run_phoenix(args)
     elif args.gather:
         # Phoenix has no parameter plane (resolve_family rejects it): route it to the
         # dedicated single-location gather path. Every other family resolves normally.
