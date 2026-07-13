@@ -60,6 +60,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -931,6 +932,41 @@ def build_contact_sheet(distinct_tiles, dup_tiles, out_png: Path, title: str):
 # =========================================================================== #
 # Orchestration
 # =========================================================================== #
+# Transient render scratch under SCRATCH_ROOT/run_ts (per-walk reward frames,
+# reframe rungs, native walk pools, field bins) is the overnight loop's dominant
+# disk sink — GBs per run, hundreds of runs/night, ~130GB accumulated. It is pure
+# scoring intermediate: the durable outputs (outcome_ledger + feats npz, and the
+# run's summary/telemetry/contact_sheet under RUNS_DIR in data/) never live here,
+# and the pool builder + emitter read only the ledger, so nothing downstream needs
+# it once the run process has scored its walks. Purge it on clean exit.
+_SCRATCH_KEEP = ("outcome_tiles",)   # tiny per-outcome jpgs; only --finalize (manual,
+                                     # for KILLED runs) rereads them — cheap to keep.
+
+
+def _purge_run_scratch(scratch: Path, keep: tuple[str, ...] = _SCRATCH_KEEP):
+    """Remove the heavy transient render dirs under a run's scratch (reward_*/walk_*/
+    batch_*/round_*/jreward_* …), keeping only `keep`. Best-effort: a failure to unlink
+    (Windows file lock, race) is logged, never fatal — the sweep is a disk courtesy, not
+    a correctness step."""
+    if not scratch.exists():
+        return
+    freed = 0
+    for child in scratch.iterdir():
+        if child.name in keep:
+            continue
+        try:
+            if child.is_dir():
+                freed += sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                freed += child.stat().st_size
+                child.unlink()
+        except OSError as e:
+            print(f"  scratch purge: could not remove {child.name}: {e}")
+    print(f"  scratch purged: freed ~{freed/2**30:.2f} GiB of transient render dirs "
+          f"under {scratch} (kept {list(keep)})")
+
+
 def _run(args, fam: FamilyResolved):
     smoke = args.smoke
     run_ts = time.strftime("%Y%m%d_%H%M%S")
@@ -1294,6 +1330,8 @@ def _run(args, fam: FamilyResolved):
     print(f"  wallclock {summary['wallclock_s']}s over {batch_i} batches")
     print(f"  ledgers -> {OUTCOME_LEDGER.name}, {OUTCOME_FEATS.name}, {PROBE_REJECTS.name}")
     print(f"  summary -> {run_dir / 'summary.json'}\n  sheet   -> {sheet}")
+    if not args.keep_scratch:
+        _purge_run_scratch(scratch)
     return summary
 
 
@@ -1801,6 +1839,8 @@ def _run_phoenix(args):
           f"guarded={totals['guarded']} walk_errors={totals['walk_errors']}")
     print(f"  yield {yld:.3f} q3/walk (~{per_keeper:.1f} descents/keeper) @ t_good={t_good}")
     print(f"  ledger -> {OUTCOME_LEDGER}\n  summary -> {run_dir / 'summary.json'}")
+    if not args.keep_scratch:
+        _purge_run_scratch(scratch)
     return summary
 
 
@@ -1878,6 +1918,12 @@ def main():
                     help="cap total phoenix walks (outcomes) for --run-phoenix (0 = budget-only). "
                          "The deterministic knob the mini-run uses to guarantee >=1 keeper.")
     ap.add_argument("--time-only", action="store_true", help="project per-batch wallclock")
+    ap.add_argument("--keep-scratch", action="store_true",
+                    help="keep the transient render scratch (reward_*/walk_*/batch_*/round_* under "
+                         "out/atlas/production_seeder/<ts>/). Default: purge it on clean exit — it is "
+                         "scoring intermediate (~GBs/run) that nothing downstream reads; the durable "
+                         "ledger/feats/summary live elsewhere. Pass this to debug a run's frames or to "
+                         "preserve outcome_tiles for a later --finalize of a run that finished cleanly.")
     ap.add_argument("--finalize", metavar="RUN_TS", default=None,
                     help="rebuild summary + contact sheet for a run from the durable ledger")
     ap.add_argument("--seed", type=int, default=0, help="rng + engine seed")
