@@ -71,6 +71,9 @@ __pycache__/
 # durable merged palette pool (tools/palettes/build_pool.py): the preference
 # network's palette source of truth (curated q2/q3 + quality-passing extracted).
 !/data/palettes/pool_colormaps.json
+# durable palette color-axis categorization (tools/palettes/build_categories.py):
+# one hierarchical tree cut at k=8/12/16, nested; special cells + stored linkage.
+!/data/palettes/palette_categories.json
 # Hand-picked reference test fixtures (load-bearing metadata, not regenerable):
 # the test render locations and the test palette selection.
 !/data/test_renders.json
