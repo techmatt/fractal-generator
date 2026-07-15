@@ -1,0 +1,19 @@
+{
+  "ts": "20260713_005948",
+  "mode": "run-phoenix",
+  "family": "phoenix",
+  "wallclock_s": 662.9,
+  "rounds": 3,
+  "t_good": 0.18,
+  "walks_per_round": 12,
+  "walks_cap": 0,
+  "totals": {
+    "walked": 36,
+    "q3": 7,
+    "not_q3": 29,
+    "guarded": 0,
+    "walk_errors": 0
+  },
+  "yield_q3_per_walk": 0.1944,
+  "run_ledger": "C:\\Code\\fractal-generator\\data\\discovery\\fresh_runs\\overnight_20260713_001420\\outcome_ledger.jsonl"
+}
