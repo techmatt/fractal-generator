@@ -1,10 +1,12 @@
 """colored_clip producer — per-candidate color-appearance CLIP descriptor.
 
 Fills the one remaining schema gap in the location-library record
-(`descriptors.colored_clip`, `library_record_schema.md` §B.3): a CLIP embedding of
-each palette candidate's *delivered colored appearance*, the soft substrate a
-within-cell spread selection would run on. This is the palette-ON twin of the
-palette-BLIND grayscale morphology descriptor (`scratchpad/visual_dup/embed.py`):
+(`descriptors.colored_clip`, `docs/findings/library_record_schema.md` §B.3): a CLIP
+embedding of each palette candidate's *delivered colored appearance*, the soft substrate
+a within-cell spread selection would run on. This is the palette-ON twin of the
+palette-BLIND grayscale morphology descriptor (the wiped `visual_dup/embed.py`; its
+canonical robust-z transfer was recovered into `library_annotate.morph_gray_image`, see
+`docs/findings/morph_parity.md`):
 
   * SAME CLIP model (`vit_base_patch16_clip_224.openai`), SAME timm eval transform,
     SAME 640x360 source resolution as the morphology canon renders — the only change
@@ -14,14 +16,14 @@ palette-BLIND grayscale morphology descriptor (`scratchpad/visual_dup/embed.py`)
     K colored_clips per location (one per `palette_candidates[]` entry), vs the single
     morphology CLIP per location. Each embedding is keyed to `location_id/variant_id`.
   * FIELD-CACHE recolor path (Recipe-2): the smooth scalar field is dumped ONCE per
-    location (reused from `scratchpad/visual_dup/fields/`, re-dumped if absent), then
+    location (reused from the `out/curation/morph_fields` cache, re-dumped if absent), then
     recolored per candidate via `tools.colormap.render_candidate` (cheap — no field
     math). CLIP only sees ~224px, so we color at the morphology 640x360 (smooth base,
     box filter, normal_map off), never wallpaper res.
 
 Storage — LOAD-BEARING, out of scratch (fixes the dangling-reference risk flagged in
-`library_gap_report.md` §C5 and `scratchpad/visual_dup/FINDINGS.md`). Writes a single
-`data/library_embeddings/embeddings.npz`:
+`docs/findings/library_gap_report.md` §C5 and `docs/findings/visual_dup.md`). Writes a
+single `data/library_embeddings/embeddings.npz`:
 
     morph_uids  (62,)      str    corpus uid == curated_from
     morph_clip  (62,768)   f32    PROMOTED grayscale CLIP (verbatim copy) — PRIMARY
@@ -56,9 +58,12 @@ from tools import colormap as cm                      # noqa: E402
 from tools.corpus import location as loc_mod          # noqa: E402
 import timm                                            # noqa: E402
 
-RECORDS = ROOT / "scratchpad/library_records/library_records.jsonl"
-GRAY_NPZ = ROOT / "scratchpad/visual_dup/embeddings.npz"   # promote FROM here
-FIELDS = ROOT / "scratchpad/visual_dup/fields"             # cached smooth fields
+RECORDS = ROOT / "data/library/library_records.jsonl"
+# Historical grayscale-morphology source. Its producer (visual_dup/embed.py) was wiped;
+# its rows are already PROMOTED into STORE (morph_uids/morph_clip/morph_v6). build()/report()
+# below only run to (re)promote — dead unless the gray producer is rebuilt (see morph_parity.md).
+GRAY_NPZ = ROOT / "data/library_embeddings/gray_embeddings.npz"
+FIELDS = ROOT / "out/curation/morph_fields"                # regenerable smooth-field cache
 STORE = ROOT / "data/library_embeddings/embeddings.npz"    # LOAD-BEARING sink
 EXE = ROOT / "target/release/fractal-generator.exe"
 POOL_COLORMAPS = ROOT / "data/palettes/pool_colormaps.json"   # covers all 56 palettes
@@ -256,7 +261,7 @@ def report(recs, morph_uids, morph_clip, colored, keys):
           f"colored_clip {colored.shape}")
 
     # promotion integrity: read the store BACK from disk, assert its grayscale rows
-    # are byte-identical to the scratchpad source, and every record clip/v6 row
+    # are byte-identical to the GRAY_NPZ source, and every record clip/v6 row
     # reference resolves to the correct uid position in the promoted store.
     src = np.load(GRAY_NPZ)
     st = np.load(STORE)

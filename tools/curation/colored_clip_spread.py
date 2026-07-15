@@ -34,7 +34,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 STORE = ROOT / "data/library_embeddings/embeddings.npz"
-RECORDS = ROOT / "scratchpad/library_records/library_records.jsonl"
+RECORDS = ROOT / "data/library/library_records.jsonl"
 DEFAULT_CELL_LEVEL = "k16"   # the committed default ward cut (palette_categories.json)
 
 

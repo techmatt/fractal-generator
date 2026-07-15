@@ -4,7 +4,7 @@ A conservative, NON-DESTRUCTIVE curation pass over an emission corpus. The coord
 `same_fractal` identity (emission_selector) already collapses same-location recolors; it
 CANNOT see two coordinate-distinct emissions that render the same skeleton (the
 "good morphology is intrinsically narrow" mode measured in
-`scratchpad/visual_dup/FINDINGS.md`). This pass catches only the tightest tier of that:
+`docs/findings/visual_dup.md`). This pass catches only the tightest tier of that:
 palette-blind CLIP morphology similarity on the canonical grayscale renders, thresholded
 so ONLY the ~0.978 tier trips.
 
@@ -30,7 +30,11 @@ viewports of one Ushiki plane mis-grouped by the coordinate metric, not real dup
 
 Run (near-free, reuses the saved CLIP matrix — no re-render, no re-embed):
     uv run python -m tools.curation.morphology_dedup \
-        --artifacts scratchpad/visual_dup --threshold 0.974
+        --artifacts out/curation/visual_dup --threshold 0.974
+
+The `--artifacts` dir holds a visual_dup-style `embeddings.npz` + `fields/`. The original
+grayscale producer (visual_dup/embed.py) was wiped; regenerate the artifacts before running
+(the canonical robust-z transfer now lives in `library_annotate.morph_gray_image`).
 """
 from __future__ import annotations
 
@@ -203,7 +207,7 @@ def _control_band(corpus: Corpus) -> dict:
 # Loader for the near-free path: reuse the already-saved CLIP matrix + cluster structure.
 # --------------------------------------------------------------------------- #
 def load_corpus_from_artifacts(artifacts: Path) -> Corpus:
-    """Build a Corpus from `scratchpad/visual_dup`-style artifacts.
+    """Build a Corpus from `visual_dup`-style artifacts (see --artifacts).
 
     Reads `clusters.json` (62->47 structure + full per-row manifest fields incl. p_ge3)
     and `out/sim_matrices.npz` (the saved CLIP cosine matrix). No GPU, no re-embed.
@@ -294,7 +298,7 @@ def print_report(res: DedupResult, corpus: Corpus):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--artifacts", type=Path, default=Path("scratchpad/visual_dup"),
+    ap.add_argument("--artifacts", type=Path, default=Path("out/curation/visual_dup"),
                     help="dir with clusters.json + out/sim_matrices.npz")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     ap.add_argument("--exclude", nargs="*", default=list(DEFAULT_EXCLUDE))
