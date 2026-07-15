@@ -55,6 +55,12 @@ __pycache__/
 # per-dir/per-file entries (/renders, /descend_strip_panels, *_stdout.txt, …).
 /out/*
 !/out/.gitkeep
+# scratchpad/ is the canonical disposable temp dir (see CLAUDE.md disk-hygiene). It is
+# gitignored and MUST never be on anyone's dependency path: nothing outside it imports it,
+# and it is never the sole producer of a durable artifact. Load-bearing code -> tools/,
+# findings text -> docs/findings/. (The 2026-07-15 promotion pass made this true; a file
+# that broke — visual_dup/embed.py — is why this rule exists.)
+/scratchpad/
 # data/ is disposable by default, EXCEPT the committed colormap-derived palette
 # library (reproducible from palette_lib/build_sheet.py — see CLAUDE.md
 # "Persistent-store convention").
@@ -122,10 +128,12 @@ __pycache__/
 !/data/atlas/
 
 # Production discovery seeder ledgers (tools/atlas/production_seeder.py): the durable
-# cross-run outcome/cell ledgers + per-outcome features + per-run summaries/contact
-# sheets are load-bearing (the harvested-outcome store everything downstream consumes),
-# committed like the atlas. Render scratch lives under out/ (disposable), not here.
+# cross-run outcome/cell ledgers + per-outcome features + per-run summaries are
+# load-bearing (the harvested-outcome store everything downstream consumes), committed
+# like the atlas. Render scratch (contact_sheet.png review views) is disposable and
+# lives under out/ (SHEETS_DIR) — never here; the rule below evicts any straggler.
 !/data/discovery/
+/data/discovery/**/contact_sheet.png
 
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*

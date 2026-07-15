@@ -144,6 +144,23 @@ rendered to JPG (`enrich --mode render`, full ss4 Lanczos3 wallpaper quality).
 
 The tree is `out/{renders,strips,demos}/`. Use `crate::ensure_parent_dir(path)?` before any top-level `save`/`fs::write` so a no-flag default writes its dir on a fresh checkout.
 
+> **Scratchpad is not a dependency tier.** `scratchpad/` is the canonical *disposable temp*
+> dir (gitignored). **If a file is imported from outside `scratchpad/`, or it's the only
+> thing that produces a durable artifact, it isn't scratch — promote it to `tools/` (or
+> delete it).** Findings/analysis text goes to `docs/findings/`, committed. `scratchpad/`
+> must never be on anyone's dependency path — nothing tracked may import from it or read a
+> non-regenerable artifact out of it. (This rule exists because `scratchpad/visual_dup/embed.py`
+> was load-bearing production code — the whole morph_clip dedup axis depended on it — living
+> in a dir whose name said it didn't matter; it was never committed, vanished, and cost a
+> formula sweep to recover.) Mechanically checkable — the two greps below must both stay empty:
+>
+> ```bash
+> # (a) nothing outside scratchpad imports a scratchpad module:
+> grep -rn "import" --include="*.py" tools/ classifier/ src/ | grep -i scratchpad
+> # (b) no scratchpad file writes a durable data/ artifact:
+> grep -rnE "savez|write_text|open\([^)]*['\"]w" --include="*.py" scratchpad/ | grep -iE "data/|STORE"
+> ```
+
 > **Persistent-store convention (`data/`).** `out/` is *disposable* — anything that must survive `rm -r out/*` lives under `data/` instead (committed, NOT gitignored). Use this for **load-bearing artifacts that are part of a metric's definition** and that you don't want silently regenerated: e.g. `data/calibration/energy_calibration.json` (the `calibrate` frozen quantile bins + per-image histograms — see `energy::ARTIFACT_PATH`). Regenerable *views* (PNG sheets) stay in `out/`. When something reads such an artifact back, expose the default path as a `pub const` (e.g. `energy::ARTIFACT_PATH`) shared by writer and reader rather than re-deriving the string.
 
 > **Adding a subcommand.** The per-subcommand `Args` struct (+ its `impl
