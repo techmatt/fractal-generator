@@ -163,36 +163,123 @@ class Timing:
 # =========================================================================== #
 # Startup sweep: reclaim orphaned seeder render-scratch from prior KILLED runs.
 # =========================================================================== #
-def sweep_orphan_seeder_scratch(log: Log):
-    """Remove transient seeder render-scratch dirs left under SEEDER_SCRATCH_ROOT by
-    earlier runs whose seeder was hard-killed before it could self-purge (a clean seeder
-    exit purges its own <ts>/ via production_seeder._purge_run_scratch). Called ONCE at
-    orchestrator start, before any seeder is spawned this run, so every timestamped dir
-    present is a pre-existing orphan — safe to remove. Only matches the seeder's
-    YYYYMMDD_HHMMSS run dirs (a manual diagnostic's differently-named subdir is left
-    alone). A cleanly-finished run's dir holds only a tiny outcome_tiles/ by now; that is
-    disposable too (only the manual --finalize rereads it, which the loop never runs).
-    Best-effort: an unlink failure (Windows lock) is logged, never fatal."""
+def _reclaim_seeder_scratch(log: Log, when: str, dry_run: bool = False) -> tuple[int, int]:
+    """Reclaim transient seeder render-scratch dirs (reward frames, walk pools, reframe
+    rungs, native pools, FIELD BINS) left under SEEDER_SCRATCH_ROOT by seeders that exited
+    WITHOUT self-purging — i.e. hard-killed by the orchestrator's KILL_MULT backstop (a
+    CLEAN seeder exit purges its own <ts>/ via production_seeder._purge_run_scratch). This
+    scratch is the overnight loop's dominant disk sink (GBs per killed seeder). Safe
+    whenever NO seeder is running: at orchestrator startup (every <ts>/ present pre-dates
+    this run) AND at a cycle boundary (this cycle's seeder phases have all fully exited, so
+    every remaining <ts>/ is a killed-seeder orphan — clean ones already self-purged). Only
+    matches the seeder's YYYYMMDD_HHMMSS run dirs (a manual diagnostic's differently-named
+    dir is left alone). Returns (dirs_removed, bytes_freed). Best-effort — an unlink failure
+    (Windows lock) is logged, never fatal. dry_run: report only, delete nothing."""
     root = SEEDER_SCRATCH_ROOT
     if not root.exists():
-        log(f"startup sweep: no seeder scratch root at {root} (nothing to reclaim)")
-        return
+        return 0, 0
     freed = removed = 0
     for child in sorted(root.iterdir()):
         if not (child.is_dir() and _RUN_TS_RX.match(child.name)):
             continue
         try:
-            freed += sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
-            shutil.rmtree(child, ignore_errors=True)
+            sz = sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
+            if dry_run:
+                log(f"  [dry-run] {when}: PURGE seeder scratch {child.name} (~{sz/2**30:.2f} GiB)")
+            else:
+                shutil.rmtree(child, ignore_errors=True)
+            freed += sz
             removed += 1
         except OSError as e:
-            log(f"  startup sweep: could not remove {child.name}: {e}", "WARN")
+            log(f"  {when} seeder-scratch sweep: could not remove {child.name}: {e}", "WARN")
+    return removed, freed
+
+
+def sweep_orphan_seeder_scratch(log: Log):
+    """Startup sweep: reclaim seeder scratch orphaned by a PRIOR hard-killed run before we
+    spawn this run's seeders. Called ONCE at orchestrator start; see _reclaim_seeder_scratch
+    for the safety argument. (The within-run analogue is purge_cycle_intermediates, which
+    fires at every cycle boundary so a long run's killed-seeder scratch can't accumulate to
+    the whole-night ~100GB it used to.)"""
+    root = SEEDER_SCRATCH_ROOT
+    if not root.exists():
+        log(f"startup sweep: no seeder scratch root at {root} (nothing to reclaim)")
+        return
+    removed, freed = _reclaim_seeder_scratch(log, "startup")
     if removed:
         log(f"startup sweep: reclaimed {removed} orphaned seeder scratch dir(s), "
             f"~{freed/2**30:.2f} GiB under {root} (hard-killed-run leftovers; clean runs "
             f"self-purge on exit)")
     else:
         log(f"startup sweep: no orphaned seeder scratch under {root}")
+
+
+def _purge_pool_emit(log: Log, cycle: int, batch_dir: Path | None,
+                     emit_dir: Path | None, dry_run: bool = False) -> int:
+    """Purge (or, dry_run, report) one cycle's pool label crops + residual emit field bins,
+    KEEPING each pool's small images.jsonl / batch.json provenance. See
+    purge_cycle_intermediates for the full keep/purge contract. Returns bytes freed."""
+    freed = 0
+    if batch_dir is not None:
+        crops = batch_dir / "crops"
+        if crops.exists():
+            csz = sum(f.stat().st_size for f in crops.rglob("*") if f.is_file())
+            if dry_run:
+                log(f"  [dry-run] cycle {cycle}: PURGE pool crops {crops} (~{csz/2**20:.0f} MiB) "
+                    f"| KEEP images.jsonl + batch.json")
+            else:
+                shutil.rmtree(crops, ignore_errors=True)
+            freed += csz
+    if emit_dir is not None:
+        fields = emit_dir / "fields"
+        if fields.exists():
+            fsz = 0
+            for b in fields.glob("*.bin"):
+                try:
+                    fsz += b.stat().st_size
+                    if not dry_run:
+                        b.unlink()
+                except OSError:
+                    pass
+            if fsz:
+                if dry_run:
+                    log(f"  [dry-run] cycle {cycle}: PURGE {fsz/2**20:.0f} MiB residual "
+                        f"emit field bins in {fields}")
+                freed += fsz
+    return freed
+
+
+def purge_cycle_intermediates(log: Log, cycle: int, batch_dir: Path | None = None,
+                              emit_dir: Path | None = None, dry_run: bool = False) -> int:
+    """Cycle-boundary self-clean (retention fix). Called at a cycle's terminal point, AFTER
+    this cycle's emit recipes are durable in the aggregate manifest (append_manifest) and
+    fresh-isolation has been asserted — so peak disk stays ~one cycle's intermediates
+    instead of the whole run's accumulation. Same discipline emit already applies
+    per-winner (unlink each field bin after use), lifted to the cycle.
+
+    KEEP (durable band, never touched): manifest.jsonl, timing.jsonl, run_summary.json,
+      state.json, orchestrator.log, the emitted wallpapers, the run-scoped
+      outcome_ledger.jsonl, and each pool's small images.jsonl / batch.json.
+    PURGE (disposable intermediates; SCRATCH/REGEN under disk_audit.py's taxonomy, so an
+      inline purge and a post-hoc audit classify identically):
+        1. killed-seeder render scratch under SEEDER_SCRATCH_ROOT — reward frames / walk
+           pools / field bins; pure scoring intermediate (only the ledger flows downstream).
+        2. this cycle's pool label crops (build_fresh_discovery crops/) — emit already
+           consumed them; deploy_tail's morning pass reads the emitted wallpapers + the
+           manifest recipe (which carries each location's inherited palette), never the pool.
+        3. residual emit field bins (emit unlinks each winner's on success; a hard-killed
+           emit leaves the in-flight bin).
+
+    Idempotent + crash-safe: best-effort rmtree, already-gone is a no-op, and a RESUMED run
+    never re-needs a purged intermediate (recipes durable, pools per-cycle, seeder scratch
+    scoring-only). dry_run: report keep/purge sets, delete nothing. Returns bytes freed."""
+    _removed, freed = _reclaim_seeder_scratch(log, f"cycle {cycle}", dry_run=dry_run)
+    freed += _purge_pool_emit(log, cycle, batch_dir, emit_dir, dry_run=dry_run)
+    if freed and not dry_run:
+        log(f"  cycle {cycle} purge: reclaimed ~{freed/2**30:.2f} GiB of disposable "
+            f"intermediates (killed-seeder scratch + pool crops + emit field residual); "
+            f"durable band preserved")
+    return freed
 
 
 # =========================================================================== #
@@ -510,6 +597,8 @@ def orchestrate(args):
             log(f"  no fresh q3 this cycle (empty streak {empty_streak}); skipping pool+emit.")
             totals["cycles"] += 1
             save_state(state_path, {**load_state(state_path), "cycles_done": cycle})
+            # discovery still ran (seeders may have left killed-scratch); no pool/emit yet.
+            purge_cycle_intermediates(log, cycle)
             continue
         empty_streak = 0
 
@@ -539,6 +628,9 @@ def orchestrate(args):
             log(f"  pool build failed / no batch (isolated) — skipping emit this cycle.", "WARN")
             totals["cycles"] += 1
             save_state(state_path, {**load_state(state_path), "cycles_done": cycle})
+            # no emit this cycle: nothing durable depends on the pool -> safe to purge its
+            # crops + this cycle's seeder scratch.
+            purge_cycle_intermediates(log, cycle, batch_dir)
             continue
 
         # ---- the non-negotiable freshness assertion (halts on violation) ----
@@ -581,6 +673,11 @@ def orchestrate(args):
         save_state(state_path, {**load_state(state_path), "cycles_done": cycle,
                                 "totals": totals})
 
+        # Cycle-boundary self-clean: emit recipes are now durable in the aggregate manifest
+        # (append_manifest above) and fresh-isolation was asserted before emit, so this
+        # cycle's intermediates are safe to reclaim. Bounds peak disk to ~one cycle.
+        purge_cycle_intermediates(log, cycle, batch_dir, emit_dir)
+
         if time.time() - last_heartbeat > HEARTBEAT_EVERY_S:
             last_heartbeat = time.time()
         log(f"HEARTBEAT cycle={cycle} remaining={remaining()/3600:.2f}h emitted_total="
@@ -588,6 +685,12 @@ def orchestrate(args):
             f"phase_failures={totals['phase_failures']}")
 
     # ----------------------------- final report ----------------------------- #
+    # A cap-break exits mid-cycle before that cycle's terminal purge runs, so its
+    # seeder scratch can linger; reclaim it now (no seeder is running post-loop).
+    fr, ff = _reclaim_seeder_scratch(log, "final")
+    if fr:
+        log(f"final seeder-scratch sweep: reclaimed {fr} dir(s), ~{ff/2**30:.2f} GiB "
+            f"(cap-break partial-cycle leftovers)")
     gpu_boundary(log, baseline_gpu, "final")
     summary = {
         "run_id": args.run_id, "finished": time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -617,12 +720,57 @@ def orchestrate(args):
     return summary
 
 
+def dry_run_purge(args):
+    """GPU-free validation of the cycle-boundary purge: over an EXISTING run tree, print the
+    keep-set vs purge-set and the bytes the purge WOULD reclaim — deletes nothing, launches
+    no run, loads no model. Reuses the exact production purge predicates
+    (_reclaim_seeder_scratch + _purge_pool_emit) so what it reports is what a real run
+    reclaims. Doubles as a manual pre-audit."""
+    if args.run_id is None:
+        raise SystemExit("--dry-run-purge requires --run-id <run>")
+    out_root = Path(args.out_root).resolve()
+    disc_root = Path(args.discovery_root).resolve()
+    run_dir = out_root / args.run_id
+    disc_dir = disc_root / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log = Log(run_dir / "purge_dry_run.log")
+    log(f"DRY-RUN PURGE for run '{args.run_id}' (deletes nothing)")
+    log(f"  out tree : {run_dir}  (exists={run_dir.exists()})")
+    log(f"  disc dir : {disc_dir}  (exists={disc_dir.exists()})")
+    log("  KEEP band (never purged): manifest.jsonl, timing.jsonl, run_summary.json, "
+        "state.json, orchestrator.log, emit/cycle_*/wallpapers/*, pools/cycle_*/"
+        "{images.jsonl,batch.json}, <disc>/outcome_ledger.jsonl")
+
+    total = 0
+    # (1) global killed-seeder scratch orphans under SEEDER_SCRATCH_ROOT.
+    _rm, sfreed = _reclaim_seeder_scratch(log, "seeder-scratch orphans now", dry_run=True)
+    total += sfreed
+    # (2) per-cycle pool crops + residual emit field bins.
+    pools_root = run_dir / "pools"
+    pools = sorted(pools_root.glob("cycle_*")) if pools_root.exists() else []
+    for bd in pools:
+        try:
+            cyc = int(bd.name.split("_")[-1])
+        except ValueError:
+            continue
+        ed = run_dir / "emit" / bd.name
+        total += _purge_pool_emit(log, cyc, bd, ed if ed.exists() else None, dry_run=True)
+    log(f"DRY-RUN PURGE total reclaimable ~{total/2**30:.2f} GiB "
+        f"(killed-seeder scratch + {len(pools)} cycle pool/emit intermediates); "
+        f"durable band untouched")
+    log.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", action="store_true", help="production run (6h cap by default)")
     ap.add_argument("--mini", action="store_true",
                     help="short throwaway validation run: tight cap, 1 family, scratch roots")
+    ap.add_argument("--dry-run-purge", action="store_true",
+                    help="GPU-free: report the cycle-boundary purge's keep/purge sets + "
+                         "reclaimable bytes over an EXISTING run tree (needs --run-id); "
+                         "deletes nothing, launches no run")
     ap.add_argument("--run-id", default=None, help="run id (default: timestamp)")
     ap.add_argument("--cap-hours", type=float, default=CAP_HOURS, help="wall-clock cap (hours)")
     ap.add_argument("--per-family-min", type=float, default=PER_FAMILY_MIN,
@@ -651,6 +799,10 @@ def main():
                     help="cap locations actually rendered per pool build (build_fresh_discovery "
                          "--limit; 0 = pool up to --count). Bounds mini-run wall-clock.")
     args = ap.parse_args()
+
+    if args.dry_run_purge:
+        dry_run_purge(args)
+        return
 
     if not (args.run or args.mini):
         ap.print_help()
