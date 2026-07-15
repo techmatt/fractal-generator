@@ -125,40 +125,125 @@ def test_reconcile_clean_passes():
     assert bd["q3_found"] == bd["records_written"] + bd["dropped_coord_dup"]
 
 
+def _sel(within=0, unrenderable=0, excl_key=0, excl_prox=0):
+    return {"within_set_dups_dropped": within, "unrenderable_dropped": unrenderable,
+            "excluded_head_corpus_by_key": excl_key, "excluded_head_corpus_by_proximity": excl_prox}
+
+
+def _ann(coord_dup=0, field_fail=0, records=0):
+    return {"dropped_coord_dup": coord_dup, "dropped_field_fail": field_fail,
+            "records_written": records}
+
+
+# --- SELECTION-SHAPED loss (a cap/ranking sneaking back) STILL HALTS loudly ---------------- #
 def test_reconcile_head_exclusion_leak_halts():
-    # A head-corpus exclusion (a selection drop) leaves a q3 unaccounted -> dropped_other != 0.
-    sel = {"within_set_dups_dropped": 0, "unrenderable_dropped": 0,
-           "excluded_head_corpus_by_key": 1, "excluded_head_corpus_by_proximity": 0}
-    ann = {"dropped_coord_dup": 0, "dropped_field_fail": 0, "records_written": 9}
+    # A head-corpus exclusion (a selection drop) in a --no-head-exclude phase -> HALT.
     try:
-        po.reconcile_cycle(10, 9, sel, ann)
+        po.reconcile_cycle(10, 9, _sel(excl_key=1), _ann(records=9))
         assert False, "expected the reconciliation assert to fire on a silent selection drop"
     except SystemExit as e:
-        assert "LEAK" in str(e) and "excl_head=1" in str(e)
+        assert "LEAK" in str(e) and "excl_head=1" in str(e) and "selection-shaped" in str(e)
 
 
-def test_reconcile_field_fail_leak_halts():
-    # A field render failure is a genuine leak (not a dup) -> halt.
-    sel = {"within_set_dups_dropped": 0, "unrenderable_dropped": 0,
-           "excluded_head_corpus_by_key": 0, "excluded_head_corpus_by_proximity": 0}
-    ann = {"dropped_coord_dup": 2, "dropped_field_fail": 1, "records_written": 7}
+def test_reconcile_unexplained_loss_halts():
+    # A q3 that vanished with NO reason recorded (not record/coord-dup/field-fail/deferral) -> HALT.
     try:
-        po.reconcile_cycle(10, 7, sel, ann)     # 7 + 2 + (1 leak) = 10
-        assert False, "expected halt on a field-fail leak"
+        po.reconcile_cycle(10, 8, _sel(), _ann(records=8))   # 10 - 8 = 2 unexplained
+        assert False, "expected halt on unexplained loss"
     except SystemExit as e:
-        assert "field_fail=1" in str(e)
+        assert "unexplained" in str(e)
 
 
-def test_reconcile_missing_report_surfaces_as_leak():
+def test_reconcile_missing_report_surfaces_as_unexplained():
     # An absent annotate report ({}) means the store delta must fully account for q3_found on its
-    # own; any shortfall surfaces as a leak rather than passing silently.
+    # own; any shortfall surfaces as unexplained rather than passing silently.
     try:
-        po.reconcile_cycle(5, 3, {}, {})        # 3 records, nothing else explained -> 2 leaked
+        po.reconcile_cycle(5, 3, {}, {})        # 3 records, nothing else explained -> 2 unexplained
         assert False, "expected halt when reports are missing and records < q3_found"
     except SystemExit:
         pass
     # but if every q3 became a record, missing reports still reconcile cleanly.
     assert po.reconcile_cycle(5, 5, {}, {})["dropped_other"] == 0
+
+
+# --- FIELD-FAIL is OPERATIONAL: tolerated by RATE, never per-event ------------------------- #
+def test_reconcile_single_field_fail_is_noise_not_a_halt():
+    # ONE render failure is location-specific noise: accounted as field_fail, no halt (was a halt
+    # under the old per-event rule). 7 records + 2 coord-dup + 1 field_fail = 10, all accounted.
+    bd = po.reconcile_cycle(10, 7, _sel(), _ann(coord_dup=2, field_fail=1))
+    assert bd["field_fail"] == 1 and bd["unexplained"] == 0 and bd["dropped_other"] == 0
+
+
+def test_reconcile_field_fail_below_rate_continues():
+    # 4/10 = 40% render failures (< 50% floor) -> tolerated, no halt.
+    bd = po.reconcile_cycle(10, 6, _sel(), _ann(field_fail=4))
+    assert bd["field_fail"] == 4 and bd["field_fail_rate"] == 0.4 and bd["unexplained"] == 0
+
+
+def test_reconcile_field_fail_at_rate_halts():
+    # 5/10 = 50% (>= floor, >= 2 failures) -> systemic render defect -> HALT (fires AT the rate).
+    try:
+        po.reconcile_cycle(10, 5, _sel(), _ann(field_fail=5))
+        assert False, "expected halt at the field-fail rate floor"
+    except SystemExit as e:
+        assert "field-fail rate" in str(e) and "50%" in str(e)
+
+
+def test_reconcile_field_fail_rate_only_above_min_count():
+    # A single failure that is 50% of a TINY cycle (1/2) is still just noise: the min-count floor
+    # (2) keeps it from false-halting. Rate fires only when BOTH rate and count thresholds are met.
+    bd = po.reconcile_cycle(2, 1, _sel(), _ann(field_fail=1))   # 50% but only 1 failure
+    assert bd["field_fail"] == 1 and bd["dropped_other"] == 0
+
+
+# --- unrenderable (pool-build render failure) folds into the field-fail bucket ------------- #
+def test_reconcile_unrenderable_is_field_fail():
+    bd = po.reconcile_cycle(10, 8, _sel(unrenderable=1), _ann(coord_dup=1, records=8))
+    assert bd["field_fail"] == 1 and bd["unexplained"] == 0
+
+
+# --- DEFERRED (a retried-then-failed cycle's q3) is accounted, never a halt ---------------- #
+def test_reconcile_deferred_accounted():
+    # The whole cycle's q3 were deferred to a re-run; passed in as `deferred`, reconciles clean.
+    bd = po.reconcile_cycle(10, 0, _sel(), _ann(), deferred=10)
+    assert bd["deferred"] == 10 and bd["unexplained"] == 0 and bd["dropped_other"] == 0
+
+
+# =========================================================================== #
+# 2b. Annotate crash -> defer, retry once, record-and-continue (no halt).
+# =========================================================================== #
+def test_annotate_retry_succeeds_on_second_attempt():
+    # First attempt fails, retry succeeds -> None (proceed to reconcile), attempt called twice.
+    calls = []
+    def attempt(i):
+        calls.append(i)
+        return (i == 1, "" if i == 1 else "crash")
+    fc = po.annotate_with_retry(attempt, cycle=3, q3_count=12, watermark=100,
+                                salvaged=lambda: 12)
+    assert fc is None and calls == [0, 1]      # retried exactly once, then proceeded
+
+
+def test_annotate_double_failure_defers_and_continues():
+    # Both attempts fail -> a failed-cycle dict (recorded), NOT a raise: q3 deferred, run continues.
+    calls = []
+    def attempt(i):
+        calls.append(i)
+        return (False, "annotate_report.json missing (crash)")
+    fc = po.annotate_with_retry(attempt, cycle=3, q3_count=12, watermark=100,
+                                salvaged=lambda: 4)
+    assert calls == [0, 1]                      # tried once + retried once, then gave up (no 3rd)
+    assert fc is not None                       # recorded, not raised
+    assert fc["cycle"] == 3 and fc["q3_deferred"] == 12 and fc["records_salvaged"] == 4
+    assert fc["ledger_watermark"] == 100 and "failed twice" in fc["reason"]
+
+
+def test_annotate_first_attempt_success_no_retry():
+    calls = []
+    def attempt(i):
+        calls.append(i)
+        return (True, "")
+    fc = po.annotate_with_retry(attempt, cycle=3, q3_count=12, watermark=100, salvaged=lambda: 12)
+    assert fc is None and calls == [0]         # no retry when the first attempt succeeds
 
 
 # =========================================================================== #

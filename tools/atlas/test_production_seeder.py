@@ -93,7 +93,7 @@ def test_near_dup_does_not_double_count_a_region():
         {"id": "gf", "guard_pass": False, "decoded_class": None,
          "outcome_cx": 0.12, "outcome_cy": 0.0, "outcome_fw": 0.01},
     ]
-    cloud = ps.build_cloud(rows)
+    cloud = ps.build_cloud(rows, "mandelbrot")     # keyless rows default to mandelbrot
     ids = {m["id"] for m in cloud}
     assert ids == {"a", "b"}                       # a2 deduped; c2/gf excluded
     # the region around a holds exactly ONE counted member, not two.
@@ -127,7 +127,7 @@ def test_ledger_round_trip(tmp_path, monkeypatch):
     led2 = ps.Ledgers()   # fresh reload
     assert led2.n_outcomes_logged == 2
     assert len(led2.harvested) == 2                        # both guard_pass
-    cloud = ps.build_cloud(led2.rows)
+    cloud = ps.build_cloud(led2.rows, "mandelbrot")        # keyless rows default to mandelbrot
     assert [m["id"] for m in cloud] == ["m_x_000001"]      # dup collapses to one place
     assert "m_x_000001" in led2.feats and led2.feats["m_x_000001"].shape == (1280,)
     assert float(led2.feats["m_x_000001"][5]) == 5.0       # feature preserved
@@ -150,4 +150,23 @@ def test_build_cloud_excludes_pre_decode_rows():
         {"id": "new", "guard_pass": True, "decoded_class": 3,
          "outcome_cx": 5.0, "outcome_cy": 0.0, "outcome_fw": 0.01},
     ]
-    assert [m["id"] for m in ps.build_cloud(rows)] == ["new"]
+    assert [m["id"] for m in ps.build_cloud(rows, "mandelbrot")] == ["new"]
+
+
+def test_build_cloud_partitions_by_family():
+    """The `family` arg is the correctness fix: cross-family outcomes at the SAME (cx, cy)
+    are different parameter planes and must never interact. build_cloud returns only the
+    active partition; keyless rows count as mandelbrot."""
+    rows = [
+        # same coords, three different planes -> each partition sees exactly its own row.
+        {"id": "m", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 0.01},              # keyless
+        {"id": "j", "family": "julia", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 0.01},
+        {"id": "mb", "family": "multibrot_d3", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 0.01},
+    ]
+    assert [m["id"] for m in ps.build_cloud(rows, "mandelbrot")] == ["m"]
+    assert [m["id"] for m in ps.build_cloud(rows, "julia")] == ["j"]
+    assert [m["id"] for m in ps.build_cloud(rows, "multibrot_d3")] == ["mb"]
+    assert ps.build_cloud(rows, "phoenix") == []   # no member in that partition

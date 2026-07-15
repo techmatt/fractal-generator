@@ -45,6 +45,15 @@ EST_ANNOTATE_FIXED_S = 20.0            # CLIP model load, once per annotate phas
 EST_ANNOTATE_LOC_S = 6.0              # per-location field dump (640x360 ss2) + embed + thumb
 FIELD_CACHE_GB = 20.0
 
+# --- reconciliation failure discrimination (see reconcile_cycle) ---
+# A field render failure is OPERATIONAL, not selection-shaped: a lone location whose field won't
+# render is location-specific noise (a pathological glitch/underflow at one coordinate), whereas a
+# large fraction of a cycle failing to render is a systemic defect (broken backend, GPU OOM, disk).
+# We therefore halt on field-fail by RATE, never per-event, with a small-sample floor so a 1-of-2
+# tiny cycle can't false-halt.
+FIELD_FAIL_RATE_HALT = 0.5             # halt if >=50% of a cycle's q3 fail to render (systemic)
+FIELD_FAIL_MIN_COUNT = 2               # ...but a single render failure is always noise, never halts
+
 ANNOTATOR = oo.ROOT / "tools" / "wallpaper" / "library_annotate.py"
 
 
@@ -88,45 +97,100 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
-def reconcile_cycle(q3_found, records_written, selection_report, annotate_report, log=None):
-    """The per-cycle harvest invariant: q3_found == records_written + dropped_coord_dup +
-    dropped_other, with dropped_other == 0. Every fresh q3 must become a library record or a true
-    coordinate-duplicate of one already kept — nothing else may drop a location.
+def reconcile_cycle(q3_found, records_written, selection_report, annotate_report, log=None,
+                    deferred=0):
+    """The per-cycle harvest invariant is **"no location is dropped without a reason recorded,"**
+    NOT "no location is ever dropped." Every fresh q3 must be accountable as exactly one of:
 
-      dropped_coord_dup = within-set key dups (build) + store/within-batch coord dups (annotate);
-                          the ONE legitimate drop.
-      dropped_other     = the residual: head-exclusion, count/limit caps, unrenderable rows, field
-                          render failures, or any pool<->fresh mismatch. MUST be 0.
+      recorded    = became a library record.
+      coord_dup   = a true coordinate-duplicate of one already kept — within-set key dups (build)
+                    + store/within-batch coord dups (annotate). The ONE always-legitimate drop.
+      field_fail  = its field could not render (annotate RuntimeError) OR it was unrenderable at
+                    pool-build. OPERATIONAL, reason recorded. Tolerated as noise, halted by RATE
+                    (see FIELD_FAIL_RATE_HALT) — never per-event.
+      deferred    = the whole cycle was deferred to a retry (annotate crashed); the durable run
+                    ledger makes it re-runnable. Passed in by the caller (0 on the normal path).
 
-    Returns the breakdown dict. Raises SystemExit on a leak (dropped_other != 0) — loud, not a warn."""
+    Two residual classes HALT loudly, because they mean the harvest's premise is broken:
+      * excl_head (a head-corpus exclusion / selection cap reappearing) — SELECTION-SHAPED loss:
+        ranking sneaking back into a phase that must keep every fresh q3. Phase 1 runs
+        --no-head-exclude, so this MUST be 0.
+      * unexplained (any q3 left over after the above) — a location vanished with NO reason
+        recorded. This is the exact failure the invariant exists to catch.
+
+    Returns the breakdown dict. Raises SystemExit only on selection-shaped or unexplained loss, or
+    on a field-fail RATE above threshold — an operationally-flaky cycle does not halt the run."""
     within_set = selection_report.get("within_set_dups_dropped", 0)
     excl_head = (selection_report.get("excluded_head_corpus_by_key", 0)
                  + selection_report.get("excluded_head_corpus_by_proximity", 0))
     unrenderable = selection_report.get("unrenderable_dropped", 0)
     coord_dup = annotate_report.get("dropped_coord_dup", 0)
-    field_fail = annotate_report.get("dropped_field_fail", 0)
+    field_fail_ann = annotate_report.get("dropped_field_fail", 0)
     dropped_coord_dup = within_set + coord_dup
-    dropped_other = q3_found - records_written - dropped_coord_dup
+    field_fail = field_fail_ann + unrenderable       # all render failures (reason recorded)
+    # unexplained = q3 not accounted by ANY reason (recorded/coord_dup/field_fail/deferred) and not
+    # attributable to head exclusion. excl_head is a KNOWN-but-FORBIDDEN reason, kept separate so it
+    # halts distinctly from a truly reasonless vanish.
+    unexplained = (q3_found - records_written - dropped_coord_dup - field_fail
+                   - deferred - excl_head)
+    ff_rate = field_fail / q3_found if q3_found else 0.0
+    ff_rate_halt = field_fail >= FIELD_FAIL_MIN_COUNT and ff_rate >= FIELD_FAIL_RATE_HALT
     bd = {
         "q3_found": q3_found, "records_written": records_written,
-        "dropped_coord_dup": dropped_coord_dup, "dropped_other": dropped_other,
-        # component breakdown (dropped_coord_dup = within_set + store_batch_coord_dup;
-        # dropped_other is expected to decompose into excluded_head + unrenderable + field_fail)
+        "dropped_coord_dup": dropped_coord_dup, "field_fail": field_fail,
+        "deferred": deferred, "excluded_head": excl_head, "unexplained": unexplained,
+        # sub-components
         "within_set_dups": within_set, "store_batch_coord_dup": coord_dup,
-        "excluded_head": excl_head, "unrenderable": unrenderable, "field_fail": field_fail,
+        "field_fail_annotate": field_fail_ann, "unrenderable": unrenderable,
+        "field_fail_rate": round(ff_rate, 4),
+        # back-compat: "dropped_other" now means ONLY the truly-unexplained residual (0 = clean)
+        "dropped_other": unexplained,
     }
     if log is not None:
-        log(f"  reconcile: q3_found={q3_found} = records={records_written} + "
+        log(f"  reconcile: q3_found={q3_found} = recorded={records_written} + "
             f"coord_dup={dropped_coord_dup} (within_set={within_set}+store/batch={coord_dup}) + "
-            f"other={dropped_other} [excl_head={excl_head} unrenderable={unrenderable} "
-            f"field_fail={field_fail}]")
-    if dropped_other != 0:
+            f"field_fail={field_fail} (rate={ff_rate:.2f}) + deferred={deferred} "
+            f"[excl_head={excl_head} unexplained={unexplained}]")
+    if excl_head != 0:
         raise SystemExit(
-            f"HARVEST LEAK (cycle reconciliation): dropped_other={dropped_other} != 0. Phase 1 "
-            f"must keep every fresh q3 except true coord-dups; {dropped_other} q3(s) were lost to "
-            f"something else (excl_head={excl_head} unrenderable={unrenderable} field_fail="
-            f"{field_fail} residual). Breakdown: {bd}. Halting rather than silently leaking product.")
+            f"HARVEST LEAK (selection-shaped): excl_head={excl_head} != 0. A head-corpus exclusion "
+            f"reappeared in a phase that runs --no-head-exclude — ranking/caps sneaking back into "
+            f"Phase 1. Breakdown: {bd}. Halting: the harvest's keep-every-q3 premise is broken.")
+    if unexplained != 0:
+        raise SystemExit(
+            f"HARVEST LEAK (unexplained): unexplained={unexplained} != 0. {unexplained} q3(s) "
+            f"vanished with NO reason recorded (not a record, coord-dup, field-fail, or deferral). "
+            f"Breakdown: {bd}. Halting rather than silently leaking product.")
+    if ff_rate_halt:
+        raise SystemExit(
+            f"HARVEST DEFECT (field-fail rate): {field_fail}/{q3_found} = {ff_rate:.0%} of this "
+            f"cycle's q3 failed to render (>= {FIELD_FAIL_RATE_HALT:.0%} floor, {FIELD_FAIL_MIN_COUNT}+ "
+            f"failures) — a systemic render failure (broken backend / OOM / disk), not location "
+            f"noise. Breakdown: {bd}. Halting for a human.")
     return bd
+
+
+def annotate_with_retry(attempt, cycle, q3_count, watermark, salvaged, log=None):
+    """Run the annotate phase, retrying ONCE on operational failure (crash / OOM / transient).
+
+    `attempt(i)` performs the i-th invocation and returns (ok, reason): ok is True iff run_phase
+    succeeded AND the annotate report was written (a clean annotate writes it last; a missing report
+    means it crashed mid-cycle). `salvaged()` returns the records persisted so far (store delta).
+
+    Returns None on success — the caller proceeds to reconcile. On a SECOND failure, returns a
+    failed-cycle dict and the caller records it and CONTINUES the loop: the run-scoped ledger is
+    durable, so the deferred q3 are re-runnable, not lost. Nothing here halts — operational
+    flakiness must never take down a 24h run (that distinction is the whole point of this helper)."""
+    ok, _ = attempt(0)
+    if ok:
+        return None
+    if log is not None:
+        log(f"  annotate cycle {cycle} INCOMPLETE — intermediates kept, retrying once.", "WARN")
+    ok, reason = attempt(1)
+    if ok:
+        return None
+    return {"cycle": cycle, "q3_deferred": q3_count, "records_salvaged": salvaged(),
+            "reason": f"annotate failed twice ({reason})", "ledger_watermark": watermark}
 
 
 def orchestrate(args):
@@ -182,6 +246,7 @@ def orchestrate(args):
     totals = {"cycles": 0, "discovery_families": 0, "fresh_q3": 0, "records_added": 0,
               "phase_failures": 0}
     cycle_recon = []        # per-cycle reconciliation breakdowns (records / coord-dup / leak)
+    failed_cycles = []      # cycles whose annotate failed twice: {cycle, q3_deferred, reason, ...}
     fam_instr = []          # per-cycle per-family base/twin/parent instrumentation (Part 2)
     last_heartbeat = time.time()
 
@@ -342,23 +407,59 @@ def orchestrate(args):
         cmd += sinks.annotate_flags()
         if not args.retain_fields:
             cmd += ["--no-retain-fields"]
-        oo.gpu_boundary(log, baseline_gpu, "pre-annotate")
+        ann_report_path = batch_dir / "annotate_report.json"
+        res_box = {}
+
+        def _attempt_annotate(i):
+            """One annotate invocation (i=0 initial, i=1 retry). Operational success == run_phase ok
+            AND the report was written (a clean annotate writes it last; a missing report == crashed
+            mid-cycle). Annotate dedups against the store, so a retry over the same pool is
+            idempotent: records a partial first attempt persisted reappear as coord-dups, not
+            double-writes. Increments phase_failures per failed attempt."""
+            tag = "" if i == 0 else "(retry)"
+            oo.gpu_boundary(log, baseline_gpu, f"pre-annotate{tag}")
+            try:
+                r = oo.run_phase(log, f"annotate:cycle{cycle}{tag}", cmd, est_annotate_s)
+            except Exception as e:
+                r = {"ok": False}
+                log(f"  annotate{tag} EXCEPTION (isolated): {type(e).__name__}: {e}", "WARN")
+            oo.gpu_boundary(log, baseline_gpu, f"post-annotate{tag}")
+            res_box["res"] = r
+            ok = bool(r.get("ok")) and ann_report_path.exists()
+            if not ok:
+                totals["phase_failures"] += 1
+                reason = ("run_phase not ok" if not r.get("ok")
+                          else "annotate_report.json missing (crash)")
+            else:
+                reason = ""
+            return ok, reason
+
         t_ann = time.time()
-        try:
-            res = oo.run_phase(log, f"annotate:cycle{cycle}", cmd, est_annotate_s)
-        except Exception as e:
-            res = {"ok": False}
-            log(f"  annotate EXCEPTION (isolated): {type(e).__name__}: {e}", "WARN")
-        oo.gpu_boundary(log, baseline_gpu, "post-annotate")
+        # OPERATIONAL failure (crash / OOM / transient) is NOT selection-shaped loss: the durable
+        # run ledger makes the cycle re-runnable, so we retry once and, if it still fails, record the
+        # cycle as failed-with-reason and CONTINUE — never halt the run for flakiness.
+        fc = annotate_with_retry(_attempt_annotate, cycle, len(fresh), watermark,
+                                 lambda: store_summary_count(sinks) - recs_before, log=log)
+        res = res_box["res"]
+        if fc is not None:
+            totals["records_added"] += fc["records_salvaged"]
+            failed_cycles.append(fc)
+            log(f"  annotate cycle {cycle} FAILED TWICE — {fc['q3_deferred']} q3 deferred to a "
+                f"re-run (ledger durable @ watermark {watermark}); {fc['records_salvaged']} salvaged. "
+                f"Continuing.", "WARN")
+            timing.record(cycle, f"annotate:cycle{cycle}", res, pool_locations=pool_locs,
+                          unique_locations=n_unique, records_added=fc["records_salvaged"], failed=True)
+            totals["cycles"] += 1
+            oo.save_state(state_path, {**oo.load_state(state_path), "cycles_done": cycle,
+                                       "totals": totals, "failed_cycles": failed_cycles})
+            # NOTE: intentionally NO purge_cycle_intermediates here — the cycle is re-runnable.
+            continue
 
         recs_after = store_summary_count(sinks)
         n_added = recs_after - recs_before
         totals["records_added"] += n_added
         timing.record(cycle, f"annotate:cycle{cycle}", res,
                       pool_locations=pool_locs, unique_locations=n_unique, records_added=n_added)
-        if not res["ok"]:
-            totals["phase_failures"] += 1
-            log(f"  annotate reported failure (isolated); {n_added} records still persisted.", "WARN")
         if n_added > 0:
             obs = (time.time() - t_ann - EST_ANNOTATE_FIXED_S) / n_added
             if obs > 0:
@@ -366,17 +467,16 @@ def orchestrate(args):
         log(f"  cycle {cycle} annotate: +{n_added} library records "
             f"(store now {recs_after}; est_loc now {est_loc_s:.1f}s)")
 
-        # ---- reconciliation (per cycle): every fresh q3 -> a record OR a true coord-dup ----
-        # Halts on any leak (dropped_other != 0): a cap/exclusion/render-failure silently losing a
-        # q3 is the precise behavior Phase 1 exists to prevent, so it fails loudly, not warns.
+        # ---- reconciliation (per cycle): every fresh q3 accounted as recorded | coord_dup |
+        # field_fail (rate-gated) | deferred; only selection-shaped or unexplained loss halts. ----
         sel_report = _read_json(batch_dir / "selection_report.json")
-        ann_report = _read_json(batch_dir / "annotate_report.json")
+        ann_report = _read_json(ann_report_path)
         bd = reconcile_cycle(len(fresh), n_added, sel_report, ann_report, log=log)
         cycle_recon.append({"cycle": cycle, **bd})
 
         totals["cycles"] += 1
         oo.save_state(state_path, {**oo.load_state(state_path), "cycles_done": cycle,
-                                   "totals": totals})
+                                   "totals": totals, "failed_cycles": failed_cycles})
         # cycle-boundary self-clean: records+embeddings are durable in the store, fresh-isolation
         # asserted before annotate — pool crops + killed-seeder scratch are safe to reclaim.
         oo.purge_cycle_intermediates(log, cycle, batch_dir)
@@ -407,6 +507,10 @@ def orchestrate(args):
         "timing_jsonl": str((run_dir / "timing.jsonl")),
         "run_ledger": str(ledger), "run_ledger_rows": oo.ledger_line_count(ledger),
         "output_tree": str(run_dir),
+        # failed cycles surfaced at the TOP level (the over-coffee glance), not buried in recon
+        "cycles_failed": len(failed_cycles),
+        "q3_deferred_to_rerun": sum(c["q3_deferred"] for c in failed_cycles),
+        "failed_cycles": failed_cycles,
         # per-cycle harvest reconciliation (Part 1) + per-family base/twin/parent (Part 2)
         "reconciliation": {
             "per_cycle": cycle_recon,
@@ -414,6 +518,8 @@ def orchestrate(args):
                 "q3_found": sum(c["q3_found"] for c in cycle_recon),
                 "records_written": sum(c["records_written"] for c in cycle_recon),
                 "dropped_coord_dup": sum(c["dropped_coord_dup"] for c in cycle_recon),
+                "field_fail": sum(c.get("field_fail", 0) for c in cycle_recon),
+                "unexplained": sum(c.get("unexplained", 0) for c in cycle_recon),
                 "dropped_other": sum(c["dropped_other"] for c in cycle_recon),
             },
         },
@@ -422,13 +528,24 @@ def orchestrate(args):
     (run_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     rt = summary["reconciliation"]["totals"]
     log("=" * 70)
-    log(f"RUN COMPLETE '{args.run_id}': {totals['cycles']} cycles, "
+    # over-coffee banner: a failed cycle must be impossible to miss at the top of the summary.
+    if failed_cycles:
+        log("!" * 70)
+        log(f"!!  {len(failed_cycles)} CYCLE(S) FAILED (annotate failed twice) — "
+            f"{summary['q3_deferred_to_rerun']} q3 DEFERRED to a re-run (durable ledger).")
+        for fc in failed_cycles:
+            log(f"!!    cycle {fc['cycle']}: {fc['q3_deferred']} q3 deferred, "
+                f"{fc['records_salvaged']} salvaged — {fc['reason']} (re-run from ledger).")
+        log("!" * 70)
+    else:
+        log("  all cycles reconciled cleanly (0 failed).")
+    log(f"RUN COMPLETE '{args.run_id}': {totals['cycles']} cycles ({len(failed_cycles)} failed), "
         f"+{totals['records_added']} library records this run "
         f"({summ['records']} total in store), {totals['fresh_q3']} fresh q3, "
         f"{totals['phase_failures']} phase failures")
     log(f"  reconciliation: q3_found={rt['q3_found']} = records={rt['records_written']} + "
-        f"coord_dup={rt['dropped_coord_dup']} + other={rt['dropped_other']} "
-        f"(other MUST be 0)")
+        f"coord_dup={rt['dropped_coord_dup']} + field_fail={rt['field_fail']} "
+        f"+ unexplained={rt['unexplained']} (unexplained MUST be 0)")
     for fam in sorted({r["family"] for r in fam_instr}):
         rows = [r for r in fam_instr if r["family"] == fam]
         def _s(k):
