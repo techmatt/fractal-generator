@@ -70,6 +70,7 @@ def test_record_shape_dense_and_reserved():
     assert r["location_potential"]["k3"] == 0.31          # JOINED from ledger, not recomputed
     assert r["location_potential"]["decoded_class"] == 3
     assert r["descriptors"]["uid"] == "m_1"
+    assert r["descriptors"]["morph_producer"] == ann.MORPH_PRODUCER   # seam marker present
     assert r["descriptors"]["morph_v6"] is None            # skipped (not free)
     assert r["descriptors"]["thumbnail"] == "thumbs/m_1.jpg"
     # reserved null/empty — demand-driven at Phase 2, NOT filled here
@@ -255,6 +256,66 @@ def test_field_stem_smooth_token_empty():
     stem = store.field_stem(loc, "smooth", 640, 360, 2)
     assert stem.endswith("640x360ss2__smooth")
     assert loc_mod.field_mode_token("smooth") == ""        # smooth token empty (no collision key)
+
+
+# --------------------------------------------------------------------------- #
+# Grayscale morphology transfer — locks the RECOVERED robust-z tanh (K=2) formula.
+# Any drift in MORPH_K / MORPH_MAD_SCALE / the tanh form / the linear box-downsample
+# breaks the 62 curated morph_clip rows' parity (cosine 1.0), so pin it here (GPU-free).
+# --------------------------------------------------------------------------- #
+def _synthetic_field(ss=2):
+    from tools import colormap as cm
+    # 4x4 super-res (ss2 -> 2x2 out); one interior (NaN) pixel, skewed exterior for a real MAD.
+    v = np.array([[0.0, 1.0, 2.0, 3.0],
+                  [1.0, np.nan, 4.0, 2.0],
+                  [2.0, 3.0, 10.0, 1.0],
+                  [0.0, 2.0, 3.0, 4.0]], dtype=np.float64)
+    loc = cm.LocationRef(kind="mandelbrot", cx="0", cy="0", fw="1", maxiter=100)
+    return cm.FieldData(values=v, supersample=ss, location=loc)
+
+
+def test_morph_gray_transfer_robustz():
+    field = _synthetic_field()
+    out = np.asarray(ann.morph_gray_image(field))          # (2,2,3) uint8, RGB-replicated
+
+    # reference: the documented transform, computed independently
+    v = field.values
+    fin = np.isfinite(v)
+    m = np.median(v[fin])
+    mad = np.median(np.abs(v[fin] - m)) * ann.MORPH_MAD_SCALE + 1e-12
+    t = 0.5 * (1.0 + np.tanh((v - m) / (ann.MORPH_K * mad)))
+    t = np.where(fin, t, 0.0)
+    g = t.reshape(2, 2, 2, 2).mean(axis=(1, 3))            # linear ss2 block-mean
+    ref = np.clip(g * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+    assert out.shape == (2, 2, 3)
+    assert np.array_equal(out[..., 0], out[..., 1]) and np.array_equal(out[..., 1], out[..., 2])
+    assert np.array_equal(out[..., 0], ref)                # exact match to the formula
+    # constants are the recovered original (median/MAD tanh, K=2)
+    assert ann.MORPH_K == 2.0 and abs(ann.MORPH_MAD_SCALE - 1.4826) < 1e-9
+
+
+def test_morph_gray_interior_is_black_and_deterministic():
+    field = _synthetic_field()
+    a = np.asarray(ann.morph_gray_image(field))
+    b = np.asarray(ann.morph_gray_image(field))
+    assert np.array_equal(a, b)                            # deterministic
+    # a fully-interior (all-NaN) block downsamples to pure black
+    field2 = _synthetic_field()
+    field2.values[:2, :2] = np.nan
+    out = np.asarray(ann.morph_gray_image(field2))
+    assert out[0, 0, 0] == 0
+
+
+def test_embedding_shard_carries_producer(tmp_path):
+    dim = store.base_morph_dim()
+    shard = store.write_embedding_shard("RUN", 1, ["u0", "u1"],
+                                        np.ones((2, dim), np.float32),
+                                        shards_dir=tmp_path, emb_base=tmp_path / "none.npz",
+                                        producer=ann.MORPH_PRODUCER)
+    z = np.load(shard, allow_pickle=True)
+    assert "morph_producer" in z.files
+    assert list(z["morph_producer"]) == [ann.MORPH_PRODUCER, ann.MORPH_PRODUCER]
 
 
 # --------------------------------------------------------------------------- #

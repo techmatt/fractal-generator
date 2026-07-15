@@ -115,14 +115,16 @@ def base_morph_dim(emb_base: Path = EMB_BASE) -> int:
 
 
 def write_embedding_shard(run_id: str, cycle: int, uids: list[str], clip: np.ndarray,
-                          shards_dir: Path = EMB_SHARDS, emb_base: Path = EMB_BASE) -> Path:
+                          shards_dir: Path = EMB_SHARDS, emb_base: Path = EMB_BASE,
+                          producer: str | None = None) -> Path:
     """Write one cycle's morph embeddings to `<run_id>__cycle_<NNN>.npz`, crash-safely.
 
     Asserts the embedding dim against the base store BEFORE writing (the store's shapes are the
     source of truth — read, don't assume). Writes to a `.tmp` then os.replace's into place, so a
     kill mid-write leaves at most a stray tmp (ignored by the loader) and never a truncated shard.
     Overwriting the same (run_id, cycle) shard is idempotent — a resumed cycle rewrites identical
-    content."""
+    content. `producer` (the grayscale-transfer version tag) is stored per-row so a mixed-producer
+    store is never silent — the seam that the morph-clip parity check pinned down."""
     clip = np.asarray(clip, dtype=np.float32)
     if len(uids) == 0:
         # nothing to persist this cycle; ensure no stale shard lingers
@@ -135,8 +137,11 @@ def write_embedding_shard(run_id: str, cycle: int, uids: list[str], clip: np.nda
     shards_dir.mkdir(parents=True, exist_ok=True)
     final = shards_dir / f"{run_id}__cycle_{cycle:03d}.npz"
     tmp = shards_dir / f".{run_id}__cycle_{cycle:03d}.npz.tmp"
+    arrays = {"morph_uids": np.asarray(uids), "morph_clip": clip}
+    if producer is not None:
+        arrays["morph_producer"] = np.asarray([producer] * len(uids))
     with open(tmp, "wb") as f:
-        np.savez(f, morph_uids=np.asarray(uids), morph_clip=clip)
+        np.savez(f, **arrays)
     os.replace(tmp, final)               # atomic on Windows + POSIX
     return final
 

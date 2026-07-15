@@ -46,7 +46,29 @@ EXE = ROOT / "target" / "release" / "fractal-generator.exe"
 # (tools/curation/colored_clip.py W,H,SS). Smooth base, box downsample, palette OFF.
 W, H, SS = 640, 360, 2
 THUMB_W, THUMB_H = 384, 216
-GRAY_PAL = "__morph_gray__"                             # synthetic palette-off ramp (OKLab black->white)
+
+# Producer/version tag for every morph_clip row (records + shards). The seam marker whose
+# ABSENCE created the mixed-store parity risk (prompts/morph-clip-parity-check.md): a store
+# that mixes producers under a tight eye-calibrated dedup threshold with nothing marking which
+# rows came from which producer. Bump this string on ANY change to the transform below.
+MORPH_PRODUCER = "robustz_tanh_k2_v1"
+
+# --- Canonical grayscale morphology transfer (the ORIGINAL embed.py producer, RECOVERED) ---
+# The reconstructed producer briefly shipped a 0.5/99.5 percentile stretch (transfer='pct')
+# routed through render_candidate's OKLab ramp; that did NOT reproduce the 62 pre-existing
+# curated morph_clip rows (self-cos median 0.915 vs an inter-location p95 of 0.948 — a location
+# failed to match ITSELF across producers). The original was a deterministic robust-z tanh, and
+# the exact form was recovered by a formula sweep against the stored embeddings
+# (scratchpad/morph_parity/): it reproduces all 62 at cosine 1.0000.
+#
+#   z = (v - median) / (1.4826 * MAD)          # MAD = median(|v - median|), super-res exterior
+#   t = 0.5 * (1 + tanh(z / MORPH_K))          # MORPH_K = 2  ("median/MAD tanh, K=2")
+#   gray = t (LINEAR), box-mean downsample by ss, *255; interior (NaN) -> 0 (black)
+#
+# NOT percentile (that scrambles cross-location cosine) and NOT fully-absolute (that washes deep
+# locations dark) — deterministic, non-percentile, contrast-preserving, exactly as specified.
+MORPH_MAD_SCALE = 1.4826       # MAD -> robust sigma
+MORPH_K = 2.0                  # tanh soft-clip at K robust sigma
 
 # Fixed Ushiki phoenix constants (src/v4_cache.rs) — stamped into phoenix identity/render.
 PHOENIX_C = {"re": "0.5667", "im": "0.0"}
@@ -55,30 +77,31 @@ _JULIA_FAMILIES = {"julia", "julia_multibrot3", "julia_multibrot4", "julia_multi
 
 
 # --------------------------------------------------------------------------- #
-# Grayscale morphology render (palette-OFF, via the committed coloring tail).
+# Grayscale morphology render (palette-OFF; the RECOVERED canonical robust-z transfer).
 # --------------------------------------------------------------------------- #
-def gray_library() -> cm.PaletteLibrary:
-    """A normal PaletteLibrary + a synthetic non-cyclic black->white ramp, so the morphology
-    grayscale render routes through the EXACT committed render_candidate tail (percentile
-    stretch -> box downsample -> sRGB) that every colored render uses — palette OFF, nothing
-    reimplemented."""
-    lib = cm.PaletteLibrary()
-    lib.colormaps[GRAY_PAL] = {"name": GRAY_PAL,
-                               "stops": [[0.0, [0, 0, 0]], [1.0, [255, 255, 255]]],
-                               "mirror_needed": False}
-    lib.types[GRAY_PAL] = "non_cyclic"
-    return lib
+def _box_downsample(g: np.ndarray, ss: int) -> np.ndarray:
+    """Linear ss×ss block-mean of a single-channel super-res buffer -> out_size."""
+    h, w = g.shape
+    oh, ow = h // ss, w // ss
+    return g[:oh * ss, :ow * ss].reshape(oh, ss, ow, ss).mean(axis=(1, 3))
 
 
-def morph_gray_image(field, lib) -> Image.Image:
-    """(FieldData) -> 640x360 grayscale PIL RGB via the committed tail (smooth base, box, gamma 1)."""
-    ow, oh = field.out_size
-    cfg = cm.CandidateConfig(
-        palette=GRAY_PAL, location=field.location, eval_width=ow, eval_height=oh,
-        reverse=False, log_premap="none", gamma=1.0, phase=0.0, n_cycles=1,
-        interior_color=(0.0, 0.0, 0.0), filter="box", transfer="pct", transfer_gamma=0.0)
-    rgb = cm.render_candidate(field, cfg, lib)          # (oh, ow, 3) uint8 sRGB
-    return Image.fromarray(rgb)
+def morph_gray_image(field) -> Image.Image:
+    """(FieldData) -> out_size grayscale PIL RGB via the canonical robust-z tanh transfer.
+
+    Palette- and framing-independent, deterministic, non-percentile, contrast-preserving.
+    Reproduces the 62 pre-existing curated morph_clip rows at cosine 1.0 (see MORPH_PRODUCER
+    block above). Median/MAD are taken over the super-res EXTERIOR (finite) pixels; interior
+    (NaN) fills black; the tanh output is downsampled in linear light."""
+    v = field.values                                    # super-res, NaN interior, float64
+    finite = np.isfinite(v)
+    m = np.median(v[finite])
+    mad = np.median(np.abs(v[finite] - m)) * MORPH_MAD_SCALE + 1e-12
+    t = 0.5 * (1.0 + np.tanh((v - m) / (MORPH_K * mad)))
+    t = np.where(finite, t, 0.0)                        # interior -> black
+    g = _box_downsample(t, field.supersample)           # -> (oh, ow) in [0,1]
+    g8 = np.clip(g * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    return Image.fromarray(np.repeat(g8[..., None], 3, axis=2))
 
 
 # --------------------------------------------------------------------------- #
@@ -172,6 +195,7 @@ def build_record(source_oid: str, render: dict, prov: dict, led: dict,
         "descriptors": {
             "npz": "data/library_embeddings/",   # logical uid-addressable store (base + shards)
             "uid": source_oid,
+            "morph_producer": MORPH_PRODUCER,     # seam marker: which grayscale transfer produced morph_clip
             "morph_clip_dim": store.base_morph_dim(),
             "morph_v6": None,                    # SKIPPED: grayscale v6 prelogits not free for fresh locs
             "colored_clip": None,                # RESERVED (Phase-2 demand-driven)
@@ -246,7 +270,6 @@ def annotate(args) -> dict:
     # --- CLIP model (imported byte-identical from colored_clip) ---
     from tools.curation.colored_clip import load_clip, embed_clip
     model, tf = load_clip()
-    lib = gray_library()
 
     records, uids, embs = [], [], []
     for i, row in enumerate(pending):
@@ -259,7 +282,7 @@ def annotate(args) -> dict:
         except RuntimeError as e:
             print(f"  [{i+1}/{len(pending)}] {oid}: field FAILED ({e}); skipping", flush=True)
             continue
-        img = morph_gray_image(field, lib)
+        img = morph_gray_image(field)
         emb = embed_clip(model, tf, [img])[0].astype(np.float32)
         img.resize((THUMB_W, THUMB_H), Image.LANCZOS).convert("L").save(
             thumbs_dir / f"{oid}.jpg", "JPEG", quality=85)
@@ -275,7 +298,8 @@ def annotate(args) -> dict:
         clip = np.stack(embs)
         emb_base = Path(args.emb_base) if args.emb_base else store.EMB_BASE
         shard = store.write_embedding_shard(args.run_id, args.cycle, uids, clip,
-                                            shards_dir=shards_dir, emb_base=emb_base)
+                                            shards_dir=shards_dir, emb_base=emb_base,
+                                            producer=MORPH_PRODUCER)
         written = store.append_records(records, records_path)
         print(f"[annotate] cycle {args.cycle}: +{len(written)} records, "
               f"embedding shard -> {shard.name} ({len(uids)} vecs)", flush=True)
