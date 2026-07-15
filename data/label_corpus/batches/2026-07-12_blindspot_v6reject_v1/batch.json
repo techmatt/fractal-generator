@@ -1,0 +1,50 @@
+{
+ "created": "2026-07-12",
+ "labeler": null,
+ "generator_version": "blindspot_v6reject_v1",
+ "source_run": "generate (flat unbiased draw over box[-2,0.7]x[-1.2,1.2], fw logU[0.003,0.05]) + AcceptBand validity screen (interior<=0.80 & esc_median>=3 & spread>=20), then v6-scored, v6-good dropped, stratified by reject depth.",
+ "purpose": "v6 classifier-coverage blind-spot probe: human-label unbiased \u2227 validity-screened \u2227 v6-REJECT mandelbrot crops to test for false-negative-good outside v6's learned good region. Verdict logic: q3 in near-miss=threshold-calibration lever; q3 in mild/v6-bad=v6 coverage gap (retrain); no q3=recall is throughput-only.",
+ "unbiased": true,
+ "blind": true,
+ "mandelbrot_only": true,
+ "v6_gate": {
+  "model": "data/classifier/v6/model_best.pt",
+  "t_good": 0.24,
+  "strata": {
+   "near-miss": "p_nb>=.5 & 0.12<=p_good<0.24",
+   "mild": "p_nb>=.5 & p_good<0.12",
+   "v6-bad": "p_nb<0.5"
+  }
+ },
+ "n_sampled_per_stratum": {
+  "mild": 100,
+  "near-miss": 19,
+  "v6-bad": 100
+ },
+ "score_recipe": {
+  "note": "sets reject-status + stratum; DIFFERS from label recipe (intended)",
+  "width": 1280,
+  "height": 720,
+  "ss": 1,
+  "maxiter": 2000,
+  "filter": "lanczos3",
+  "palette_source": "data/palettes/clean_colormaps.json",
+  "palette_dist": "corpus mandelbrot empirical (corpus_palettes.json)"
+ },
+ "render_defaults": {
+  "width": 1280,
+  "height": 720,
+  "ss": 4,
+  "maxiter": 8000,
+  "filter": "lanczos3",
+  "composition": "center",
+  "interior_mode": "black",
+  "jpg_quality": 90
+ },
+ "render_recipe": {
+  "path": "render-one --palette --colormaps",
+  "palette_source": "data/palettes/clean_colormaps.json",
+  "jpg_quality": 90
+ },
+ "probe_manifest": "probe_manifest.jsonl (image_id -> stratum + v6 p_notbad/p_good; NOT in images.jsonl provenance \u2014 never shown to labeler)"
+}
