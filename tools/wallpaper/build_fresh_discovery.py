@@ -191,18 +191,21 @@ def _spatially_in(loc, corpus_coords):
     return False
 
 
-def select_sources(seed, count):
+def select_sources(seed, count, head_exclude=True):
     """Unseen machine-q3 locations (all families), family-balanced round-robin to `count`.
 
     Filter: scorer_version=="v6" ∧ decoded_class==3 ∧ guard_pass (ALL families).
-    Exclude: any location in the head corpus (exact key OR same-family spatial proximity).
-    Dedup: within-set by key. Returns (sources, report) where each source is
-    {loc, key, family, oid, p_good}."""
-    excl_keys, excl_coords = _head_corpus_exclusion()
+    Exclude: any location in the head corpus (exact key OR same-family spatial proximity) —
+      UNLESS `head_exclude=False` (the Phase-1 library loop, which pools every fresh q3 and
+      dedups against the library STORE downstream, not against the wallpaper head's corpus).
+    Dedup: within-set by key (a true coordinate-duplicate; counted as within_set_dups_dropped).
+    Returns (sources, report) where each source is {loc, key, family, oid, p_good}."""
+    excl_keys, excl_coords = _head_corpus_exclusion() if head_exclude else (set(), defaultdict(list))
 
     per_fam = defaultdict(list)   # ledger_family -> [source dict]
     seen = set()
     n_raw = 0
+    n_unrenderable = 0
     n_excl_key = n_excl_spatial = n_dup = 0
     ledger_lines = DISCOVERY_LEDGER.read_text(encoding="utf-8").splitlines()[LEDGER_START_LINE:]
     for line in ledger_lines:
@@ -214,6 +217,10 @@ def select_sources(seed, count):
             continue
         tl = _to_location(d)
         if tl is None:
+            # v6/class-3/guard-pass but not renderable (e.g. a julia row missing its z-plane
+            # viewport). Counted so the Phase-1 reconciliation can see it as a real (non-dup)
+            # drop rather than a silent leak.
+            n_unrenderable += 1
             continue
         fam, loc = tl
         n_raw += 1
@@ -248,7 +255,9 @@ def select_sources(seed, count):
         "source_ledger": str(DISCOVERY_LEDGER.relative_to(ROOT)),
         "ledger_start_line": LEDGER_START_LINE,
         "filter": "scorer_version==v6 & decoded_class==3 & guard_pass (all families)",
+        "head_exclude": head_exclude,
         "raw_matches": n_raw,
+        "unrenderable_dropped": n_unrenderable,
         "within_set_dups_dropped": n_dup,
         "excluded_head_corpus_by_key": n_excl_key,
         "excluded_head_corpus_by_proximity": n_excl_spatial,
@@ -362,6 +371,9 @@ def write_batch(rows, report, wall_s, args):
         "n_rows": len(rows), "wall_seconds": wall_s,
     }
     (batch_dir / "batch.json").write_text(json.dumps(batch, indent=2))
+    # Standalone machine-readable selection report — the Phase-1 orchestrator reads this to
+    # reconcile fresh-q3-found vs pooled (within_set_dups / unrenderable / head-exclusion counts).
+    (batch_dir / "selection_report.json").write_text(json.dumps(report, indent=2))
     return batch_dir
 
 
@@ -395,6 +407,16 @@ def main():
                          "contains ONLY that run — the accumulated default sweeps in every "
                          "historical v6 q3 (jm3/4/5 revival, julia_recall, prior runs).")
     ap.add_argument("--count", type=int, default=PILOT_COUNT, help="pilot location count")
+    ap.add_argument("--pool-all", action="store_true",
+                    help="Phase-1 library loop: pool EVERY eligible fresh q3 (ignore --count). The "
+                         "emit pipeline is volume-bound so a count cap is correct there; the "
+                         "prospect/library loop is NOT, and a cap here would silently discard the "
+                         "very q3s the loop exists to keep. Selection never decides which "
+                         "locations survive — only a true coordinate-duplicate does (downstream).")
+    ap.add_argument("--no-head-exclude", action="store_true",
+                    help="Phase-1 library loop: do NOT exclude the wallpaper head's corpus. The "
+                         "library dedups against its OWN store (library_annotate, coordinate-based) "
+                         "— the head corpus is irrelevant to it. Emit keeps head exclusion (default).")
     ap.add_argument("--pool-k", type=int, default=K,
                     help="beam->selector handoff / emission pool depth (deployed default 12)")
     ap.add_argument("--limit", type=int, default=0, help="cap locations actually run (smoke)")
@@ -430,8 +452,11 @@ def main():
         except (AttributeError, ValueError):
             pass
 
-    sources, report = select_sources(args.seed, args.count)
-    _print_composition(report, args.count)
+    # Phase-1 library loop pools EVERY eligible fresh q3 (--pool-all) and defers dedup to the
+    # library store (--no-head-exclude); emit keeps the count cap + head exclusion.
+    sel_count = 10**9 if args.pool_all else args.count
+    sources, report = select_sources(args.seed, sel_count, head_exclude=not args.no_head_exclude)
+    _print_composition(report, "ALL" if args.pool_all else sel_count)
 
     per_loc_recolors = SL.N_GEN0 + SL.R_MAX * SL.TOP_KEEP * SL.K_VARIANTS
     print(f"\n[fresh] est per-location: 1 eval-field dump (ss2) + <= {per_loc_recolors} beam "

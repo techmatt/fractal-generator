@@ -1059,6 +1059,7 @@ def _run(args, fam: FamilyResolved):
 
     totals = {"proposed": 0, "probe_rejected": 0, "walked": 0,
               "harvested_distinct": 0, "q3_dup": 0, "not_q3": 0, "guarded": 0,
+              "julia_parent_qualified": 0,
               "julia_descents": 0, "julia_walks": 0, "julia_q3": 0, "julia_distinct": 0}
     distinct_tiles, dup_tiles = [], []
     batch_timings = []
@@ -1185,6 +1186,12 @@ def _run(args, fam: FamilyResolved):
                 # shows real structure — >=2 raw frames decode q2+ OR >=1 raw frame decodes
                 # q3 (the q3 clause rescues a single-spike walk). No reframing / new renders.
                 qualifies = rew["n_frames_q2plus"] >= 2 or rew["n_frames_q3"] >= 1
+                if qualifies:
+                    # Parent SUPPLY to the hook (counted before the density gate): the c-plane
+                    # descent's product that matters for the julia twin. The budget-rebalance
+                    # watch metric — if this drops near julia_descents, the c-plane budget is too
+                    # tight and the twins are being starved.
+                    totals["julia_parent_qualified"] += 1
                 jc = (rew["outcome_cx"], rew["outcome_cy"])   # the parameter c (cloud coord)
                 jc_fw = rew["outcome_fw"]                      # parent plane fw = dedup scale
                 # Density pre-check: skip a c already saturated with Julia found-points.
@@ -1319,11 +1326,26 @@ def _run(args, fam: FamilyResolved):
     if julia_hook:
         summary["julia"] = {
             "partition": julia_part, "render_family": julia_render_family,
+            "parent_qualified": totals["julia_parent_qualified"],   # parent SUPPLY to the hook
             "descents": totals["julia_descents"], "walks": totals["julia_walks"],
             "q3": totals["julia_q3"], "distinct_added": julia_added_this_run,
             "cloud_size": len(julia_cloud),
         }
+    # Per-family base/twin/parent rollup for the discovery-budget rebalance (Part 2): base c-plane
+    # q3 vs julia-twin q3 vs the c-plane descents + qualifying parents that produced them. Lets a
+    # night's run answer "did cutting the c-plane budget starve the hooks?" from logs alone.
+    summary["rebalance"] = {
+        "cplane_descents": totals["walked"],
+        "qualifying_parents": totals["julia_parent_qualified"],
+        "hook_descents": totals["julia_descents"],
+        "fresh_q3_base": totals["harvested_distinct"],
+        "fresh_q3_twin": totals["julia_distinct"],
+    }
     _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
+    if getattr(args, "summary_out", None):
+        # mirror the summary to a caller-specified path so an orchestrator reads this family's
+        # per-run rebalance metrics without guessing the timestamped run dir.
+        _atomic_write_text(Path(args.summary_out), json.dumps(summary, indent=2))
     sheet = build_contact_sheet(
         distinct_tiles, dup_tiles, _sheet_path(run_ts),
         f"production seeder {run_ts} — {len(distinct_tiles)} new q3 (green) + "
@@ -1942,6 +1964,11 @@ def main():
     ap.add_argument("--seed", type=int, default=0, help="rng + engine seed")
     ap.add_argument("--batch", type=int, default=0, help="seeds per batch (0 = default)")
     ap.add_argument("--budget", type=float, default=None, help="wallclock budget minutes override")
+    ap.add_argument("--summary-out", type=Path, default=None,
+                    help="also write this run's summary.json to this path (a stable, caller-chosen "
+                         "location) so an orchestrator can read the per-family rebalance metrics "
+                         "(base/twin q3, c-plane descents, qualifying parents) without locating the "
+                         "timestamped run dir.")
     ap.add_argument("--discovery-dir", type=Path, default=None,
                     help="redirect the durable discovery store (outcome_ledger.jsonl, "
                          "outcome_feats.npz, probe_rejects.jsonl, runs/) to this dir instead of "

@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 from tools import colormap as cm                       # noqa: E402
 from tools.corpus import location as loc_mod           # noqa: E402
 from tools.wallpaper import library_store as store     # noqa: E402
+from tools.wallpaper import library_dedup as dedup     # noqa: E402
 
 EXE = ROOT / "target" / "release" / "fractal-generator.exe"
 
@@ -59,7 +60,7 @@ MORPH_PRODUCER = "robustz_tanh_k2_v1"
 # curated morph_clip rows (self-cos median 0.915 vs an inter-location p95 of 0.948 — a location
 # failed to match ITSELF across producers). The original was a deterministic robust-z tanh, and
 # the exact form was recovered by a formula sweep against the stored embeddings
-# (scratchpad/morph_parity/): it reproduces all 62 at cosine 1.0000.
+# (see docs/findings/morph_parity.md): it reproduces all 62 at cosine 1.0000.
 #
 #   z = (v - median) / (1.4826 * MAD)          # MAD = median(|v - median|), super-res exterior
 #   t = 0.5 * (1 + tanh(z / MORPH_K))          # MORPH_K = 2  ("median/MAD tanh, K=2")
@@ -242,29 +243,52 @@ def unique_locations(pool_images: Path) -> list[dict]:
     return out
 
 
+def _write_report(pool_dir: Path, cycle: int, **counts) -> None:
+    """Machine-readable reconciliation report the orchestrator reads to prove, per cycle, that
+    q3_found == records_written + dropped_coord_dup + dropped_other (with dropped_other == 0)."""
+    rep = {"cycle": cycle, **counts}
+    (pool_dir / "annotate_report.json").write_text(json.dumps(rep, indent=2), encoding="utf-8")
+
+
 def annotate(args) -> dict:
-    pool_images = Path(args.pool) / "images.jsonl"
+    pool_dir = Path(args.pool)
+    pool_images = pool_dir / "images.jsonl"
     if not pool_images.exists():
         raise SystemExit(f"pool images.jsonl not found: {pool_images}")
     ledger = Path(args.ledger)
     led = load_ledger(ledger)
     rows = unique_locations(pool_images)
 
-    # skip locations already in the store (resume idempotence) BEFORE any GPU/render work
-    have = store.existing_location_ids(Path(args.records) if args.records else store.RECORDS_PATH)
-    pending = [r for r in rows
-               if (r["provenance"]["source_oid"] not in have)]
-    print(f"[annotate] cycle {args.cycle}: {len(rows)} unique locations in pool, "
-          f"{len(pending)} new (after dedup vs store)", flush=True)
-
     records_path = Path(args.records) if args.records else store.RECORDS_PATH
     thumbs_dir = Path(args.thumbs) if args.thumbs else store.THUMBS_DIR
     thumbs_dir.mkdir(parents=True, exist_ok=True)
     tmp_field_dir = ROOT / "out" / "prospect" / "_field_tmp"
     field_cache_root = Path(args.field_cache_dir) if args.field_cache_dir else store.FIELD_CACHE_DIR
-
     shards_dir = Path(args.emb_shards) if args.emb_shards else store.EMB_SHARDS
+
+    # --- dedup BEFORE any GPU/render work ---
+    # The ONE legitimate drop in Phase 1: a true coordinate-duplicate of a record already in the
+    # store (identity-aware — julia matches on viewport AND c; phoenix is scale-aware on the
+    # z-plane). Also drop within-batch coord collisions (two fresh q3 at the same spot this cycle)
+    # and exact location_id re-appearances (resume idempotence). Everything else is pooled.
+    have = store.existing_location_ids(records_path)
+    store_index = dedup.StoreIndex.from_records(records_path)
+    pending, dropped_coord_dup = [], 0
+    for r in rows:
+        oid = r["provenance"]["source_oid"]
+        loc = render_location(r["render"])
+        if oid in have or store_index.is_location_dup(loc):
+            dropped_coord_dup += 1
+            continue
+        store_index.add_location(loc)     # within-batch: later dups at this spot collapse here
+        pending.append((r, loc))
+    print(f"[annotate] cycle {args.cycle}: {len(rows)} unique locations in pool, "
+          f"{len(pending)} new, {dropped_coord_dup} coord-dup of store/batch", flush=True)
+
     if not pending:
+        _write_report(pool_dir, args.cycle, pool_unique_locations=len(rows),
+                      dropped_coord_dup=dropped_coord_dup, dropped_field_fail=0,
+                      records_written=0)
         return store.store_summary(records_path, thumbs_dir, shards_dir=shards_dir)
 
     # --- CLIP model (imported byte-identical from colored_clip) ---
@@ -272,15 +296,19 @@ def annotate(args) -> dict:
     model, tf = load_clip()
 
     records, uids, embs = [], [], []
-    for i, row in enumerate(pending):
+    dropped_field_fail = 0
+    for i, (row, loc) in enumerate(pending):
         prov, render = row["provenance"], row["render"]
         oid = prov["source_oid"]
-        loc = render_location(render)
         try:
             field = ensure_field(loc, retain=args.retain_fields, tmp_dir=tmp_field_dir,
                                  cache_root=field_cache_root)
         except RuntimeError as e:
-            print(f"  [{i+1}/{len(pending)}] {oid}: field FAILED ({e}); skipping", flush=True)
+            # A q3 whose field cannot render is a genuine leak, NOT a dup — surfaced as
+            # dropped_field_fail so the orchestrator's reconciliation (dropped_other==0) fails
+            # loudly rather than silently losing the location.
+            print(f"  [{i+1}/{len(pending)}] {oid}: field FAILED ({e}); LEAK", flush=True)
+            dropped_field_fail += 1
             continue
         img = morph_gray_image(field)
         emb = embed_clip(model, tf, [img])[0].astype(np.float32)
@@ -294,6 +322,7 @@ def annotate(args) -> dict:
             print(f"  [{i+1}/{len(pending)}] embedded+thumbed", flush=True)
 
     # --- persist: embedding shard FIRST (atomic), then records (dedup append) ---
+    written = []
     if uids:
         clip = np.stack(embs)
         emb_base = Path(args.emb_base) if args.emb_base else store.EMB_BASE
@@ -303,6 +332,10 @@ def annotate(args) -> dict:
         written = store.append_records(records, records_path)
         print(f"[annotate] cycle {args.cycle}: +{len(written)} records, "
               f"embedding shard -> {shard.name} ({len(uids)} vecs)", flush=True)
+
+    _write_report(pool_dir, args.cycle, pool_unique_locations=len(rows),
+                  dropped_coord_dup=dropped_coord_dup, dropped_field_fail=dropped_field_fail,
+                  records_written=len(written))
 
     # --- LRU-evict retained fields under the cap ---
     if args.retain_fields:
