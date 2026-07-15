@@ -141,6 +141,11 @@ PROBE_REJECTS = DISCOVERY_DIR / "probe_rejects.jsonl"
 RUNS_DIR = DISCOVERY_DIR / "runs"
 # disposable render scratch (never data/): native run, probe pools, walk pools, reward tiles
 SCRATCH_ROOT = ROOT / "out" / "atlas" / "production_seeder"
+# contact-sheet review PNGs are disposable render VIEWS -> out/ (a sibling of the per-run
+# scratch dirs, so _purge_run_scratch never touches it), NEVER data/. data/ is the
+# never-delete tier reserved for the unregenerable (ledgers + feats); a render view there
+# erodes that distinction. The sheet is a pure function of the durable ledger + tiles.
+SHEETS_DIR = SCRATCH_ROOT / "sheets"
 
 # --- Gather mode (--gather): the guard-OFF oversampling harvest for the v6 label pass.
 # A SEPARATE durable subtree per class, so guard-off rows NEVER pollute the production
@@ -936,7 +941,8 @@ def build_contact_sheet(distinct_tiles, dup_tiles, out_png: Path, title: str):
 # reframe rungs, native walk pools, field bins) is the overnight loop's dominant
 # disk sink — GBs per run, hundreds of runs/night, ~130GB accumulated. It is pure
 # scoring intermediate: the durable outputs (outcome_ledger + feats npz, and the
-# run's summary/telemetry/contact_sheet under RUNS_DIR in data/) never live here,
+# run's summary/telemetry under RUNS_DIR in data/; the contact_sheet is a disposable
+# render view under SHEETS_DIR in out/) never live here,
 # and the pool builder + emitter read only the ledger, so nothing downstream needs
 # it once the run process has scored its walks. Purge it on clean exit.
 _SCRATCH_KEEP = ("outcome_tiles",)   # tiny per-outcome jpgs; only --finalize (manual,
@@ -965,6 +971,13 @@ def _purge_run_scratch(scratch: Path, keep: tuple[str, ...] = _SCRATCH_KEEP):
             print(f"  scratch purge: could not remove {child.name}: {e}")
     print(f"  scratch purged: freed ~{freed/2**30:.2f} GiB of transient render dirs "
           f"under {scratch} (kept {list(keep)})")
+
+
+def _sheet_path(run_ts: str) -> Path:
+    """Disposable contact-sheet path under SHEETS_DIR (out/), keyed by run_ts. Rebuilt on
+    demand by `_finalize` from the durable ledger + tiles, so it never belongs in data/."""
+    SHEETS_DIR.mkdir(parents=True, exist_ok=True)
+    return SHEETS_DIR / f"{run_ts}.png"
 
 
 def _run(args, fam: FamilyResolved):
@@ -1312,7 +1325,7 @@ def _run(args, fam: FamilyResolved):
         }
     _atomic_write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
     sheet = build_contact_sheet(
-        distinct_tiles, dup_tiles, run_dir / "contact_sheet.png",
+        distinct_tiles, dup_tiles, _sheet_path(run_ts),
         f"production seeder {run_ts} — {len(distinct_tiles)} new q3 (green) + "
         f"dup/non-q3/guarded (yellow)")
 
@@ -1877,7 +1890,7 @@ def _finalize(run_ts: str):
     dtiles = [(tiles_dir / f"{r['id']}.jpg", f"{r['id'][-6:]} k3={r['k3']:.2f} q3")
               for r in sorted(distinct, key=lambda r: -r["k3"])]
     utiles = [(tiles_dir / f"{r['id']}.jpg", f"k3={r['k3']:.2f}->dup") for r in dup[:NCOL_DUP]]
-    sheet = build_contact_sheet(dtiles, utiles, run_dir / "contact_sheet.png",
+    sheet = build_contact_sheet(dtiles, utiles, _sheet_path(run_ts),
                                 f"production seeder {run_ts} (finalized) — {len(distinct)} new q3 "
                                 f"(green) + dup/non-q3/guarded (yellow)")
     print(f"finalized run {run_ts}: {len(distinct)} new q3 / {len(dup)} other  "
