@@ -109,7 +109,9 @@ def emit_location(loc_id, r, palettes, fam_of, angle_of, plan_rows, cm_rows,
         emit(pal, 1.0, "center", ss=4)
 
 
-def main() -> None:
+def _load_recipe_inputs():
+    """(palettes, fam_of, angle_of, rows) — the shared front matter of main() and
+    the parity gate, recomputed from the committed roster + on-disk unified manifest."""
     roster = json.loads(ROSTER.read_text(encoding="utf-8"))
     palettes = [r["name"] for r in roster]
     fam_of = {r["name"]: r["palette_family"] for r in roster}
@@ -122,18 +124,26 @@ def main() -> None:
             angle_of[(pal, sc)] = 2.0 * math.pi * (pi * len(SCALES) + si) / n_combo
 
     rows = [json.loads(l) for l in MANIFEST.read_text().splitlines() if l.strip()]
+    return palettes, fam_of, angle_of, rows
+
+
+def verify_recipe_parity() -> int:
+    """RECIPE-PARITY GATE: regenerate the FROZEN v5 cache rows (Mandelbrot 0..3621 +
+    J0 Julia 3622..4621) from the committed recipe and assert they are byte-identical to
+    data/v5/cache_manifest.jsonl. Returns the matched row count; raises AssertionError on
+    any drift. Pure check — writes nothing — so `tools/v6/test_recipe_parity.py` can run
+    it in CI instead of it only firing when someone manually runs build_plan.py.
+
+    V4_CACHE_DIR / V5_JULIA_CACHE_DIR are load-bearing, not superseded repro: this gate
+    asserts the frozen Mandelbrot + J0 Julia JPGs are byte-identical to the recipe, and
+    the unified cache manifest reuses them VERBATIM for the v6 train. Deleting those cache
+    dirs breaks every location-classifier build (.audit-keep sentinel'd).
+    """
+    palettes, fam_of, angle_of, rows = _load_recipe_inputs()
     frozen = [(i, r) for i, r in enumerate(rows) if i < N_V5]
-    gather = [(i, r) for i, r in enumerate(rows) if i >= N_V5]
-    print(f"unified v6 manifest: {len(rows)} locations "
-          f"(frozen v5 {len(frozen)}, gather_v6 {len(gather)})")
     assert len(frozen) == N_V5, f"frozen prefix drift: {len(frozen)} != {N_V5}"
 
-    # ---- RECIPE-PARITY GATE: regenerate frozen v5 cm rows, assert == v5 cache ----
     frozen_cm = []
-    # V4_CACHE_DIR / V5_JULIA_CACHE_DIR are load-bearing, not superseded repro: this gate
-    # asserts the frozen Mandelbrot + J0 Julia JPGs are byte-identical to the recipe, and
-    # the unified cache manifest reuses them VERBATIM for the v6 train. Deleting those cache
-    # dirs breaks every location-classifier build (.audit-keep sentinel'd).
     for loc_id, r in frozen:
         cache_dir = V4_CACHE_DIR if loc_id < N_MANDEL else V5_JULIA_CACHE_DIR
         emit_location(loc_id, r, palettes, fam_of, angle_of, [], frozen_cm,
@@ -148,7 +158,20 @@ def main() -> None:
         assert abs(a["shift_dx"] - b["shift_dx"]) < 1e-12 \
             and abs(a["shift_dy"] - b["shift_dy"]) < 1e-12, \
             f"recipe drift: shift offset at loc {a['location_id']}"
-    print(f"RECIPE-PARITY GATE PASS: {len(frozen_cm)} frozen v5 cache rows byte-match v5")
+    return len(frozen_cm)
+
+
+def main() -> None:
+    palettes, fam_of, angle_of, rows = _load_recipe_inputs()
+    frozen = [(i, r) for i, r in enumerate(rows) if i < N_V5]
+    gather = [(i, r) for i, r in enumerate(rows) if i >= N_V5]
+    print(f"unified v6 manifest: {len(rows)} locations "
+          f"(frozen v5 {len(frozen)}, gather_v6 {len(gather)})")
+    assert len(frozen) == N_V5, f"frozen prefix drift: {len(frozen)} != {N_V5}"
+
+    # ---- RECIPE-PARITY GATE (extracted → tools/v6/test_recipe_parity.py) ----
+    n_frozen = verify_recipe_parity()
+    print(f"RECIPE-PARITY GATE PASS: {n_frozen} frozen v5 cache rows byte-match v5")
 
     # ---- emit gather plan + gather cache rows ----
     plan_rows, gather_cm = [], []
@@ -170,8 +193,8 @@ def main() -> None:
 
     print(f"\ngather renders to build : {len(plan_rows)}  ({len(gather)} loc x 42)")
     assert len(plan_rows) == len(gather) * 42
-    print(f"unified cache rows      : {len(v5_cm) + len(gather_cm)}  "
-          f"(frozen v5 {len(v5_cm)} reused + gather {len(gather_cm)} new)")
+    print(f"unified cache rows      : {n_frozen + len(gather_cm)}  "
+          f"(frozen v5 {n_frozen} reused + gather {len(gather_cm)} new)")
     print(f"wrote {PLAN_OUT}")
     print(f"wrote {CACHE_MANIFEST_OUT}")
     # per-family plan breakdown + ss split for ETA

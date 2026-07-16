@@ -49,9 +49,32 @@ def check(name: str, mirror: bool):
     ru = rust_lut(stops, mirror)
     d = np.abs(py - ru).max()
     cls = BY_NAME[name]["cycle"]
-    print(f"  {name:18s} cycle={cls:11s} mirror={mirror!s:5s}  max|Δ| = {d:.3e}  "
+    print(f"  {name:18s} cycle={cls:11s} mirror={mirror!s:5s}  max|d| = {d:.3e}  "
           f"{'BYTE-MATCH' if d < 1e-12 else 'MISMATCH' if d > 1e-9 else 'near'}")
     return d
+
+
+def cases() -> list[tuple[str, bool]]:
+    """The (map-name, mirror) cases the byte-match covers. Shared by the standalone
+    CLI and the pytest gate (`test_bytematch.py`) so both check the identical set."""
+    # cyclic map: mirror OFF must remain matched (and unchanged by this prompt)
+    cyc = next(e["name"] for e in CMAPS if e["cycle"] == "cyclic")
+    seq = next(e["name"] for e in CMAPS if e["mirror_needed"])
+    cs = [
+        (cyc, False),        # cyclic, no mirror — the settled path
+        (seq, False),        # sequential, no mirror — baseline match
+        (seq, True),         # sequential, mirrored — the selective pre-mirror path
+        ("magma", True),
+    ]
+    if "viridis" in BY_NAME:
+        cs.append(("viridis", True))
+    return cs
+
+
+def run() -> float:
+    """Run every case; return the worst max|Δ| (Rust bake ↔ Python bake). Prints a
+    per-case line as a side effect. `< 1e-12` is the byte-match acceptance bar."""
+    return max(check(name, mirror) for name, mirror in cases())
 
 
 def main():
@@ -60,18 +83,8 @@ def main():
     except Exception:
         pass
     print("Rust<->Python bake byte-match (linear-RGB LUT, LUT_SIZE=%d):" % LUT_SIZE)
-    # cyclic map: mirror OFF must remain matched (and unchanged by this prompt)
-    cyc = next(e["name"] for e in CMAPS if e["cycle"] == "cyclic")
-    seq = next(e["name"] for e in CMAPS if e["mirror_needed"])
-    ds = [
-        check(cyc, False),
-        check(seq, False),   # sequential, no mirror — baseline match
-        check(seq, True),    # sequential, mirrored — the new selective path
-        check("magma", True),
-        check("viridis", True) if "viridis" in BY_NAME else None,
-    ]
-    worst = max(d for d in ds if d is not None)
-    print(f"\nworst max|Δ| across cases: {worst:.3e}  "
+    worst = run()
+    print(f"\nworst max|d| across cases: {worst:.3e}  "
           f"({'PASS' if worst < 1e-12 else 'CHECK'})")
 
 

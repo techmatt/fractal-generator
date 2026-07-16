@@ -98,7 +98,9 @@ def emit_location(loc_id, r, palettes, fam_of, angle_of, plan_rows, cm_rows,
         emit(pal, 1.0, "center", ss=4)
 
 
-def main() -> None:
+def _load_recipe_inputs():
+    """(palettes, fam_of, angle_of, rows) — the shared front matter of main() and
+    the parity gate, recomputed from the committed roster + on-disk unified manifest."""
     roster = json.loads(ROSTER.read_text(encoding="utf-8"))
     palettes = [r["name"] for r in roster]
     fam_of = {r["name"]: r["palette_family"] for r in roster}
@@ -111,16 +113,25 @@ def main() -> None:
             angle_of[(pal, sc)] = 2.0 * math.pi * (pi * len(SCALES) + si) / n_combo
 
     rows = [json.loads(l) for l in MANIFEST.read_text().splitlines() if l.strip()]
-    mand = [(i, r) for i, r in enumerate(rows) if r.get("fractal_type") != "julia"]
-    julia = [(i, r) for i, r in enumerate(rows) if r.get("fractal_type") == "julia"]
-    print(f"unified manifest: {len(rows)} locations (mandelbrot {len(mand)}, julia {len(julia)})")
+    return palettes, fam_of, angle_of, rows
 
-    # ---- RECIPE-PARITY GATE: regenerate Mandelbrot cm rows, assert == v4 ----
+
+def verify_recipe_parity() -> int:
+    """RECIPE-PARITY GATE: regenerate the Mandelbrot cache rows from the committed
+    recipe and assert they are byte-identical to data/v4/cache_manifest.jsonl. Returns
+    the matched row count; raises AssertionError on any drift. Pure check — writes
+    nothing — so `tools/v5/test_recipe_parity.py` can run it in CI instead of it only
+    firing when someone manually runs build_plan.py.
+
+    V4_CACHE_DIR is load-bearing, not superseded-v4 repro: this gate asserts the frozen
+    Mandelbrot JPGs under data/v4/aug_cache are byte-identical to the recipe, and the
+    unified cache manifest reuses them VERBATIM for every v5/v6 train. Deleting
+    data/v4/aug_cache breaks every location-classifier build (.audit-keep sentinel'd).
+    """
+    palettes, fam_of, angle_of, rows = _load_recipe_inputs()
+    mand = [(i, r) for i, r in enumerate(rows) if r.get("fractal_type") != "julia"]
+
     mand_cm = []
-    # V4_CACHE_DIR is load-bearing, not superseded-v4 repro: this gate asserts the
-    # frozen Mandelbrot JPGs under data/v4/aug_cache are byte-identical to the recipe,
-    # and the unified cache manifest reuses them VERBATIM for every v5/v6 train. Deleting
-    # data/v4/aug_cache breaks every location-classifier build (.audit-keep sentinel'd).
     for loc_id, r in mand:
         assert loc_id < 3622, "Mandelbrot rows must occupy loc_ids 0..3621 (v4 cache order)"
         emit_location(loc_id, r, palettes, fam_of, angle_of, [], mand_cm,
@@ -136,7 +147,18 @@ def main() -> None:
         assert abs(a["shift_dx"] - b["shift_dx"]) < 1e-12 \
             and abs(a["shift_dy"] - b["shift_dy"]) < 1e-12, \
             f"recipe drift: shift offset at loc {a['location_id']}"
-    print(f"RECIPE-PARITY GATE PASS: {len(mand_cm)} Mandelbrot cache rows byte-match v4")
+    return len(mand_cm)
+
+
+def main() -> None:
+    palettes, fam_of, angle_of, rows = _load_recipe_inputs()
+    mand = [(i, r) for i, r in enumerate(rows) if r.get("fractal_type") != "julia"]
+    julia = [(i, r) for i, r in enumerate(rows) if r.get("fractal_type") == "julia"]
+    print(f"unified manifest: {len(rows)} locations (mandelbrot {len(mand)}, julia {len(julia)})")
+
+    # ---- RECIPE-PARITY GATE (extracted → tools/v5/test_recipe_parity.py) ----
+    n_mand = verify_recipe_parity()
+    print(f"RECIPE-PARITY GATE PASS: {n_mand} Mandelbrot cache rows byte-match v4")
 
     # ---- emit Julia plan + Julia cache rows ----
     plan_rows, julia_cm = [], []
@@ -158,8 +180,8 @@ def main() -> None:
 
     print(f"\nJulia renders to build : {len(plan_rows)}  ({len(julia)} loc x 42)")
     assert len(plan_rows) == len(julia) * 42
-    print(f"unified cache rows     : {len(v4_cm) + len(julia_cm)}  "
-          f"(mandelbrot {len(v4_cm)} reused + julia {len(julia_cm)} new)")
+    print(f"unified cache rows     : {n_mand + len(julia_cm)}  "
+          f"(mandelbrot {n_mand} reused + julia {len(julia_cm)} new)")
     print(f"wrote {PLAN_OUT}")
     print(f"wrote {CACHE_MANIFEST_OUT}")
     # ss split for ETA
