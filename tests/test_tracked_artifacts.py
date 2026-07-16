@@ -1,11 +1,26 @@
-"""Canary: irreplaceable human-authored artifacts MUST stay git-tracked.
+"""Canary: irreplaceable artifacts MUST stay git-tracked.
 
 Every path below satisfies two conjuncts:
 
-  1. human-authored judgment  — a person sat and made a decision (a label, a
-     hand-picked fixture) that no code can reproduce; and
-  2. no regeneration path     — there is no script that rebuilds it from
-     committed inputs.
+  1. unregenerable            — there is no script that rebuilds it from
+     committed inputs (or the only "rebuild" is value-approximate under a
+     verdict-sensitive threshold, which is not a rebuild); and
+  2. tracked                  — it is currently in the git index, so the canary
+     has something to assert about.
+
+Earlier revisions scoped conjunct 1 to *human-authored* judgment. That was a
+proxy: what actually makes a file irreplaceable is that nothing reproduces it,
+not who authored it. Human labels qualify because a person's judgment has no
+regen path — but so do a handful of MACHINE-authored artifacts whose producer
+is gone or whose output is only value-approximate on re-run (the CLIP library
+embeddings, the one committed v5 weight). The old criterion silently dropped
+that whole tier, so the list now keys on unregenerability directly.
+
+The project's own line is that *regenerable at compute cost* does NOT qualify —
+discovery ledgers, GPU eval records, and every classifier weight except the v5
+rollback anchor rebuild deterministically-enough from committed inputs. The
+canary's value is that every entry is a deliberate opt-in; a canary guarding
+everything is one nobody maintains.
 
 Such a file is uniquely fragile: nothing *breaks* when it stops being tracked
 (a `.gitignore` edit that widens a rule, an `rm` in the wrong tree), so the loss
@@ -30,18 +45,24 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Irreplaceable, human-authored artifacts (human judgment ∧ no regeneration path).
+# Unregenerable ∧ tracked artifacts (no rebuild path ∧ currently in the index).
 #
 # Deliberately excluded, and why:
 #   - batch.json / probe_manifest.jsonl / schema docs — machine-emitted run
-#     provenance or hand-written spec text (re-writable), not label data.
+#     provenance or hand-written spec text, re-writable from committed inputs.
 #   - jm3 / jm45 label-corpus batches — carry ZERO committed human labels in any
-#     file yet (unlabeled); their images.jsonl is a machine coord record only, so
-#     it fails conjunct 1. Add them here the moment they are labeled.
+#     file yet (unlabeled); their images.jsonl is a machine coord record that the
+#     `present`/`render-one` path reproduces, so it is regenerable. Add them here
+#     the moment they carry labels.
 #   - wallpaper_corpus/*/images.jsonl — all label blocks are null; "humanq3"
 #     names human-*seeded* generation, not committed human labels.
-#   - GPU eval records (queries/sampler_eval), discovery ledgers, classifier
-#     weights — irreplaceable but MACHINE-authored, so outside conjunct 1.
+#   - GPU eval records (queries/sampler_eval), discovery ledgers, and every
+#     classifier weight EXCEPT the v5 rollback anchor below — regenerable at
+#     compute cost from committed inputs, which is the project's own line.
+#   - atlas round embeds (data/atlas/round{1,2}/*_embed.npz) and discovery
+#     outcome_feats.npz — machine features with committed producers; regenerable
+#     at compute cost. (Called out because "unregenerable" could be read to sweep
+#     them in — they stay out. If any lacks a live producer, promote it.)
 TRACKED_CANARIES = [
     # Hand-picked reference fixtures (the test locations + palette selection).
     "data/test_renders.json",
@@ -74,6 +95,16 @@ TRACKED_CANARIES = [
     "data/label_corpus/batches/julia_ladder_j0/images.jsonl",
     # blindspot: labels live ONLY in images.jsonl (no scores.json exists).
     "data/label_corpus/batches/2026-07-12_blindspot_v6reject_v1/images.jsonl",
+    # The one committed classifier weight: the v5 one-flip rollback anchor. Not
+    # reproducible under GPU float nondeterminism, so no rebuild path. (Every
+    # other v{2..6} weight is gitignored under data/*; this one is force-tracked.)
+    "data/classifier/v5/model_best.pt",
+    # The prospect location library. Both are unregenerable: morph_v6 has no
+    # producer and the CLIP arrays only regenerate value-approximate under a
+    # verdict-sensitive threshold. (.gitignore negates these two exact paths; the
+    # regenerable shards/*.npz overlay stays ignored.)
+    "data/library_embeddings/embeddings.npz",
+    "data/library/library_records.jsonl",
 ]
 
 
