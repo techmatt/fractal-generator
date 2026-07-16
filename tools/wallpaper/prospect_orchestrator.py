@@ -23,8 +23,11 @@ are distinguishable on inspection.
 
     # validate first (short throwaway mini-run; backgrounded):
     uv run python -u tools/wallpaper/prospect_orchestrator.py --mini
-    # a real multi-day run (safe to run for days; 24h default cap):
-    uv run python -u tools/wallpaper/prospect_orchestrator.py --run --cap-hours 24
+    # a real run spread over many short sessions (the budget is ACCUMULATED active time, so idle
+    # days between sessions cost nothing; --total-cap-hours is adjustable on resume):
+    uv run python -u tools/wallpaper/prospect_orchestrator.py --run --run-id myrun --total-cap-hours 24
+    # ...later, more of the SAME run (resume by --run-id); stop it gracefully mid-session by
+    # `touch out/wallpaper/prospect/myrun/STOP` — it exits cleanly at the next cycle boundary.
 """
 from __future__ import annotations
 
@@ -207,17 +210,47 @@ def orchestrate(args):
 
     families = args.families
     per_family_s = args.per_family_min * 60.0
-    cap_s = args.cap_hours * 3600.0
+    stop_path = run_dir / "STOP"        # graceful-stop sentinel (checked at the cycle boundary)
     # store sinks (overridable so --mini / tests don't pollute the production library)
     sinks = _store_sinks(args)
 
-    # --- resume / idempotency (reuse the ORIGINAL deadline so total wall-clock <= cap) ---
+    # --- budget = ACCUMULATED ACTIVE TIME across sessions, not a wall-clock deadline. ---
+    # The cap applies to the total active seconds this run has ever spent working (persisted in
+    # state.json as accumulated_active_s). Idle days between sessions cost nothing because we only
+    # ever measure `time.time() - session_start` WITHIN a live session; the wall-clock gap between
+    # sessions is never read. The TOTAL cap is resolved below (after state load): an EXPLICIT
+    # --total-cap-hours wins and becomes the new persisted total; OMITTING it keeps the persisted
+    # value (a missing flag NEVER changes the budget), falling back to CAP_HOURS only for a fresh run
+    # or legacy state predating the persisted field. --session-cap-hours is an independent
+    # per-session ceiling. See remaining()/persist_state below.
+    session_cap_s = (args.session_cap_hours * 3600.0) if args.session_cap_hours else None
+    session_start = time.time()
+
+    # --- resume / idempotency (accumulated budget carries forward; idle between sessions is free) ---
+    # harvested_watermark = ledger position through which EVERY fresh q3 has been fully harvested
+    # (recorded | coord-dup | field-fail | deferred-to-rerun). A cycle starts its watermark HERE, not
+    # at the live ledger length, so a session that stops/caps-out mid-cycle (after discovery appended
+    # q3 but before pool/annotate) leaves that tail BELOW the watermark and it is re-pooled on the
+    # next resume — no silent stranding across a stop/start boundary. committed_cycle tracks the last
+    # cycle that reached such a commit (so a mid-cycle break doesn't report an incomplete cycle done).
     state = oo.load_state(state_path)
     if state is not None:
-        deadline = state["deadline_epoch"]
+        accum_prev = float(state.get("accumulated_active_s", 0.0))
         cycle = state["cycles_done"]
-        log(f"RESUME run '{args.run_id}': {cycle} cycles done, "
-            f"{(deadline - time.time())/3600:.2f}h remaining to original deadline")
+        # back-compat: pre-intermittent state has no harvested_watermark -> assume prior discovery was
+        # fully harvested (the old "watermark == ledger length" behavior), so old runs resume as before.
+        harvested_watermark = int(state.get("harvested_watermark", oo.ledger_line_count(ledger)))
+        # TOTAL cap on resume: explicit flag wins (new total); omitted -> persisted total (a missing
+        # flag never changes the budget); legacy state predating the persisted field -> CAP_HOURS.
+        total_cap_hours = (args.total_cap_hours if args.total_cap_hours is not None
+                           else float(state.get("total_cap_hours", CAP_HOURS)))
+        total_cap_s = total_cap_hours * 3600.0
+        cap_src = ("flag" if args.total_cap_hours is not None
+                   else ("persisted" if "total_cap_hours" in state else "default"))
+        log(f"RESUME run '{args.run_id}': {cycle} cycles done, harvest watermark {harvested_watermark}, "
+            f"accumulated {accum_prev/3600:.2f}h of {total_cap_hours:.2f}h total ({cap_src}) "
+            f"({max(0.0, total_cap_s - accum_prev)/3600:.2f}h remaining)"
+            + (f"; session cap {args.session_cap_hours:.2f}h" if session_cap_s else ""))
         if not ledger.exists():
             log("  note: run ledger absent on resume (no discovery persisted yet) — continuing", "WARN")
     else:
@@ -226,15 +259,49 @@ def orchestrate(args):
             raise SystemExit(
                 f"run-start freshness precondition FAILED: {ledger} already has {n0} rows. "
                 f"A fresh run requires an EMPTY run-scoped ledger. Use a new --run-id.")
-        deadline = time.time() + cap_s
+        accum_prev = 0.0
         cycle = 0
-        log(f"START prospect run '{args.run_id}'  cap={args.cap_hours}h  families={families}  "
+        harvested_watermark = 0
+        total_cap_hours = args.total_cap_hours if args.total_cap_hours is not None else CAP_HOURS
+        total_cap_s = total_cap_hours * 3600.0
+        log(f"START prospect run '{args.run_id}'  total_cap={total_cap_hours}h"
+            + (f" session_cap={args.session_cap_hours}h" if session_cap_s else "")
+            + f"  families={families}  "
             f"julia_hook=on  per_family={args.per_family_min}m  pool=UNCAPPED(all-fresh-q3)  "
             f"retain_fields={args.retain_fields} field_cache={args.field_cache_gb}GB")
         log(f"  run ledger (empty, run-scoped): {ledger}")
         log(f"  library store: {sinks.records}  embeddings: {sinks.shards}")
-        oo.save_state(state_path, {"run_id": args.run_id, "deadline_epoch": deadline,
-                                   "cycles_done": 0, "started": time.strftime('%Y-%m-%dT%H:%M:%S')})
+    committed_cycle = cycle          # last FULLY-processed cycle (advances only at a cycle commit)
+
+    def accumulated():
+        """Total active seconds this run has ever spent working (prior sessions + this one so far)."""
+        return accum_prev + (time.time() - session_start)
+
+    def persist_state(**extra):
+        """Atomic state.json write. ALWAYS refreshes accumulated_active_s to the running total and
+        stamps cycles_done/harvested_watermark from the last COMMIT (never the in-flight cycle), so a
+        `kill -9` loses at most the in-flight cycle's accounting (an under-count, never a leak).
+        Merges over the on-disk state so keys the caller doesn't pass (totals/failed_cycles) survive."""
+        base = oo.load_state(state_path) or {}
+        base.update(extra)
+        base["run_id"] = args.run_id
+        base["cycles_done"] = committed_cycle
+        base["harvested_watermark"] = harvested_watermark
+        base["accumulated_active_s"] = round(accumulated(), 3)
+        base["total_cap_hours"] = total_cap_hours    # so a resume WITHOUT the flag keeps this total
+        oo.save_state(state_path, base)
+
+    def commit_cycle():
+        """Mark the current cycle fully processed: advance the persisted harvest watermark to the
+        ledger end and the committed cycle count. Called ONLY at cycle-terminating commits
+        (completion / empty / pool-fail / annotate-defer), never at a mid-cycle break — that is what
+        makes a stop/cap mid-cycle re-pool its un-harvested tail on resume instead of stranding it."""
+        nonlocal harvested_watermark, committed_cycle
+        harvested_watermark = oo.ledger_line_count(ledger)
+        committed_cycle = cycle
+
+    if state is None:
+        persist_state(started=time.strftime('%Y-%m-%dT%H:%M:%S'))
 
     oo.sweep_orphan_seeder_scratch(log)
     baseline_gpu = oo.gpu_used_mib()
@@ -243,22 +310,58 @@ def orchestrate(args):
 
     est_loc_s = args.est_loc_s
     empty_streak = 0
+    stopped_by_sentinel = False
     totals = {"cycles": 0, "discovery_families": 0, "fresh_q3": 0, "records_added": 0,
               "phase_failures": 0}
     cycle_recon = []        # per-cycle reconciliation breakdowns (records / coord-dup / leak)
     failed_cycles = []      # cycles whose annotate failed twice: {cycle, q3_deferred, reason, ...}
     fam_instr = []          # per-cycle per-family base/twin/parent instrumentation (Part 2)
+    cycle_reports = []      # per-cycle wall-time + per-phase breakdown (Part 3 report)
     last_heartbeat = time.time()
 
     def remaining():
-        return deadline - time.time()
+        """Remaining BUDGET (seconds): the tighter of the total-cap remainder and, if set, the
+        per-session remainder. Negative once a cap is spent — the cycle/phase gates read this."""
+        r = total_cap_s - accumulated()
+        if session_cap_s is not None:
+            r = min(r, session_cap_s - (time.time() - session_start))
+        return r
+
+    def log_cycle_time(cyc, t0, pt, note=""):
+        """Log + record this cycle's wall time and per-phase breakdown (Part 3)."""
+        wall = time.time() - t0
+        log(f"  cycle {cyc} wall={wall:.1f}s (discovery={pt['discovery']:.1f}s "
+            f"phoenix={pt['phoenix']:.1f}s pool={pt['pool']:.1f}s annotate={pt['annotate']:.1f}s)"
+            + note)
+        cycle_reports.append({"cycle": cyc, "wall_s": round(wall, 1),
+                              "discovery_s": round(pt["discovery"], 1),
+                              "phoenix_s": round(pt["phoenix"], 1),
+                              "pool_s": round(pt["pool"], 1),
+                              "annotate_s": round(pt["annotate"], 1)})
 
     # ----------------------------- cycle loop ----------------------------- #
     while True:
+        # --- graceful stop: sentinel checked HERE and only here. The cycle boundary is the one
+        # point where state.json (cycles_done) and the store are mutually consistent with the ledger
+        # watermark. The discovery->pool and pool->annotate boundaries are NOT safe: exiting there
+        # leaves fresh q3 in the ledger but below the next cycle's watermark (the resumed cycle
+        # recomputes watermark = current ledger count), so they'd be silently stranded — an
+        # unaccounted harvest leak — plus, after pool, an orphaned un-annotated pool dir. So the
+        # sentinel is honored only at cycle granularity. `kill -9` remains the hard-stop and is
+        # unchanged; the sentinel is a convenience on top of it, not a replacement. ---
+        if stop_path.exists():
+            stopped_by_sentinel = True
+            log(f"STOP sentinel present — graceful shutdown at cycle boundary after {cycle} "
+                f"cycle(s). Removing sentinel so the next resume isn't blocked.")
+            try:
+                stop_path.unlink()
+            except OSError as e:
+                log(f"  could not remove STOP sentinel ({e}); remove it before resuming.", "WARN")
+            break
         # a minimally-productive cycle needs one family of discovery + one location annotated.
         min_cycle_s = per_family_s + EST_ANNOTATE_FIXED_S + est_loc_s
         if remaining() < min_cycle_s:
-            log(f"CAP: {remaining()/60:.1f}m left < min cycle {min_cycle_s/60:.1f}m — "
+            log(f"CAP: {remaining()/60:.1f}m budget left < min cycle {min_cycle_s/60:.1f}m — "
                 f"stopping cleanly at a phase boundary.")
             break
         if empty_streak >= oo.MAX_EMPTY_CYCLES:
@@ -266,8 +369,10 @@ def orchestrate(args):
             break
 
         cycle += 1
-        watermark = oo.ledger_line_count(ledger)
-        log(f"===== CYCLE {cycle} =====  remaining {remaining()/3600:.2f}h  "
+        cycle_t0 = time.time()
+        pt = {"discovery": 0.0, "phoenix": 0.0, "pool": 0.0, "annotate": 0.0}
+        watermark = harvested_watermark        # re-pool any un-harvested tail from a prior mid-cycle stop
+        log(f"===== CYCLE {cycle} =====  budget remaining {remaining()/3600:.2f}h  "
             f"ledger watermark {watermark}")
 
         # ---- PHASE 1: discovery, per family (GPU-exclusive) — VERBATIM invocation ----
@@ -302,6 +407,7 @@ def orchestrate(args):
             fam_pre = oo.ledger_line_count(ledger)
             try:
                 res = oo.run_phase(log, f"discovery:{fam}", cmd, fam_budget_s)
+                pt["discovery"] += res.get("elapsed_s") or 0.0
                 timing.record(cycle, f"discovery:{fam}", res,
                               ledger_rows_added=oo.ledger_line_count(ledger) - fam_pre,
                               fresh_q3=len(oo.new_fresh_q3(ledger, fam_pre)))
@@ -331,6 +437,7 @@ def orchestrate(args):
             ph_pre = oo.ledger_line_count(ledger)
             try:
                 res = oo.run_phase(log, "discovery:phoenix", cmd, phoenix_s)
+                pt["phoenix"] += res.get("elapsed_s") or 0.0
                 timing.record(cycle, "discovery:phoenix", res,
                               ledger_rows_added=oo.ledger_line_count(ledger) - ph_pre,
                               fresh_q3=len(oo.new_fresh_q3(ledger, ph_pre)))
@@ -354,8 +461,10 @@ def orchestrate(args):
             empty_streak += 1
             log(f"  no fresh q3 this cycle (empty streak {empty_streak}); skipping pool+annotate.")
             totals["cycles"] += 1
-            oo.save_state(state_path, {**oo.load_state(state_path), "cycles_done": cycle})
+            commit_cycle()
+            persist_state(totals=totals, failed_cycles=failed_cycles)
             oo.purge_cycle_intermediates(log, cycle)
+            log_cycle_time(cycle, cycle_t0, pt, note="  [no fresh q3]")
             continue
         empty_streak = 0
 
@@ -379,6 +488,7 @@ def orchestrate(args):
         except Exception as e:
             res = {"ok": False}
             log(f"  pool build EXCEPTION (isolated): {type(e).__name__}: {e}", "WARN")
+        pt["pool"] += res.get("elapsed_s") or 0.0
         oo.gpu_boundary(log, baseline_gpu, "post-pool")
         pool_locs = oo.ledger_line_count(batch_dir / "images.jsonl")
         timing.record(cycle, f"pool:cycle{cycle}", res,
@@ -387,8 +497,10 @@ def orchestrate(args):
             totals["phase_failures"] += 1
             log(f"  pool build failed / no batch (isolated) — skipping annotate this cycle.", "WARN")
             totals["cycles"] += 1
-            oo.save_state(state_path, {**oo.load_state(state_path), "cycles_done": cycle})
+            commit_cycle()   # operational drop (matches prior behavior): advance past this cycle's q3
+            persist_state(totals=totals, failed_cycles=failed_cycles)
             oo.purge_cycle_intermediates(log, cycle, batch_dir)
+            log_cycle_time(cycle, cycle_t0, pt, note="  [pool build failed]")
             continue
 
         # ---- the non-negotiable freshness assertion (halts on violation) — VERBATIM ----
@@ -437,6 +549,7 @@ def orchestrate(args):
         fc = annotate_with_retry(_attempt_annotate, cycle, len(fresh), watermark,
                                  lambda: store_summary_count(sinks) - recs_before, log=log)
         res = res_box["res"]
+        pt["annotate"] = time.time() - t_ann        # wall incl. retry (Part 3 breakdown)
         if fc is not None:
             totals["records_added"] += fc["records_salvaged"]
             failed_cycles.append(fc)
@@ -446,9 +559,13 @@ def orchestrate(args):
             timing.record(cycle, f"annotate:cycle{cycle}", res, pool_locations=pool_locs,
                           unique_locations=n_unique, records_added=fc["records_salvaged"], failed=True)
             totals["cycles"] += 1
-            oo.save_state(state_path, {**oo.load_state(state_path), "cycles_done": cycle,
-                                       "totals": totals, "failed_cycles": failed_cycles})
+            # deferred, NOT stranded: the q3 are tracked in failed_cycles for --rerun-failed (which
+            # drains the RETAINED pool), so advance the harvest watermark past them here — otherwise
+            # a resume would ALSO re-pool them, double-handling the same deferral.
+            commit_cycle()
+            persist_state(totals=totals, failed_cycles=failed_cycles)
             # NOTE: intentionally NO purge_cycle_intermediates here — the cycle is re-runnable.
+            log_cycle_time(cycle, cycle_t0, pt, note="  [annotate failed twice — deferred]")
             continue
 
         recs_after = store_summary_count(sinks)
@@ -471,27 +588,46 @@ def orchestrate(args):
         cycle_recon.append({"cycle": cycle, **bd})
 
         totals["cycles"] += 1
-        oo.save_state(state_path, {**oo.load_state(state_path), "cycles_done": cycle,
-                                   "totals": totals, "failed_cycles": failed_cycles})
+        commit_cycle()
+        persist_state(totals=totals, failed_cycles=failed_cycles)
         # cycle-boundary self-clean: records+embeddings are durable in the store, fresh-isolation
         # asserted before annotate — pool crops + killed-seeder scratch are safe to reclaim.
         oo.purge_cycle_intermediates(log, cycle, batch_dir)
+        log_cycle_time(cycle, cycle_t0, pt)
 
         if time.time() - last_heartbeat > oo.HEARTBEAT_EVERY_S:
             last_heartbeat = time.time()
-        log(f"HEARTBEAT cycle={cycle} remaining={remaining()/3600:.2f}h records_total="
+        log(f"HEARTBEAT cycle={cycle} budget_remaining={remaining()/3600:.2f}h records_total="
             f"{totals['records_added']} fresh_q3_total={totals['fresh_q3']} "
             f"phase_failures={totals['phase_failures']}")
 
     # ----------------------------- final report ----------------------------- #
+    # On-exit accounting: fold this session's elapsed into the accumulated total (the prompt's
+    # "each session adds its own elapsed on exit"). cycles_done/harvested_watermark come from the last
+    # COMMIT (a mid-cycle cap/sentinel exit must not report the in-flight cycle done, and must leave
+    # its un-harvested tail below the watermark for the next resume). A graceful/cap/saturation exit
+    # lands here; a `kill -9` skips it but the last commit already banked all but the in-flight cycle.
+    persist_state(totals=totals, failed_cycles=failed_cycles)
     fr, ff = oo._reclaim_seeder_scratch(log, "final")
     if fr:
         log(f"final seeder-scratch sweep: reclaimed {fr} dir(s), ~{ff/2**30:.2f} GiB")
     oo.gpu_boundary(log, baseline_gpu, "final")
+    session_active_s = time.time() - session_start
+    accum_total_s = accumulated()
     summ = store.store_summary(sinks.records, sinks.thumbs, sinks.shards)
     summary = {
         "run_id": args.run_id, "finished": time.strftime('%Y-%m-%dT%H:%M:%S'),
-        "cap_hours": args.cap_hours, "families": families, "julia_hook": True,
+        "total_cap_hours": total_cap_hours, "session_cap_hours": args.session_cap_hours,
+        "budget": {
+            "total_cap_hours": total_cap_hours,
+            "session_cap_hours": args.session_cap_hours,
+            "accumulated_active_h": round(accum_total_s / 3600, 4),
+            "remaining_h": round(max(0.0, total_cap_s - accum_total_s) / 3600, 4),
+            "session_active_h": round(session_active_s / 3600, 4),
+            "stopped_by_sentinel": stopped_by_sentinel,
+        },
+        "per_cycle_timing": cycle_reports,
+        "families": families, "julia_hook": True,
         "cycles": totals["cycles"], "discovery_families_run": totals["discovery_families"],
         "fresh_q3_total": totals["fresh_q3"], "records_added_this_run": totals["records_added"],
         "phase_failures": totals["phase_failures"],
@@ -535,10 +671,17 @@ def orchestrate(args):
         log("!" * 70)
     else:
         log("  all cycles reconciled cleanly (0 failed).")
-    log(f"RUN COMPLETE '{args.run_id}': {totals['cycles']} cycles ({len(failed_cycles)} failed), "
+    exit_reason = ("STOP sentinel (graceful)" if stopped_by_sentinel
+                   else "budget/saturation")
+    log(f"RUN {'PAUSED' if stopped_by_sentinel else 'COMPLETE'} '{args.run_id}' "
+        f"[{exit_reason}]: {totals['cycles']} cycles ({len(failed_cycles)} failed), "
         f"+{totals['records_added']} library records this run "
         f"({summ['records']} total in store), {totals['fresh_q3']} fresh q3, "
         f"{totals['phase_failures']} phase failures")
+    b = summary["budget"]
+    log(f"  budget: accumulated {b['accumulated_active_h']:.3f}h of {b['total_cap_hours']}h total "
+        f"({b['remaining_h']:.3f}h remaining); this session {b['session_active_h']:.3f}h"
+        + (f" (session cap {b['session_cap_hours']}h)" if b["session_cap_hours"] else ""))
     log(f"  reconciliation: q3_found={rt['q3_found']} = records={rt['records_written']} + "
         f"coord_dup={rt['dropped_coord_dup']} + field_fail={rt['field_fail']} "
         f"+ unexplained={rt['unexplained']} (unexplained MUST be 0)")
@@ -704,8 +847,8 @@ def _apply_mini_defaults(args) -> None:
     scratch = oo.ROOT / "out" / "wallpaper" / "prospect_mini_scratch"
     args.out_root = str(scratch / "out")
     args.discovery_root = str(scratch / "disc")
-    if args.cap_hours == CAP_HOURS:
-        args.cap_hours = 0.75
+    if args.total_cap_hours is None:
+        args.total_cap_hours = 0.75
     if args.per_family_min == PER_FAMILY_MIN:
         args.per_family_min = 2.0
     if args.pool_count == POOL_COUNT:
@@ -758,7 +901,18 @@ def main():
                          "run's scratch store). Re-annotates each retained pool; idempotent via "
                          "store-dedup (a re-drain adds 0). Launches no discovery/pool phase.")
     ap.add_argument("--run-id", default=None)
-    ap.add_argument("--cap-hours", type=float, default=CAP_HOURS)
+    ap.add_argument("--total-cap-hours", "--cap-hours", dest="total_cap_hours",
+                    type=float, default=None,
+                    help="TOTAL accumulated active-time budget (hours) across ALL sessions of this "
+                         "run — NOT wall-clock since first launch. Idle days between sessions cost "
+                         "nothing. Adjustable on resume: pass a different value and it becomes the "
+                         "new total (not an error). OMIT it on resume to keep the persisted total "
+                         "unchanged (a missing flag never changes the budget); a fresh run with no "
+                         f"flag uses the {CAP_HOURS}h default. (--cap-hours is a back-compat alias.)")
+    ap.add_argument("--session-cap-hours", "--session-cap", dest="session_cap_hours",
+                    type=float, default=None,
+                    help="optional per-SESSION active-time cap (hours), independent of the total "
+                         "cap; whichever binds first stops the session cleanly at a cycle boundary.")
     ap.add_argument("--per-family-min", type=float, default=PER_FAMILY_MIN)
     ap.add_argument("--phoenix-min", type=float, default=PHOENIX_PER_CYCLE_MIN)
     ap.add_argument("--phoenix-walks", type=int, default=0)
