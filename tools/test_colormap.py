@@ -75,8 +75,10 @@ def test_type_dispatch_domain_checks(library):
     field = _synthetic_field()
     ow, oh = field.out_size
     base = dict(palette="twilight", location=field.location, eval_width=ow, eval_height=oh)
+    # n_cycles=3 is a *valid* value on cyclic twilight (cf. test_type_dispatch_cyclic_only,
+    # which allows n_cycles=2); the domain rule is "positive integer", so probe with 0.
     with pytest.raises(ValueError, match="n_cycles"):
-        cm.render_candidate(field, cm.CandidateConfig(**base, n_cycles=3), library)
+        cm.render_candidate(field, cm.CandidateConfig(**base, n_cycles=0), library)
     with pytest.raises(ValueError, match="log_premap"):
         cm.render_candidate(field, cm.CandidateConfig(**base, log_premap="bogus"), library)
     with pytest.raises(ValueError, match="filter"):
