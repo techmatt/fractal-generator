@@ -135,6 +135,19 @@ __pycache__/
 !/data/discovery/
 /data/discovery/**/contact_sheet.png
 
+# Phase-1 prospect location LIBRARY (tools/wallpaper/prospect_orchestrator.py). The
+# durable records + the consolidated embeddings matrix are load-bearing and
+# committed by EXACT PATH — not by directory. A bare `!/data/library_embeddings/`
+# would re-include the per-cycle shards/*.npz stream, which is a regenerable overlay
+# (consolidated into embeddings.npz) and MUST stay ignored. So: re-include the dir,
+# re-exclude its contents, then negate only the one durable file.
+!/data/library/
+/data/library/*
+!/data/library/library_records.jsonl
+!/data/library_embeddings/
+/data/library_embeddings/*
+!/data/library_embeddings/embeddings.npz
+
 # Large regeneratable datasets (see data_large/README.md)
 /data_large/*
 !/data_large/README.md
