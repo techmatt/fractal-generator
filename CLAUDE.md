@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Rust engine for generating orbit-trap Mandelbrot/Julia fractal images as wallpapers. The long-term goal (see `fractal-generator-handoff.md`) is mass-generating strong fractals under quality gates with a human picking favorites — palettes are the first-class concern. The **render core** (precision backends, separable coloring, palette system) is settled; the active workstream is the corpus → label → classifier pipeline (see "Corpus & classifier pipeline" below). The early navigation/diagnostic probes (descend, navigate, search, buffet, wallpaper, and the energy-metric scoring experiments) were retired in the P2 subcommand cull once the guided-descend → present/enrich → label flow superseded them.
+A Rust engine for generating orbit-trap Mandelbrot/Julia fractal images as wallpapers. The long-term goal is mass-generating strong fractals under quality gates with a human picking favorites — palettes are the first-class concern. The **render core** (precision backends, separable coloring, palette system) is settled; the active workstream is the corpus → label → classifier pipeline (see "Corpus & classifier pipeline" below). The early navigation/diagnostic probes (descend, navigate, search, buffet, wallpaper, and the energy-metric scoring experiments) were retired in the P2 subcommand cull once the guided-descend → present/enrich → label flow superseded them.
 
 ## Commands
 
@@ -119,7 +119,7 @@ mutation anywhere in the store — a merge that would change a non-null score wa
 and refuses.
 
 **The classifier** (`classifier/`, pkg). Weights/metrics in
-`data/classifier/{v1,v2,v3}/` (gitignored under the `data/*` rule). v2+ is a CORN
+`data/classifier/{v2…v6}/` (gitignored under the `data/*` rule). v2+ is a CORN
 **ordinal** head (K−1=2 rank-consistent logits) on
 `mobilenetv4_conv_medium.e250_r384_in12k`. Deploy transform =
 `classifier.data.Transform(train=False)`: the deterministic **1280×720 → 384×224
@@ -142,7 +142,7 @@ rendered to JPG (`enrich --mode render`, full ss4 Lanczos3 wallpaper quality).
 
 > **Generated-output convention.** All generated artifacts — renders, strips, contact sheets, guided-descend/calibration JSON, logs, demo fixtures — are written under the single `out/` tree, never the repo root. The root holds only source, config, docs, and committed `assets/`. `out/` is gitignored (except `.gitkeep`), so the entire working corpus wipes with one `rm -r out/*` without touching anything tracked. **New subcommands MUST default their output under `out/<subcommand>/` and MUST NOT write to the repo root.**
 
-The tree is `out/{renders,strips,demos}/`. Use `crate::ensure_parent_dir(path)?` before any top-level `save`/`fs::write` so a no-flag default writes its dir on a fresh checkout.
+The fixed base defaults are `out/renders/` (bare render) and `out/strips/` (sheet); every other subcommand writes under its own `out/<subcommand>/`. Use `crate::ensure_parent_dir(path)?` before any top-level `save`/`fs::write` so a no-flag default writes its dir on a fresh checkout.
 
 > **Scratchpad is not a dependency tier.** `scratchpad/` is the canonical *disposable temp*
 > dir (gitignored). **If a file is imported from outside `scratchpad/`, or it's the only
@@ -182,7 +182,7 @@ The tree is `out/{renders,strips,demos}/`. Use `crate::ensure_parent_dir(path)?`
 > — never the repo root. Keep `#[derive(Args)]`/`#[arg(...)]` attributes and all
 > default values/flag names stable (batch reproducibility depends on them).
 
-- Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png only), astro-float. The JSON logs (guided-descend pool, generate manifest, calibration artifact) are hand-rolled rather than pulling in serde.
+- Deps are kept minimal and pure-Rust (no C deps): clap, num-complex, rayon, image (png/jpeg/webp), astro-float. The JSON logs (guided-descend pool, generate manifest, calibration artifact) are hand-rolled rather than pulling in serde.
 - **Max 4 workers for multiprocessing.** Any parallel/multiprocessing worker pool (Python `ThreadPoolExecutor`/`ProcessPoolExecutor` `max_workers`, subprocess fan-out, `WORKERS` constants, etc.) MUST cap at 4. Do not exceed 4 concurrent workers.
 - Matt is expert (graphics + ML PhD) — be terse and precise; skip basics.
 - Module docs (`//!`) carry the real design rationale; read them before changing a module.
@@ -196,8 +196,8 @@ aesthetic classifier, palette experiments). **Use `uv` for all Python, not bare
 
 - Run things with **`uv run python …`** (or `uv run <tool>`) — never the global
   `python` on PATH (that's base conda, no torch). Add deps with `uv add <pkg>`.
-- **GPU stack:** torch is the **cu124** build (`torch==2.6.0+cu124`,
-  `torchvision==0.21.0+cu124`) pulled from the `pytorch-cu124` index pinned in
+- **GPU stack:** torch is the **cu124** build (`torch==2.6.0`,
+  `torchvision==0.21.0`) pulled from the `pytorch-cu124` index pinned in
   `pyproject.toml` — not PyPI's CPU default. CUDA runs on the local RTX 2060 SUPER
   (8 GB). `timm`, `scikit-learn`, `Pillow`, `numpy` round out the classifier stack.
 - Versions are pinned to match the `video-to-photo` project so uv's global cache
