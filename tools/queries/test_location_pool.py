@@ -21,15 +21,36 @@ def _pool():
 
 
 def test_julia_matches_v5():
-    """The sampler's Julia location count == the v5 pipeline's (join recipe + manifest)."""
+    """The v5-era Julia location count (julia_ladder_j0 batch only) == the v5 pipeline's (join
+    recipe + manifest). SCOPED to julia_ladder_j0 on BOTH sides — the frozen reference always was,
+    and the live side now is (pool.v5_julia_count), NOT the all-batch family total. A future
+    harvest that labels a new julia location must NOT trip this guard; that is exactly what scoping
+    the live side buys (see test_new_julia_source_does_not_trip_guard)."""
     pool = _pool()
-    got = pool.family_counts().get("julia", 0)
+    got = pool.v5_julia_count()
     assert got == qs.v5_julia_q23_count(), (got, qs.v5_julia_q23_count())
     man = qs.v5_manifest_julia_q23()
     if man is not None:
         assert got == man, (got, man)
     # assert_matches_v5 bundles both checks; must not raise.
     assert pool.assert_matches_v5() == got
+
+
+def test_new_julia_source_does_not_trip_guard():
+    """A NEW julia source (another batch labeling julia locations — every future harvest) grows
+    the julia family total but must leave the v5-era count and the guard untouched. This is the
+    regression the scope fix exists to prevent: the OLD guard compared the all-batch family total
+    against the julia_ladder_j0-frozen reference, so it fired on routine library growth."""
+    pool = _pool()
+    base_v5 = pool.v5_julia_count()
+    base_family = pool.family_counts().get("julia", 0)
+    # Inject a synthetic julia location from a DIFFERENT batch (not julia_ladder_j0).
+    j = qs.loc_mod.Location(family="julia", cx="0.0", cy="0.0", fw="0.75", maxiter=800,
+                            c_re="0.27", c_im="0.48")
+    pool.locations.append(qs.PooledLocation(ref=j, scores=[3], batch_ids={"some_new_batch"}))
+    assert pool.family_counts().get("julia", 0) == base_family + 1   # family total grew
+    assert pool.v5_julia_count() == base_v5                          # v5-era count unchanged
+    assert pool.assert_matches_v5() == base_v5                       # guard still green
 
 
 def test_both_families_present():
@@ -61,6 +82,7 @@ def test_julia_rows_carry_c():
 def main():
     tests = [
         test_julia_matches_v5,
+        test_new_julia_source_does_not_trip_guard,
         test_both_families_present,
         test_registered_sidecar_batches_contribute,
         test_julia_rows_carry_c,

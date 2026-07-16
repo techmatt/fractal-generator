@@ -263,6 +263,18 @@ class LocationPool:
         """{family: unique-location count} over the deduped pool."""
         return {k: len(v) for k, v in self.by_family().items()}
 
+    def v5_julia_count(self):
+        """The v5-ERA Julia location count: unique julia locations the `julia_ladder_j0` batch
+        contributed (batch_ids ∋ V5_JULIA_BATCH). This is the LIVE side of the v5 cross-check —
+        SCOPED to julia_ladder_j0, NOT the all-batch `family_counts()['julia']`. The frozen
+        reference (v5_julia_q23_count / the manifest) is scoped to julia_ladder_j0, so the live
+        side must be too: otherwise ANY future harvest that labels a new julia location grows the
+        family total and trips the guard on routine library growth. Scoped, it tests the invariant
+        it means to — the v5-era julia population is unchanged (which is what a real ref.key()
+        regression would perturb)."""
+        return sum(1 for pl in self.locations
+                   if pl.kind == "julia" and V5_JULIA_BATCH in pl.batch_ids)
+
     def report(self):
         fam = self.by_family()
         parts = [f"{k}={len(v)}" for k, v in sorted(fam.items())]
@@ -288,16 +300,18 @@ class LocationPool:
         print(f"    -- {self.report()}", file=stream)
 
     def assert_matches_v5(self):
-        """Cross-check the sampler's Julia location count against the v5 pipeline's
-        (Part-4 validation guard). Julia is keyed by image_id in both paths, so the two
-        must agree; a mismatch means the sampler drifted from the authoritative label
-        set (in EITHER direction). Raises AssertionError on mismatch.
+        """Cross-check the v5-era Julia location count against the v5 pipeline's (Part-4
+        validation guard). Julia is keyed by image_id in both paths, so the two must agree; a
+        mismatch means the sampler drifted from the authoritative label set (in EITHER
+        direction). Raises AssertionError on mismatch.
 
-        SCOPED to the v5 (mandelbrot+julia) subset by construction: it asserts on the
-        `julia` family count ONLY, so future new-family locations (multibrot/phoenix),
-        which don't exist in the v5 manifest, add to the pool without tripping this
-        check."""
-        got = self.family_counts().get("julia", 0)
+        SCOPED to the v5 subset in TWO ways: (1) `julia` family only, so a new FAMILY
+        (multibrot/phoenix) never enters this check; and (2) the julia_ladder_j0 BATCH only
+        (v5_julia_count), so a new JULIA SOURCE — another batch labeling julia locations, which
+        every future harvest is — grows the pool WITHOUT tripping this. The frozen reference is
+        julia_ladder_j0-scoped, so the live side must be too; comparing it against the all-batch
+        family total (the old defect) would fire on routine library growth."""
+        got = self.v5_julia_count()
         want_join = v5_julia_q23_count()
         assert got == want_join, (
             f"Julia location count {got} != v5 join-recipe count {want_join} "

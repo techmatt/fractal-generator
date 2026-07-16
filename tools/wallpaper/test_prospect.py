@@ -307,6 +307,131 @@ def test_morph_gray_interior_is_black_and_deterministic():
     assert out[0, 0, 0] == 0
 
 
+# --------------------------------------------------------------------------- #
+# --rerun-failed — a deferred cycle drains, records land, a second drain adds zero.
+# GPU-free: the annotate subprocess is replaced with a store-append stub that reuses the REAL
+# library_store dedup, so the idempotence under test is the production dedup, not a mock.
+# --------------------------------------------------------------------------- #
+import argparse  # noqa: E402
+import prospect_orchestrator as po  # noqa: E402
+import overnight_orchestrator as oo  # noqa: E402
+
+
+def _fake_annotate_pool(batch_dir, ledger, watermark, run_id, cycle, sinks, field_cache_gb,
+                        retain_fields, est_annotate_s, log, baseline_gpu, tag):
+    """Store-side of library_annotate WITHOUT the GPU embed/thumbnail: dedup the pool against the
+    store, append the survivors, write a schema-faithful annotate_report. Real store dedup -> a
+    re-drain over the same pool appends 0 (the whole idempotence claim)."""
+    rows = ann.unique_locations(Path(batch_dir) / "images.jsonl")
+    led = ann.load_ledger(Path(ledger))
+    have = store.existing_location_ids(sinks.records)
+    records, n_dup = [], 0
+    for r in rows:
+        oid = r["provenance"]["source_oid"]
+        if oid in have:
+            n_dup += 1
+            continue
+        records.append(ann.build_record(oid, r["render"], r["provenance"], led,
+                                         run_id, cycle, str(ledger)))
+    written = store.append_records(records, sinks.records)
+    (Path(batch_dir) / "annotate_report.json").write_text(json.dumps(
+        {"cycle": cycle, "pool_unique_locations": len(rows), "dropped_coord_dup": n_dup,
+         "dropped_field_fail": 0, "records_written": len(written)}), encoding="utf-8")
+    return True, {"ok": True}
+
+
+def _setup_deferred_run(tmp_path, oids=("c1_a", "c1_b")):
+    """A run tree with ONE deferred failed cycle: retained pool + ledger + state.failed_cycles."""
+    run_dir = tmp_path / "out" / "RUN"
+    disc_dir = tmp_path / "disc" / "RUN"
+    (run_dir / "pools" / "cycle_001").mkdir(parents=True)
+    disc_dir.mkdir(parents=True)
+    ledger = disc_dir / "outcome_ledger.jsonl"
+    with open(ledger, "w", encoding="utf-8") as f:
+        for oid in oids:
+            f.write(json.dumps(_ledger_row(oid, "mandelbrot")) + "\n")
+    with open(run_dir / "pools" / "cycle_001" / "images.jsonl", "w", encoding="utf-8") as f:
+        for oid in oids:
+            f.write(json.dumps(_pool_row(oid, "mandelbrot", "mandelbrot")) + "\n")
+    oo.save_state(run_dir / "state.json", {
+        "run_id": "RUN", "deadline_epoch": 0, "cycles_done": 1,
+        "failed_cycles": [{"cycle": 1, "q3_deferred": len(oids), "records_salvaged": 0,
+                           "reason": "annotate failed twice (test)", "ledger_watermark": 0}]})
+    args = argparse.Namespace(
+        run_id="RUN", out_root=str(tmp_path / "out"), discovery_root=str(tmp_path / "disc"),
+        field_cache_gb=20.0, retain_fields=True, est_loc_s=6.0,
+        store_records=str(tmp_path / "store" / "records.jsonl"),
+        store_thumbs=str(tmp_path / "store" / "thumbs"),
+        store_emb_shards=str(tmp_path / "store" / "shards"),
+        store_field_cache=str(tmp_path / "store" / "field_cache"))
+    return run_dir, args
+
+
+class _patch_annotate:
+    """Manual patch of po._annotate_pool (works under both pytest AND the tmp_path-only standalone
+    runner, which doesn't provide the monkeypatch fixture)."""
+    def __enter__(self):
+        self._orig = po._annotate_pool
+        po._annotate_pool = _fake_annotate_pool
+        return self
+
+    def __exit__(self, *exc):
+        po._annotate_pool = self._orig
+
+
+def test_rerun_failed_drains_then_idempotent(tmp_path):
+    with _patch_annotate():
+        run_dir, args = _setup_deferred_run(tmp_path)
+        rp = Path(args.store_records)
+
+        # First drain: the 2 deferred q3 land as records; reconcile balances (unexplained==0).
+        r1 = po.rerun_failed(args)
+        assert r1["records_added"] == 2
+        assert store.existing_location_ids(rp) == {"c1_a", "c1_b"}
+        assert r1["drained"][0]["records_written"] == 2
+        assert r1["drained"][0]["unexplained"] == 0
+        assert r1["still_failed"] == []
+        # state drained: the failed cycle is gone from the resume ledger.
+        assert oo.load_state(run_dir / "state.json")["failed_cycles"] == []
+
+        # Re-inject the same failed cycle (operator re-run / crash before state saved) and drain
+        # AGAIN: store-dedup makes it a no-op — 0 records added, reconcile still balances.
+        st = oo.load_state(run_dir / "state.json")
+        st["failed_cycles"] = [{"cycle": 1, "q3_deferred": 2, "records_salvaged": 2,
+                                "reason": "re-injected", "ledger_watermark": 0}]
+        oo.save_state(run_dir / "state.json", st)
+
+        r2 = po.rerun_failed(args)
+        assert r2["records_added"] == 0                       # store-dedup: nothing new lands
+        assert store.existing_location_ids(rp) == {"c1_a", "c1_b"}   # store unchanged
+        d2 = r2["drained"][0]
+        assert d2["records_written"] == 0 and d2["dropped_coord_dup"] == 2
+        assert d2["unexplained"] == 0                         # reconciles clean on the second pass
+
+
+def test_rerun_failed_no_deferred_cycles_is_noop(tmp_path):
+    run_dir, args = _setup_deferred_run(tmp_path)
+    st = oo.load_state(run_dir / "state.json")
+    st["failed_cycles"] = []
+    oo.save_state(run_dir / "state.json", st)
+    r = po.rerun_failed(args)
+    assert r["records_added"] == 0 and r["drained"] == [] and r["still_failed"] == []
+
+
+def test_rerun_failed_missing_pool_stays_deferred(tmp_path):
+    with _patch_annotate():
+        run_dir, args = _setup_deferred_run(tmp_path)
+        # A cycle whose retained pool was (wrongly) purged cannot be re-derived — left deferred,
+        # never rebuilt from the watermark (the pool builder reads watermark..EOF, spanning later
+        # cycles).
+        import shutil
+        shutil.rmtree(run_dir / "pools" / "cycle_001")
+        r = po.rerun_failed(args)
+        assert r["records_added"] == 0
+        assert len(r["still_failed"]) == 1 and r["drained"] == []
+        assert oo.load_state(run_dir / "state.json")["failed_cycles"][0]["cycle"] == 1
+
+
 def test_embedding_shard_carries_producer(tmp_path):
     dim = store.base_morph_dim()
     shard = store.write_embedding_shard("RUN", 1, ["u0", "u1"],

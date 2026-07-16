@@ -401,12 +401,8 @@ def orchestrate(args):
             log(f"  CAP: {remaining()/60:.1f}m left — no budget for annotate; stopping.")
             break
         recs_before = store_summary_count(sinks)
-        cmd = [oo.PY, "-u", str(ANNOTATOR), "--pool", str(batch_dir), "--ledger", str(ledger),
-               "--ledger-start-line", str(watermark), "--run-id", args.run_id,
-               "--cycle", str(cycle), "--field-cache-gb", str(args.field_cache_gb)]
-        cmd += sinks.annotate_flags()
-        if not args.retain_fields:
-            cmd += ["--no-retain-fields"]
+        cmd = _annotate_cmd(batch_dir, ledger, watermark, args.run_id, cycle, sinks,
+                            args.field_cache_gb, args.retain_fields)
         ann_report_path = batch_dir / "annotate_report.json"
         res_box = {}
 
@@ -586,6 +582,156 @@ def store_summary_count(sinks: _StoreSinks) -> int:
     return store.store_summary(sinks.records, sinks.thumbs, sinks.shards)["records"]
 
 
+def _annotate_cmd(batch_dir: Path, ledger: Path, watermark: int, run_id: str, cycle: int,
+                  sinks: _StoreSinks, field_cache_gb: float, retain_fields: bool) -> list:
+    """The library_annotate invocation for ONE cycle's pool. Shared by the main loop and
+    --rerun-failed so the two can never build a divergent annotate command."""
+    cmd = [oo.PY, "-u", str(ANNOTATOR), "--pool", str(batch_dir), "--ledger", str(ledger),
+           "--ledger-start-line", str(watermark), "--run-id", run_id,
+           "--cycle", str(cycle), "--field-cache-gb", str(field_cache_gb)]
+    cmd += sinks.annotate_flags()
+    if not retain_fields:
+        cmd += ["--no-retain-fields"]
+    return cmd
+
+
+def _annotate_pool(batch_dir: Path, ledger: Path, watermark: int, run_id: str, cycle: int,
+                   sinks: _StoreSinks, field_cache_gb: float, retain_fields: bool,
+                   est_annotate_s: float, log, baseline_gpu, tag: str):
+    """Run ONE annotate subprocess over a (retained) pool to completion. Returns (ok, res):
+    ok == run_phase ok AND the annotate report was written (a clean annotate writes it last; a
+    missing report == crashed mid-cycle). Isolated seam so the GPU-free drain test substitutes the
+    store-append path for the real subprocess."""
+    cmd = _annotate_cmd(batch_dir, ledger, watermark, run_id, cycle, sinks, field_cache_gb,
+                        retain_fields)
+    ann_report_path = Path(batch_dir) / "annotate_report.json"
+    oo.gpu_boundary(log, baseline_gpu, f"pre-{tag}")
+    try:
+        res = oo.run_phase(log, tag, cmd, est_annotate_s)
+    except Exception as e:
+        res = {"ok": False}
+        log(f"  {tag} EXCEPTION (isolated): {type(e).__name__}: {e}", "WARN")
+    oo.gpu_boundary(log, baseline_gpu, f"post-{tag}")
+    return bool(res.get("ok")) and ann_report_path.exists(), res
+
+
+def rerun_failed(args):
+    """Drain a run's DEFERRED failed cycles: re-annotate each from its RETAINED pool, landing the
+    q3 that `annotate failed twice` left logged-but-lost (`q3_deferred_to_rerun`). The failure path
+    deliberately skips `purge_cycle_intermediates`, so each failed cycle's pool is still on disk and
+    re-annotatable at the same geometry; the deferred entry carries its `ledger_watermark`.
+
+    Idempotent BY CONSTRUCTION via store-dedup — no extra bookkeeping. A re-annotate over the same
+    pool re-appends the same location_ids: whatever a partial first attempt already persisted comes
+    back as a store coord-dup (0 net records), the rest lands. So a cycle drained twice adds records
+    once then zero, and reconciliation balances every pass (q3_found == records + coord_dup +
+    field_fail). Cannot rebuild a purged pool from the watermark: the pool builder reads
+    watermark..EOF, which in a finished run spans LATER cycles too — the retained pool is the only
+    correct source, so a missing one is reported and left deferred, never reconstructed."""
+    out_root = Path(args.out_root).resolve()
+    disc_root = Path(args.discovery_root).resolve()
+    run_dir = out_root / args.run_id
+    disc_dir = disc_root / args.run_id
+    if not run_dir.exists():
+        raise SystemExit(f"--rerun-failed: run dir not found: {run_dir} "
+                         f"(wrong --run-id / --out-root / --discovery-root?)")
+    ledger = disc_dir / "outcome_ledger.jsonl"
+    state_path = run_dir / "state.json"
+    log = oo.Log(run_dir / "orchestrator.log")
+    sinks = _store_sinks(args)
+
+    state = oo.load_state(state_path)
+    failed = list((state or {}).get("failed_cycles", []))
+    if not failed:
+        log(f"RERUN-FAILED '{args.run_id}': no deferred failed cycles recorded — nothing to drain.")
+        log.close()
+        return {"run_id": args.run_id, "records_added": 0, "drained": [], "still_failed": []}
+
+    baseline_gpu = oo.gpu_used_mib()
+    log(f"RERUN-FAILED '{args.run_id}': draining {len(failed)} deferred cycle(s) "
+        f"(q3_deferred_total={sum(fc.get('q3_deferred', 0) for fc in failed)}); store={sinks.records}")
+    drained, still_failed, total_added = [], [], 0
+    for fc in failed:
+        cycle = fc["cycle"]
+        watermark = fc.get("ledger_watermark", 0)
+        batch_dir = run_dir / "pools" / f"cycle_{cycle:03d}"
+        images = batch_dir / "images.jsonl"
+        if not images.exists():
+            log(f"  cycle {cycle}: retained pool absent ({images}) — cannot re-derive; "
+                f"leaving deferred.", "WARN")
+            still_failed.append(fc)
+            continue
+        recs_before = store_summary_count(sinks)
+        n_unique = _unique_pool_locations(images)
+        est_annotate_s = EST_ANNOTATE_FIXED_S + n_unique * args.est_loc_s
+        ok, _res = _annotate_pool(batch_dir, ledger, watermark, args.run_id, cycle, sinks,
+                                  args.field_cache_gb, args.retain_fields, est_annotate_s,
+                                  log, baseline_gpu, f"rerun-annotate:cycle{cycle}")
+        if not ok:
+            log(f"  cycle {cycle}: rerun annotate did not complete — leaving deferred.", "WARN")
+            still_failed.append(fc)
+            continue
+        n_added = store_summary_count(sinks) - recs_before
+        total_added += n_added
+        # Reconcile exactly like a live cycle (deferred=0 now — the deferral is being resolved).
+        sel_report = _read_json(batch_dir / "selection_report.json")
+        ann_report = _read_json(batch_dir / "annotate_report.json")
+        bd = reconcile_cycle(fc.get("q3_deferred", 0), n_added, sel_report, ann_report, log=log)
+        drained.append({"cycle": cycle, "records_added": n_added, **bd})
+        log(f"  cycle {cycle} DRAINED: +{n_added} records "
+            f"(q3_deferred={fc.get('q3_deferred', 0)}; reconciled clean).")
+
+    # A fully-drained cycle leaves failed_cycles (its q3 are now recorded-or-coord-dup); a cycle we
+    # couldn't re-derive stays. Re-running is safe: an already-drained cycle re-injected here adds 0.
+    if state is not None:
+        state["failed_cycles"] = still_failed
+        oo.save_state(state_path, state)
+    report = {"run_id": args.run_id, "records_added": total_added,
+              "drained": drained, "still_failed": still_failed}
+    (run_dir / "rerun_failed_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    log("=" * 70)
+    log(f"RERUN-FAILED COMPLETE '{args.run_id}': drained {len(drained)} cycle(s), "
+        f"+{total_added} records; {len(still_failed)} still deferred.")
+    log(f"  report -> {run_dir / 'rerun_failed_report.json'}")
+    log.close()
+    return report
+
+
+def _apply_mini_defaults(args) -> None:
+    """Remap args to the throwaway mini profile (tight cap, 1 family, SCRATCH store roots). Shared
+    by a fresh `--mini` run and `--mini --rerun-failed` (so a mini run's deferred cycle drains
+    against the same scratch store, never the production library)."""
+    scratch = oo.ROOT / "out" / "wallpaper" / "prospect_mini_scratch"
+    args.out_root = str(scratch / "out")
+    args.discovery_root = str(scratch / "disc")
+    if args.cap_hours == CAP_HOURS:
+        args.cap_hours = 0.75
+    if args.per_family_min == PER_FAMILY_MIN:
+        args.per_family_min = 2.0
+    if args.pool_count == POOL_COUNT:
+        args.pool_count = 12
+    if args.disc_batch == 0:
+        args.disc_batch = 6
+    if args.pool_limit == 0:
+        args.pool_limit = 4
+    if args.families == oo.FAMILIES:
+        args.families = ["mandelbrot"]
+    if args.phoenix_min == PHOENIX_PER_CYCLE_MIN:
+        args.phoenix_min = 15.0
+    if args.phoenix_walks == 0:
+        args.phoenix_walks = 8
+    # keep the smoke's library out of the production store
+    if args.store_records is None:
+        args.store_records = str(scratch / "library" / "records.jsonl")
+    if args.store_thumbs is None:
+        args.store_thumbs = str(scratch / "library" / "thumbs")
+    if args.store_emb_shards is None:
+        args.store_emb_shards = str(scratch / "library_embeddings" / "shards")
+    if args.store_field_cache is None:
+        args.store_field_cache = str(scratch / "library" / "field_cache")
+    print(f"[mini] throwaway roots under {scratch} (store -> scratch, not data/library)")
+
+
 def _unique_pool_locations(images_jsonl: Path) -> int:
     if not images_jsonl.exists():
         return 0
@@ -606,6 +752,11 @@ def main():
     ap.add_argument("--run", action="store_true", help="production run (24h cap by default)")
     ap.add_argument("--mini", action="store_true",
                     help="short throwaway validation run: tight cap, 1 family, scratch roots")
+    ap.add_argument("--rerun-failed", dest="rerun_failed", action="store_true",
+                    help="drain an EXISTING run's deferred failed cycles (needs --run-id, same "
+                         "--out-root/--discovery-root/store the run used; add --mini for a mini "
+                         "run's scratch store). Re-annotates each retained pool; idempotent via "
+                         "store-dedup (a re-drain adds 0). Launches no discovery/pool phase.")
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--cap-hours", type=float, default=CAP_HOURS)
     ap.add_argument("--per-family-min", type=float, default=PER_FAMILY_MIN)
@@ -645,6 +796,15 @@ def main():
     ap.add_argument("--store-field-cache", default=None)
     args = ap.parse_args()
 
+    # --rerun-failed: drain an existing run's deferred cycles; no fresh discovery/pool loop.
+    if args.rerun_failed:
+        if args.run_id is None:
+            raise SystemExit("--rerun-failed requires --run-id <run> (the run to drain)")
+        if args.mini:
+            _apply_mini_defaults(args)   # point at the same scratch store the mini run used
+        rerun_failed(args)
+        return
+
     if not (args.run or args.mini):
         ap.print_help()
         return
@@ -654,35 +814,7 @@ def main():
         args.families = oo.FAMILIES
 
     if args.mini:
-        scratch = oo.ROOT / "out" / "wallpaper" / "prospect_mini_scratch"
-        args.out_root = str(scratch / "out")
-        args.discovery_root = str(scratch / "disc")
-        if args.cap_hours == CAP_HOURS:
-            args.cap_hours = 0.75
-        if args.per_family_min == PER_FAMILY_MIN:
-            args.per_family_min = 2.0
-        if args.pool_count == POOL_COUNT:
-            args.pool_count = 12
-        if args.disc_batch == 0:
-            args.disc_batch = 6
-        if args.pool_limit == 0:
-            args.pool_limit = 4
-        if args.families == oo.FAMILIES:
-            args.families = ["mandelbrot"]
-        if args.phoenix_min == PHOENIX_PER_CYCLE_MIN:
-            args.phoenix_min = 15.0
-        if args.phoenix_walks == 0:
-            args.phoenix_walks = 8
-        # keep the smoke's library out of the production store
-        if args.store_records is None:
-            args.store_records = str(scratch / "library" / "records.jsonl")
-        if args.store_thumbs is None:
-            args.store_thumbs = str(scratch / "library" / "thumbs")
-        if args.store_emb_shards is None:
-            args.store_emb_shards = str(scratch / "library_embeddings" / "shards")
-        if args.store_field_cache is None:
-            args.store_field_cache = str(scratch / "library" / "field_cache")
-        print(f"[mini] throwaway roots under {scratch} (store -> scratch, not data/library)")
+        _apply_mini_defaults(args)
     elif args.disc_batch == 0:
         args.disc_batch = 12
 

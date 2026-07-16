@@ -242,17 +242,21 @@ def test_to_location_ref_recipe_stable():
 # --------------------------------------------------------------------------- #
 def test_manifest_untripped_by_new_family():
     pool = qs.LocationPool.from_corpus(verbose=False)
-    base_julia = pool.family_counts().get("julia", 0)
-    assert pool.assert_matches_v5() == base_julia
+    base_v5_julia = pool.v5_julia_count()                       # julia_ladder_j0-scoped invariant
+    base_julia_family = pool.family_counts().get("julia", 0)
+    base_phoenix = pool.family_counts().get("phoenix", 0)       # delta-based: corpus may already
+                                                                # hold phoenix locations (it now does)
+    assert pool.assert_matches_v5() == base_v5_julia
 
     # Inject a synthetic phoenix location; it must load, key, and leave the guard green.
     ph = loc_mod.Location(family="phoenix", cx="0.0", cy="0.0", fw="3.0", maxiter=400,
                           c_re="0.5667", c_im="0.0",
                           family_params={"p_re": "-0.5", "p_im": "0.0"})
     pool.locations.append(qs.PooledLocation(ref=ph, scores=[3], batch_ids={"synthetic"}))
-    assert pool.family_counts().get("phoenix", 0) == 1
-    assert pool.family_counts().get("julia", 0) == base_julia   # unchanged
-    assert pool.assert_matches_v5() == base_julia               # still green
+    assert pool.family_counts().get("phoenix", 0) == base_phoenix + 1   # exactly one added
+    assert pool.family_counts().get("julia", 0) == base_julia_family   # julia family unchanged
+    assert pool.v5_julia_count() == base_v5_julia               # v5-era julia count unchanged
+    assert pool.assert_matches_v5() == base_v5_julia            # still green
     assert aq._field_key(ph)                                    # keys/loads fine
 
 
