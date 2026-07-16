@@ -23,7 +23,7 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-for _p in (HERE, ROOT, ROOT / "tools" / "reframe_probe", ROOT / "tools" / "corpus",
+for _p in (HERE, ROOT, ROOT / "tools" / "scoring", ROOT / "tools" / "corpus",
            ROOT / "tools" / "mining"):
     sp = str(_p)
     if sp not in sys.path:

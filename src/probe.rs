@@ -1,13 +1,12 @@
-//! Shared machinery for the depth-probe subcommands (`descend`, `navigate`).
+//! Shared depth-probe plumbing (originally for the `descend`/`navigate`
+//! subcommands, both retired in the P2 subcommand cull).
 //!
-//! Both probes walk a Mandelbrot→Julia path one level at a time, accumulate the
-//! center in high precision, render a `Mandelbrot | Julia` row per level, and
-//! emit a tall filmstrip plus a hand-rolled JSON log. The only thing that
-//! differs between them is *how the next target is chosen* — `descend` scores
-//! K×K windows greedily; `navigate` finds minibrot nuclei deterministically.
-//! Everything else (panel rendering, the seeded RNG, the footprint circle,
-//! strip composition, path/JSON string helpers) lives here so the two
-//! subcommands share one implementation.
+//! The subcommands are gone; their machinery survives here because it is reused
+//! across the live engine: panel rendering (`render_mandel_panel`), the pixel
+//! spacing threshold (`PERTURB_SPACING`), the seeded RNG (`SplitMix64`), colormap
+//! loading/mirror helpers, and the `jf`/`js`/`frac_le` numerics — pulled in by
+//! `energy.rs`, `generate.rs`, and `enrich.rs`. Kept as one module so those
+//! consumers share a single implementation.
 
 use std::path::{Path, PathBuf};
 

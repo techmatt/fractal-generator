@@ -7,6 +7,18 @@ the trajectory feature is built to avoid.
 Reference: https://bottosson.github.io/posts/oklab/  (Ottosson, "A perceptual color
 space for image processing"). The sRGB EOTF is the true piecewise curve (0.04045 /
 12.92 / 1.055 threshold), not a 2.2 gamma approximation.
+
+Oklab math exists in FOUR hand-synced copies, held to DIFFERENT tolerances on
+purpose — do not "collapse" them into one:
+  * this file (`tools/palettes/color.py`)  — the numpy reference.
+  * `src/coloring.rs` / `src/palette.rs`   — the Rust render core; byte-exact is
+    load-bearing (baked LUT drives every render).
+  * `tools/colormap.py`                     — the Python coloring tail; held to
+    <=1-LSB vs the Rust path (`colormap_acceptance.py`), NOT byte-exact.
+  * `palette_lib/coloring.py`               — a separate extractor-only bake,
+    frozen and guarded by `check_bytematch.py` / `tests/palette_bytematch.rs`.
+Merging forces one contract onto all four; the resulting LUT drift is SILENT
+(every image subtly wrong, nothing announces it). Kept separate deliberately.
 """
 
 import numpy as np

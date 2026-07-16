@@ -26,7 +26,7 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-for _p in (HERE, ROOT, ROOT / "tools" / "reframe_probe", ROOT / "tools" / "corpus",
+for _p in (HERE, ROOT, ROOT / "tools" / "scoring", ROOT / "tools" / "corpus",
            ROOT / "tools" / "mining"):
     sp = str(_p)
     if sp not in sys.path:
@@ -34,7 +34,7 @@ for _p in (HERE, ROOT, ROOT / "tools" / "reframe_probe", ROOT / "tools" / "corpu
 
 import guard                                  # noqa: E402
 import location as loc_mod                    # noqa: E402
-from probe import BIN, PALETTE, ACTIVE_CKPT, auto_maxiter  # noqa: E402
+from active_ckpt import BIN, PALETTE, ACTIVE_CKPT, auto_maxiter  # noqa: E402
 from score_lib import corn_decode             # noqa: E402
 import subprocess                             # noqa: E402
 

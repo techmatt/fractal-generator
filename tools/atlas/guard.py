@@ -44,13 +44,13 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 for _p in (ROOT, ROOT / "tools", ROOT / "tools" / "corpus",
-           ROOT / "tools" / "reframe_probe", ROOT / "tools" / "mining"):
+           ROOT / "tools" / "scoring", ROOT / "tools" / "mining"):
     sp = str(_p)
     if sp not in sys.path:
         sys.path.insert(0, sp)
 
 import location as loc_mod                               # noqa: E402
-from probe import auto_maxiter, BIN, make_scorer, ACTIVE_CKPT  # noqa: E402
+from active_ckpt import auto_maxiter, BIN, make_scorer, ACTIVE_CKPT  # noqa: E402
 from colormap import load_field                           # noqa: E402
 
 # =========================================================================== #

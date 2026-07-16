@@ -74,7 +74,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))                                   # prescreen.py, guard.py
 sys.path.insert(0, str(ROOT / "tools" / "atlas_probe"))        # step0_reanalysis primitives
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))            # reframe_location
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))     # probe.make_scorer
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))     # probe.make_scorer
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))            # location.py
 sys.path.insert(0, str(ROOT / "tools" / "mining"))            # score_lib.Scorer + corn_decode
 
@@ -93,7 +93,7 @@ import reframe  # noqa: E402  (reframe_location + the DUMP_GUARD_FIELD hook)
 from reframe import reframe_location  # noqa: E402
 import guard  # noqa: E402  (degenerate-outcome guard: make_guarded_scorer + the field gate)
 from score_lib import corn_decode  # noqa: E402  (canonical v5 CORN hard-class decode)
-from probe import make_scorer as make_raw_scorer, ACTIVE_CKPT  # noqa: E402  (UNGUARDED raw — gather mode; ACTIVE_CKPT = single-source live checkpoint)
+from active_ckpt import make_scorer as make_raw_scorer, ACTIVE_CKPT  # noqa: E402  (UNGUARDED raw — gather mode; ACTIVE_CKPT = single-source live checkpoint)
 
 # =========================================================================== #
 # Config (top-of-file constants — the experiment knobs)
@@ -225,12 +225,12 @@ def julia_partition(fam: str) -> str:
 #     ~2.5x the baseline q3 recall at equal precision. deg-2 = the c-plane quadratic
 #     Mandelbrot and its dynamical Julia twin.
 #   julia:multibrot3 -> 0.30
-#     jm3 revival sweep (scratchpad/jm3_tgood_sweep.py vs labels/jm3_band_v1.json,
+#     jm3 revival sweep (labels/jm3_band_v1.json; sweep script not committed,
 #     2026-07-11): the band is 64% q3 yet the baseline 0.50 rejected all of it; p_good
 #     carries directional resolution and the sweep supports anywhere in 0.28-0.36. 0.30
 #     is a deliberately round mid-low pick, not a fitted decimal.
 #   julia:multibrot4 / julia:multibrot5 -> 0.30
-#     jm4/jm5 revival sweep (scratchpad/jm45_tgood_sweep.py vs labels/jm45_band_v1.json,
+#     jm4/jm5 revival sweep (labels/jm45_band_v1.json; sweep script not committed,
 #     2026-07-12): both bands are 86% q3 (19/22 locations) yet the baseline 0.50 rejected
 #     all of it — even richer than jm3. Both take jm3's lean-low 0.30 (sweep admits with
 #     0.86-0.88 q3 precision and no q1 leak at 0.30); the Stage-2 quality gate nets any

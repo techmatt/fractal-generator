@@ -18,8 +18,8 @@ the reseed jitter that plagued k-means (~0.50 ARI floor) is gone. Independent
 k-means per k would NOT nest; that is the whole reason for the tree.
 
 Feature space is the resolved occupancy config frozen by the stability pass
-(sigma=0.030 absolute OKLab, codebook=1024, PCA=20; see
-scratchpad/palette_categories/stability.py and _resolved_config.json). Pre-pulls
+(sigma=0.030 absolute OKLab, codebook=1024, PCA=20; frozen inline as
+RES_SIGMA/RES_CB/RES_PCA below — the stability sweep script was not committed). Pre-pulls
 (neutral / spectral / outlier) are reproduced deterministically and are FIXED
 cells at every k; only the chromatic pool is clustered. Ward vs average linkage
 are both built; the more balanced one (ward, by k=16 singleton count then size
@@ -44,7 +44,7 @@ ACHROMA_GATE = 0.030
 SEED = 0
 np.random.seed(SEED)
 
-# resolved config (frozen by stability.py -> _resolved_config.json)
+# resolved config (values frozen inline; stability sweep script not committed)
 RES_SIGMA, RES_CB, RES_PCA = 0.030, 1024, 20
 SPECTRAL_SPREAD = 0.82
 OUTLIER_PCTL = 95

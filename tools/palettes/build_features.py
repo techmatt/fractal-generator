@@ -1,5 +1,10 @@
 """Build the durable palette feature file + a visual-first validation report.
 
+NOTE: the durable `data/palettes/palette_features.json` is now owned by
+`build_pool.py`, which regenerates it over the full pool. This 76-entry builder is
+kept for its visual-first report; running it writes the durable file over the
+*subset*, silently regressing it. Use `build_pool.py` to regenerate the artifact.
+
   uv run python tools/palettes/build_features.py
 
 Writes:

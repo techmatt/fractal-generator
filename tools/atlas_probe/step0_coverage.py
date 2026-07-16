@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 

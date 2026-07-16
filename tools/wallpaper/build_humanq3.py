@@ -48,13 +48,13 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT / "tools" / "queries"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 
 import sample_location as SL          # noqa: E402  (run_location retain-all, load_v2)
 import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteSampler)
 import colormap as cm                 # noqa: E402  (load_field, stretch_field, render_candidate)
 import location as loc_mod            # noqa: E402  (canonical Location + render_one_flags)
-from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
+from active_ckpt import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
 from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
     LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER, JPG_Q,
     ensure_label_field, render_label_crop,
@@ -246,25 +246,11 @@ def _reconstruct(render):
 
 # ===========================================================================
 # 2. Per-location pool: top-K by pref-v2 (best representative per palette).
+#    The rule itself now lives in the neutral `pool_rule` module so the LIVE
+#    build_fresh_discovery imports it from there, not from this batch builder.
 # ===========================================================================
 
-def top_k_pool(all_candidates, k=K):
-    """The emission pool: one representative per palette (its best-scoring evaluated
-    candidate — a weak palette is its gen-0 render, a strong palette its refined best),
-    then the top-k by pref-v2. Distinct palettes by construction, so the k form a real
-    within-location gradient (rank-1 highest pref-v2 .. rank-k the pool floor); the R=2
-    refined winners land at rank-1 by construction. Each pick gains `rank` (1..k) and
-    `pool_size`. Fewer than k distinct palettes -> take what's there."""
-    best = {}
-    for c in all_candidates:
-        cur = best.get(c["palette"])
-        if cur is None or c["score"] > cur["score"]:
-            best[c["palette"]] = c
-    reps = sorted(best.values(), key=lambda c: -c["score"])[:k]
-    for rank, c in enumerate(reps, start=1):
-        c["rank"] = rank
-        c["pool_size"] = len(reps)
-    return reps
+from pool_rule import top_k_pool  # noqa: E402,F401  (shared pool rule; re-exported for callers)
 
 
 # ===========================================================================

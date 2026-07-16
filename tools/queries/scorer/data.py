@@ -38,7 +38,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 # future gate) resolves the checkpoint dir from here -- nothing else hardcodes a
 # version. Flip this one string to promote a staged retrain; the load path is
 # version-agnostic (build_model + state_dict), so only this line changes.
-# Mirrors tools/reframe_probe/probe.py:ACTIVE_CKPT for the location classifier.
+# Mirrors tools/scoring/active_ckpt.py:ACTIVE_CKPT for the location classifier.
 ACTIVE_SCORER_DIR = os.path.join(REPO, "data", "queries", "scorer", "v3_gvo")  # LIVE: pref-v3-gvo
 # One-flip rollback ladder: v3-gvo -> v3 -> v2.
 # To roll back one step, set ACTIVE_SCORER_DIR to the v3 dir (one-line flip):

@@ -50,13 +50,13 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT / "tools" / "queries"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 
 import sample_location as SL          # noqa: E402  (run_location retain-all, load_v2, recolor)
 import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteSampler)
 import colormap as cm                 # noqa: E402  (CandidateConfig, load_field, render_candidate)
 import location as loc_mod            # noqa: E402  (canonical Location + render_one_flags)
-from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
+from active_ckpt import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
 from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
     LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER, JPG_Q,
     ensure_label_field, render_label_crop,

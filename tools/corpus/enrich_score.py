@@ -15,6 +15,13 @@ winner. P(not-bad) for the CORN ordinal head is sigma(logit_0) = P(rank>=1) =
 P(label>=2) -- exact. The K (palette, P) pairs and the gate verdict (from the
 Rust `--meta-out` sidecar) are recorded per location in scored.jsonl.
 
+Sibling bridge: `tools/mining/score_lib.py:run_enrich_score` drives the same
+`enrich --mode score` machinery for the mining harness, but is a *different
+contract* (a v3-pinned library returning the CORN triple, not a v2 CLI writing
+scored.jsonl) — deliberately not unified. The 16-byte stream header both parse
+(`HDR = struct.Struct("<IIII")`) is owned by the Rust side (`src/enrich.rs`), not
+by either script.
+
 Run:
   uv run python tools/corpus/enrich_score.py \
       --pool data/guided_descend/run5/pool.jsonl \

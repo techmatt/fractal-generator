@@ -38,7 +38,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 
@@ -49,7 +49,7 @@ except Exception:
     pass
 
 from reframe import reframe_location, Location  # noqa: E402
-from probe import make_scorer  # noqa: E402
+from active_ckpt import make_scorer  # noqa: E402
 
 DESCEND_DIR = ROOT / "data" / "guided_descend" / "atlas_probe_step0"
 OUT_DIR = ROOT / "data" / "atlas_probe" / "step0"          # DURABLE table

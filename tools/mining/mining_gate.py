@@ -1,7 +1,7 @@
 """The pinned render-mode (mining) quality gate — ``mining_v1``.
 
 This is the SINGLE SOURCE OF TRUTH for the strange-mode quality gate, the mining
-analogue of ``reframe_probe.probe.ACTIVE_CKPT`` (the location-quality pin). It does
+analogue of ``scoring.active_ckpt.ACTIVE_CKPT`` (the location-quality pin). It does
 one job: **gate** — raster in, ``p_ge3`` + pass/fail out. The candidate-generation
 loop (per-location mode x param rendering + quota policy) is the separate deploy
 tail and does NOT live here; it *calls* this.

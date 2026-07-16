@@ -58,7 +58,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT / "tools" / "queries"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(HERE))
 
 import sample_location as SL          # noqa: E402  (run_location retain-all, load_v2)
@@ -67,12 +67,12 @@ import colormap as cm                 # noqa: E402  (stretch_field)
 import location as loc_mod            # noqa: E402  (canonical Location, from_render_block, location_key)
 import corpus_common as cc            # noqa: E402  (is_v6_decoded — v6-stamp guard)
 import gather_select as gs            # noqa: E402  (canonical ledger->render family map + outcome_geometry)
-from probe import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
+from active_ckpt import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
 from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
     LABEL_W, LABEL_H, LABEL_SS, LABEL_FILTER,
     ensure_label_field, render_label_crop,
 )
-from build_humanq3 import top_k_pool  # noqa: E402  (the humanq3 pool rule — REUSED verbatim)
+from pool_rule import top_k_pool  # noqa: E402  (shared pool rule; lifted out of build_humanq3)
 
 DISCOVERY_LEDGER = ROOT / "data" / "discovery" / "outcome_ledger.jsonl"
 WALLPAPER_CORPUS = ROOT / "data" / "wallpaper_corpus"

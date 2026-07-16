@@ -70,12 +70,12 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]                       # tools/reframe -> tools -> repo root
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 
 # Classifier native paths reused verbatim (same imports speed.py uses).
-from probe import (  # noqa: E402
+from active_ckpt import (  # noqa: E402
     BIN, PALETTE, JPG_Q, auto_maxiter, make_scorer, _unique_score3_locations, ACTIVE_CKPT,
 )
 import location as loc_mod  # noqa: E402  (the one render-one flag builder + family_params)

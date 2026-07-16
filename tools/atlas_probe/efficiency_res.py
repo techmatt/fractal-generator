@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 
@@ -52,7 +52,7 @@ import step0  # noqa: E402
 import step0_reanalysis as ra  # noqa: E402
 import step0_coverage as cov  # noqa: E402
 from step0 import bin_seeds, choose_grid, choose_grid_stability, spearman  # noqa: E402
-from probe import make_scorer  # noqa: E402
+from active_ckpt import make_scorer  # noqa: E402
 
 MODEL = ra.MODEL
 RESOLUTIONS = [768, 512, 384]

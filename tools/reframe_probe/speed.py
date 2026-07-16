@@ -55,9 +55,10 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "scoring"))  # active_ckpt (formerly the reframe_probe sibling `probe`)
 
-# Reuse the probe's machinery verbatim.
-from probe import (  # noqa: E402
+# Reuse the active_ckpt machinery verbatim.
+from active_ckpt import (  # noqa: E402
     BIN, ROOT, PALETTE, JPG_Q, auto_maxiter, make_scorer, select_anchors,
 )
 

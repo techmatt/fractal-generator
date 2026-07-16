@@ -43,7 +43,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools" / "atlas_probe"))
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 
@@ -60,7 +60,7 @@ import reframe  # noqa: E402  (reframe_location + DUMP_GUARD_FIELD hook + Locati
 from reframe import reframe_location, Location, _tile_name, RENDER_W, RENDER_H, RENDER_SS  # noqa: E402
 import step0_reanalysis as sr  # noqa: E402  (module-global SCRATCH holds the raw tiles)
 from step0_reanalysis import load_frames_by_walk, raw_screen_walk, KRAW  # noqa: E402
-from probe import auto_maxiter, PALETTE, JPG_Q, ACTIVE_CKPT  # noqa: E402
+from active_ckpt import auto_maxiter, PALETTE, JPG_Q, ACTIVE_CKPT  # noqa: E402
 import location as loc_mod  # noqa: E402  (render_one_flags for the microbench)
 import guard  # noqa: E402
 

@@ -41,7 +41,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tools" / "reframe"))
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
 
@@ -58,7 +58,7 @@ from step0_reanalysis import (  # noqa: E402
     _raw_tile_name, TABLE_JSONL as REANALYSIS_TABLE,
 )
 from reframe import reframe_location  # noqa: E402
-from probe import make_scorer  # noqa: E402
+from active_ckpt import make_scorer  # noqa: E402
 
 MODEL = "data/classifier/v5/model_best.pt"
 OUT_DIR = ROOT / "data" / "atlas_probe" / "step0_efficiency"

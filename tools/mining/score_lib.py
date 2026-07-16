@@ -17,6 +17,13 @@ normalize), so scores stay on the trained distribution:
 
 The mining harness drives the same `enrich` machinery with *aggressive params*
 (custom rosters, geometries) without touching any production default.
+
+Sibling bridge: `tools/corpus/enrich_score.py` drives the same `enrich --mode
+score` machinery for the labeling path, but is a *different contract* (a v2 CLI
+writing scored.jsonl, not a v3-pinned library returning the CORN triple) —
+deliberately not unified. The 16-byte stream header both parse (`HDR =
+struct.Struct("<IIII")`) is owned by the Rust side (`src/enrich.rs`), not by
+either script.
 """
 from __future__ import annotations
 

@@ -27,11 +27,11 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-sys.path.insert(0, str(ROOT / "tools" / "reframe_probe"))   # probe
+sys.path.insert(0, str(ROOT / "tools" / "scoring"))   # probe
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))          # location
 sys.path.insert(0, str(ROOT / "tools" / "mining"))          # score_lib (Scorer type)
 
-from probe import PALETTE, JPG_Q, auto_maxiter  # noqa: E402
+from active_ckpt import PALETTE, JPG_Q, auto_maxiter  # noqa: E402
 import location as loc_mod  # noqa: E402
 
 # The Rust engine (guided-descend / render-one). Same path as probe.BIN / the old
