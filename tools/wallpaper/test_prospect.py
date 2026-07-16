@@ -444,6 +444,210 @@ def test_embedding_shard_carries_producer(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Loop-level annotate-retry wiring — the ONLY integration test that drives the retry
+# through the REAL orchestrate() loop (not annotate_with_retry in isolation). Only the
+# GPU + subprocess phases are patched: run_phase is replaced by a stub that simulates
+# discovery (appends fresh ledger rows), pool (writes images.jsonl from them), and
+# annotate (store-append + report on success; run_phase-not-ok / raised-exception on the
+# injected-failure attempts). Everything else — the retry decision, the reconcile, the
+# state save, the deferral/continue, the run summary — is the real orchestrator. The
+# annotate SUCCESS path replays the real store side (ann.build_record -> store.append_records
+# dedup), so what recovers/defers is the production wiring, not a mock of it.
+# --------------------------------------------------------------------------- #
+def _flag(cmd, name):
+    """The value following `name` in a run_phase cmd (the stub only sees what the subprocess
+    would see — it reacts to the command the loop actually built, not to test-side state)."""
+    s = [str(x) for x in cmd]
+    return s[s.index(name) + 1] if name in s else None
+
+
+class _LoopHarness:
+    """Drives po.orchestrate by standing in for its GPU/subprocess phases. `fresh_plan`
+    maps cycle -> number of fresh q3 discovery yields (0 -> saturation once MAX_EMPTY_CYCLES
+    empties accrue, which bounds the run); `annotate_plan` maps cycle -> one of
+    ok | fail_once | fail_twice | raise_twice (default ok)."""
+    _OK = {"ok": True, "rc": 0, "elapsed_s": 0.0, "killed": False,
+           "start_epoch": 0.0, "end_epoch": 0.0}
+    _NOTOK = {**_OK, "ok": False, "rc": 1}
+
+    def __init__(self, fresh_plan, annotate_plan):
+        self.fresh_plan = fresh_plan
+        self.annotate_plan = annotate_plan
+        self.disc_cycle = 0             # one family, no phoenix -> one discovery call per cycle
+        self.attempts = {}             # cycle -> annotate invocation count (retry visibility)
+        self.annotate_names = []       # every annotate phase name seen (proves the retry fired)
+
+    # -- the single seam: replaces oo.run_phase (the child-process runner) --
+    def run_phase(self, log, name, cmd, expected_s):
+        if name.startswith("discovery:"):
+            self._discovery(cmd)
+        elif name.startswith("pool:"):
+            self._pool(cmd)
+        elif name.startswith("annotate:"):
+            return self._annotate(name, cmd)
+        return dict(self._OK)
+
+    def _discovery(self, cmd):
+        self.disc_cycle += 1
+        n = self.fresh_plan.get(self.disc_cycle, 0)
+        ledger = Path(_flag(cmd, "--discovery-dir")) / "outcome_ledger.jsonl"
+        with open(ledger, "a", encoding="utf-8") as f:
+            for i in range(n):
+                f.write(json.dumps(_ledger_row(f"c{self.disc_cycle}_{i}", "mandelbrot")) + "\n")
+
+    def _pool(self, cmd):
+        ledger = Path(_flag(cmd, "--ledger"))
+        start = int(_flag(cmd, "--ledger-start-line"))
+        batch_dir = Path(_flag(cmd, "--batch-dir"))
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        fresh = oo.new_fresh_q3(ledger, start)              # the REAL admission filter
+        with open(batch_dir / "images.jsonl", "w", encoding="utf-8") as f:
+            for d in fresh:
+                f.write(json.dumps(_pool_row(d["id"], d["family"], "mandelbrot")) + "\n")
+        (batch_dir / "selection_report.json").write_text(json.dumps(
+            {"within_set_dups_dropped": 0, "excluded_head_corpus_by_key": 0,
+             "excluded_head_corpus_by_proximity": 0, "unrenderable_dropped": 0}),
+            encoding="utf-8")
+
+    def _annotate(self, name, cmd):
+        self.annotate_names.append(name)
+        cycle = int(_flag(cmd, "--cycle"))
+        self.attempts[cycle] = self.attempts.get(cycle, 0) + 1
+        attempt = self.attempts[cycle]                       # 1-based
+        plan = self.annotate_plan.get(cycle, "ok")
+        if plan == "raise_twice":
+            # exercises _attempt_annotate's except-isolation: a phase that RAISES is caught
+            # inside the loop, treated as not-ok, and (twice) deferred — never propagates.
+            raise RuntimeError(f"annotate crashed (injected) cycle {cycle} attempt {attempt}")
+        succeed = plan == "ok" or (plan == "fail_once" and attempt >= 2)
+        if not succeed:
+            return dict(self._NOTOK)                         # run_phase not ok, NO report written
+        self._annotate_store_side(cmd)                       # replay the real annotate store side
+        return dict(self._OK)
+
+    def _annotate_store_side(self, cmd):
+        """The store-facing half of a real annotate WITHOUT GPU/embed/thumbnail: dedup the pool
+        against the store, append survivors, write a schema-faithful annotate_report. Uses the
+        production store.append_records dedup, so a retry over the same pool is genuinely
+        idempotent (partial first attempt reappears as coord-dups, not double-writes)."""
+        batch_dir = Path(_flag(cmd, "--pool"))
+        ledger = Path(_flag(cmd, "--ledger"))
+        run_id = _flag(cmd, "--run-id")
+        cycle = int(_flag(cmd, "--cycle"))
+        records_path = Path(_flag(cmd, "--records"))
+        rows = ann.unique_locations(batch_dir / "images.jsonl")
+        led = ann.load_ledger(ledger)
+        have = store.existing_location_ids(records_path)
+        records, n_dup = [], 0
+        for r in rows:
+            oid = r["provenance"]["source_oid"]
+            if oid in have:
+                n_dup += 1
+                continue
+            records.append(ann.build_record(oid, r["render"], r["provenance"], led,
+                                            run_id, cycle, str(ledger)))
+        written = store.append_records(records, records_path)
+        (batch_dir / "annotate_report.json").write_text(json.dumps(
+            {"cycle": cycle, "pool_unique_locations": len(rows), "dropped_coord_dup": n_dup,
+             "dropped_field_fail": 0, "records_written": len(written)}), encoding="utf-8")
+
+
+class _patch_orchestrate_phases:
+    """Patch ONLY the GPU/subprocess/real-disk-cleanup seams of the overnight-helpers module the
+    prospect loop reuses: run_phase (child processes), gpu_used_mib (nvidia-smi), and the three
+    seeder-scratch/cycle purges (they touch the real repo scratch root, not the tmp tree). The
+    retry/reconcile/deferral logic under test is left entirely real. Manual (works under the
+    standalone runner too, which has no monkeypatch fixture)."""
+    def __init__(self, harness):
+        self.h = harness
+        self._saved = {}
+
+    def __enter__(self):
+        for attr, repl in [
+            ("run_phase", self.h.run_phase),
+            ("gpu_used_mib", lambda: None),
+            ("sweep_orphan_seeder_scratch", lambda log: None),
+            ("purge_cycle_intermediates", lambda *a, **k: 0),
+            ("_reclaim_seeder_scratch", lambda *a, **k: (0, 0)),
+        ]:
+            self._saved[attr] = getattr(oo, attr)
+            setattr(oo, attr, repl)
+        return self
+
+    def __exit__(self, *exc):
+        for attr, orig in self._saved.items():
+            setattr(oo, attr, orig)
+
+
+def _orchestrate_args(tmp_path, annotate_plan):
+    args = argparse.Namespace(
+        run_id="RUN", out_root=str(tmp_path / "out"), discovery_root=str(tmp_path / "disc"),
+        families=["mandelbrot"], per_family_min=2.0, cap_hours=1.0,   # cap never binds; saturation stops
+        retain_fields=True, field_cache_gb=20.0, seed=0,
+        mb5_every=1, mb_cplane_min=None, disc_batch=6,
+        phoenix_min=0.0, phoenix_walks=0, est_loc_s=6.0,
+        store_records=str(tmp_path / "store" / "records.jsonl"),
+        store_thumbs=str(tmp_path / "store" / "thumbs"),
+        store_emb_shards=str(tmp_path / "store" / "shards"),
+        store_field_cache=str(tmp_path / "store" / "field_cache"))
+    return args
+
+
+def _run_orchestrate(tmp_path, fresh_plan, annotate_plan):
+    harness = _LoopHarness(fresh_plan, annotate_plan)
+    args = _orchestrate_args(tmp_path, annotate_plan)
+    with _patch_orchestrate_phases(harness):
+        summary = po.orchestrate(args)
+    return summary, harness, Path(args.store_records)
+
+
+def test_loop_annotate_fail_twice_defers_and_continues(tmp_path):
+    # cycle 1: 2 fresh q3, annotate fails BOTH attempts -> the cycle is deferred (not lost) and
+    # the loop continues to saturation. The failure is raised from INSIDE orchestrate's annotate
+    # phase; annotate_with_retry is never called by the test.
+    summary, h, rp = _run_orchestrate(tmp_path, {1: 2}, {1: "fail_twice"})
+    assert h.annotate_names == ["annotate:cycle1", "annotate:cycle1(retry)"]  # retried once, in-loop
+    assert summary["cycles_failed"] == 1
+    assert summary["q3_deferred_to_rerun"] == 2
+    assert summary["failed_cycles"][0]["cycle"] == 1
+    assert summary["failed_cycles"][0]["ledger_watermark"] == 0
+    assert "annotate failed twice" in summary["failed_cycles"][0]["reason"]
+    assert store.existing_location_ids(rp) == set()          # nothing salvaged, nothing leaked
+    # the deferral is durable in state.json (what --rerun-failed later drains)
+    st = oo.load_state(tmp_path / "out" / "RUN" / "state.json")
+    assert st["failed_cycles"][0]["cycle"] == 1
+
+
+def test_loop_annotate_raise_twice_is_isolated_and_deferred(tmp_path):
+    # a phase that RAISES (not merely returns not-ok) must be caught inside the loop, not propagate.
+    summary, h, rp = _run_orchestrate(tmp_path, {1: 2}, {1: "raise_twice"})
+    assert h.annotate_names == ["annotate:cycle1", "annotate:cycle1(retry)"]
+    assert summary["cycles_failed"] == 1 and summary["q3_deferred_to_rerun"] == 2
+    assert store.existing_location_ids(rp) == set()
+
+
+def test_loop_annotate_retry_recovers(tmp_path):
+    # cycle 1 annotate fails ONCE then succeeds on the retry: records land, reconcile balances,
+    # NO deferral. Proves the retry both fires and honors the second attempt's success.
+    summary, h, rp = _run_orchestrate(tmp_path, {1: 2}, {1: "fail_once"})
+    assert h.annotate_names == ["annotate:cycle1", "annotate:cycle1(retry)"]   # exactly one retry
+    assert summary["cycles_failed"] == 0 and summary["failed_cycles"] == []
+    assert summary["records_added_this_run"] == 2
+    assert store.existing_location_ids(rp) == {"c1_0", "c1_1"}
+    tot = summary["reconciliation"]["totals"]
+    assert tot["q3_found"] == 2 and tot["records_written"] == 2 and tot["unexplained"] == 0
+
+
+def test_loop_clean_cycle_no_retry(tmp_path):
+    # baseline: a clean annotate needs no retry — exactly one annotate invocation, no deferral.
+    summary, h, rp = _run_orchestrate(tmp_path, {1: 2}, {})     # default plan == "ok"
+    assert h.annotate_names == ["annotate:cycle1"]             # NO retry when the first attempt is ok
+    assert summary["cycles_failed"] == 0
+    assert summary["records_added_this_run"] == 2
+    assert store.existing_location_ids(rp) == {"c1_0", "c1_1"}
+
+
+# --------------------------------------------------------------------------- #
 # Standalone runner.
 # --------------------------------------------------------------------------- #
 def _run_standalone():

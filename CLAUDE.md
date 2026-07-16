@@ -152,7 +152,10 @@ The tree is `out/{renders,strips,demos}/`. Use `crate::ensure_parent_dir(path)?`
 > non-regenerable artifact out of it. (This rule exists because `scratchpad/visual_dup/embed.py`
 > was load-bearing production code — the whole morph_clip dedup axis depended on it — living
 > in a dir whose name said it didn't matter; it was never committed, vanished, and cost a
-> formula sweep to recover.) Mechanically checkable — the two greps below must both stay empty:
+> formula sweep to recover.) **Tests and harnesses belong in the suite, not `scratchpad/`** —
+> if it's worth running twice, it's worth committing (default suite for a normal test,
+> `slow`-marked for an opt-in / destructive one). A test CI never runs and git never sees is a
+> memory of a test, not a test. Mechanically checkable — the two greps below must both stay empty:
 >
 > ```bash
 > # (a) nothing outside scratchpad imports a scratchpad module:
