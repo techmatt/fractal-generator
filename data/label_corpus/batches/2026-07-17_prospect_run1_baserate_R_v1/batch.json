@@ -1,0 +1,100 @@
+{
+  "batch_id": "2026-07-17_prospect_run1_baserate_R_v1",
+  "created": "2026-07-17",
+  "labeler": null,
+  "generator_version": "prospect_run1_baserate_R_v1",
+  "source_run": "prospect_run1",
+  "source_ledger": "data/discovery/fresh_runs/prospect_run1/outcome_ledger.jsonl",
+  "ledger_snapshot_rows": 1616,
+  "schema_version": 1,
+  "stage": "2 (R band; julia:multibrot3/4/5 ONLY; native multibrot R still deferred)",
+  "census": {
+    "unit": "stage1 UNION stage2 (NOT this batch alone)",
+    "member_batches": [
+      "2026-07-17_prospect_run1_baserate_v1",
+      "2026-07-17_prospect_run1_baserate_R_v1"
+    ],
+    "target_families": [
+      "julia:multibrot3",
+      "julia:multibrot4",
+      "julia:multibrot5"
+    ],
+    "population_total": 147,
+    "stage1_mgh_locations": 61,
+    "stage2_R_locations": 86,
+    "complete_condition": "stage1 M/G/H census (61) + stage2 R census (86) == full julia:multibrot ledger population (147)",
+    "census_complete": true,
+    "union_status": "census / unbiased-given-descent (NO sampling on the score across the union) -> eligible as an EVAL set",
+    "note": "Status belongs to the UNION, not this batch. Stage 2 alone is an R score-band selection and on its own is `biased->train`; only stage1 UNION stage2 spans every p_good band with no score sampling, which is what makes it unbiased-given-descent and eval-eligible."
+  },
+  "draw": {
+    "stratify_on": "raw v6 p_good (threshold-free, independent of t_good)",
+    "strata": {
+      "R": [
+        0.0,
+        0.15
+      ],
+      "M": [
+        0.15,
+        0.4
+      ],
+      "G": [
+        0.4,
+        0.7
+      ],
+      "H": [
+        0.7,
+        1.01
+      ]
+    },
+    "stage2_strata": [
+      "R"
+    ],
+    "policy": "census of R for julia:multibrot3/4/5 (take ALL, no subsampling)",
+    "native_R": "DEFERRED (not rendered, not included)",
+    "stratum_populations": {
+      "julia:multibrot3": {
+        "R": 23,
+        "M": 17,
+        "G": 9,
+        "H": 5
+      },
+      "julia:multibrot4": {
+        "R": 34,
+        "M": 7,
+        "G": 11,
+        "H": 2
+      },
+      "julia:multibrot5": {
+        "R": 29,
+        "M": 7,
+        "G": 3,
+        "H": 0
+      }
+    },
+    "stage2_crops_per_family": {
+      "julia:multibrot3": 23,
+      "julia:multibrot4": 34,
+      "julia:multibrot5": 29
+    },
+    "stage2_total_crops": 86
+  },
+  "rate_definition": "P(q3 | location surfaced by the prospect pipeline), NEVER P(q3 | family). Unchanged from stage 1. The pipeline (guarded seeder + reframe + per-degree t_good gate) is the conditioning event; the census gives that conditional rate over the whole julia:multibrot population, band-unbiased.",
+  "parity": {
+    "scored_path": "reframe._render 640x360 ss2 palette=twilight_shifted -> v6 stretch 384x224",
+    "julia_mapping": "fixed c = ledger outcome_cx/cy; viewport = julia_z_cx/cy/fw",
+    "reverified_for_R": "yes \u2014 `--verify-mapping` re-scored R rows before render (do not assume stage 1's pass certifies this band)",
+    "crop_is_scored_image": true
+  },
+  "render_defaults": {
+    "palette": "twilight_shifted",
+    "composition": "center",
+    "width": 640,
+    "height": 360,
+    "ss": 2,
+    "filter": "lanczos3",
+    "interior_mode": "black"
+  },
+  "bias_policy": "STAGE 2 ALONE (R band) is a score-band selection -> `biased->train`: never a standalone retrain feed. The census property (unbiased-given-descent, eval-eligible) is a property of the UNION stage1 UNION stage2, not of this batch. Provenance never enters training regardless.",
+  "guardrails": "did not touch data/v6/manifest.jsonl; no retrain; no threshold change"
+}
