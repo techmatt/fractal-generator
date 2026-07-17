@@ -4,8 +4,8 @@ A batch's hand labels live in ONE of two places:
   (a) merged into its images.jsonl `label.score` (via tools/corpus/merge_scores.py)
       — the loose0 / rev4 / rev4occfix batches; or
   (b) ONLY in a `labels/*.json` sidecar keyed by image_id, because the merge into
-      images.jsonl was never run — the Julia (`julia_ladder_j0`), `mining`, and
-      `scale` batches.
+      images.jsonl was never run — the Julia (`julia_ladder_j0`), `mining`, `scale`,
+      and the two jm-band revival batches (`jm3_band`, `jm45_band`).
 A loader that reads `label.score` alone silently drops the (b) batches: for Julia
 that wiped out the entire family (0 Julia locations), and it dropped the mining/scale
 Mandelbrot labels too.
@@ -39,6 +39,11 @@ SIDECAR_LABELS = {
     "2026-06-25_mining_v3guided_v1": "mining_v3guided_v1.json",
     "2026-06-25_scale_2x2_labelset": "scale_2x2_labelset.json",
     "2026-06-25_scale_controlled_2x2": "scale_2x2_labelset.json",
+    # jm-band revival batches (labeled 2026-07-11/12; never merged in-row, empty
+    # scores.json). Registering them recovers 58+71 crop labels for EVERY canonical
+    # consumer (corpus_reader trainer view, query_sampler pool, atlas guard) at once.
+    "2026-07-11_jm3_band_v1": "jm3_band_v1.json",
+    "2026-07-12_jm45_band_v1": "jm45_band_v1.json",
 }
 
 
