@@ -1110,6 +1110,10 @@ def _run(args, fam: FamilyResolved):
         # 4. per-walk k3 reward + outcome center + decode + 1280-D feature; 5. cloud add.
         b_distinct = b_q3dup = b_notq3 = b_guarded = 0
         b_jdesc = b_jdist = 0   # julia-hook: descents fired / distinct julia q3 this batch
+        b_parent_qual = 0       # julia-hook: qualifying parents this batch (pre-density-gate);
+                                # per-batch so parent ARRIVAL over a cycle is readable, not just a
+                                # cycle total — sizes a c-plane budget cut (saturate-early vs
+                                # arrive-throughout). See prospect run-1 pre-flight.
         for wid in sorted(by_walk):
             frames = by_walk[wid]
             rew = harvest_walk_reward(scorer, wid, frames, WORKERS,
@@ -1191,7 +1195,7 @@ def _run(args, fam: FamilyResolved):
                     # descent's product that matters for the julia twin. The budget-rebalance
                     # watch metric — if this drops near julia_descents, the c-plane budget is too
                     # tight and the twins are being starved.
-                    totals["julia_parent_qualified"] += 1
+                    totals["julia_parent_qualified"] += 1; b_parent_qual += 1
                 jc = (rew["outcome_cx"], rew["outcome_cy"])   # the parameter c (cloud coord)
                 jc_fw = rew["outcome_fw"]                      # parent plane fw = dedup scale
                 # Density pre-check: skip a c already saturated with Julia found-points.
@@ -1269,7 +1273,7 @@ def _run(args, fam: FamilyResolved):
         batch_timings.append(dt)
         el_min = (time.time() - t0) / 60
         rej_frac = native.rejects / max(1, native.draws)
-        jinfo = (f"| julia desc={b_jdesc} jq3+{b_jdist} jcloud={len(julia_cloud)} "
+        jinfo = (f"| julia pq+{b_parent_qual} desc={b_jdesc} jq3+{b_jdist} jcloud={len(julia_cloud)} "
                  if julia_hook else "")
         print(f"  batch {batch_i}: props={len(props)} surv={len(survivors)} walked={len(by_walk)} "
               f"| q3+{b_distinct} q3dup+{b_q3dup} notq3+{b_notq3} guarded+{b_guarded} "
