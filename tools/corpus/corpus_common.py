@@ -66,6 +66,19 @@ PROVENANCE_KEYS = (
     # loop / analysis only — never enters training.
     "family", "k3", "decoded_class", "guard_verdict", "descend_mode",
     "parent_oid", "lineage",
+    # prospect_run1 base-rate band batch (2026-07-17): a stratified-on-score draw
+    # from the FROZEN run-1 discovery ledger, built to (a) validate the v6 machine
+    # `decoded_class`/`t_good` against human labels and (b) estimate the per-family
+    # q3 rate. The v6 scoring is fully reproduced by the render block (Gate-2 parity
+    # max|Δp_good|=1e-4). `p_good`/`p_notbad` = the STORED v6 CORN probs of this
+    # location's committed frame; `t_good` = the per-degree q3 operating point in
+    # force at harvest; `stratum` ∈ {R,M,G,H} = the p_good band the row was drawn
+    # from (R deferred in stage 1); `scorer_version` = the ledger stamp ("v6");
+    # `ledger_id` = the source outcome_ledger row id (the join key back to the
+    # frozen ledger). `family` (reused from the gather block) = the cloud partition
+    # (multibrot{3,4,5} | julia:multibrot{3,4,5}). This block is stratified ON the
+    # score, so it is `biased→train`: analysis/validation only, NEVER a retrain feed.
+    "p_good", "p_notbad", "t_good", "stratum", "scorer_version", "ledger_id",
 )
 
 
