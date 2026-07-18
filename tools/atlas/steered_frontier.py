@@ -18,6 +18,18 @@ the harvest (reframe + CORN decode at the per-partition t_good), the near-dup cl
 guard, and the ledger schema. Only the trajectory POLICY is new; the current walk path is
 byte-untouched.
 
+v1.1 priority (both coefficients default-on; set BOTH to 0 to reproduce the pilot exactly):
+  priority = cheap_eord + Gumbel(T) - dup_penalty - novelty_penalty + beta*depth
+`novelty_penalty` (`--lambda-m`, default 0.5) damps morph-space near-repeats: every scored
+candidate's cheap twilight image is CLIP-embedded (library recipe) alongside the v7 forward
+and compared (cos_max) against a run-scoped morph memory of all admitted + already-expanded
+looks; the penalty ramps 0->lambda_m across cos [lo, hi], where the knee is re-anchored
+EMPIRICALLY on this cheap substrate (morph_anchor_calibrate.py -> data/atlas/morph_anchors.json;
+the library morph_gray anchors 0.851/0.974 are grayscale-scale and do not transfer). Siblings look alike,
+so a hot lineage self-suppresses and perceptual re-buys sink before expansion. `beta*depth`
+(`--beta`, default 0.02) is a small depth tie-breaker. Per-term contributions are logged to
+`prio_terms.jsonl` per pushed candidate.
+
 Crash safety is load-bearing (long processes here get killed at random): the frontier +
 budget + RNG + per-root cap counters checkpoint to state.json every batch; `--resume`
 continues; a STOP sentinel halts at a batch boundary; the admitted-outcome cloud is rebuilt
@@ -42,8 +54,11 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import torch
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools" / "atlas"))
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
 sys.path.insert(0, str(ROOT / "tools" / "mining"))
@@ -74,6 +89,33 @@ M_CAP = 40               # hard cap on expansions per root_id
 DUP_P0 = 1.0             # dup-penalty magnitude at zero distance to the q3 cloud (E[ord] units)
 DUP_SCALE = ps.REJECT_RADIUS   # Gaussian decay scale of the dup penalty (plane coords)
 NEUTRAL_PRIOR = 1.0      # root prior priority (mid E[ord] in [0,2])
+
+# --- morph-novelty + depth knobs (v1.1; both zero => byte-identical pilot behaviour) ---
+LAMBDA_M_DEFAULT = 0.5   # morph-novelty penalty magnitude (E[ord] units); CLI --lambda-m
+BETA_DEFAULT = 0.02      # depth bonus per rung (E[ord] units); CLI --beta
+CLIP_MODEL = "vit_base_patch16_clip_224.openai"  # matches the library morph_clip recipe
+# The penalty knee is on the CHEAP-JPG substrate (not grayscale morph_gray), so the library
+# morph_gray anchors do NOT transfer. Re-anchored empirically by morph_anchor_calibrate.py ->
+# data/atlas/morph_anchors.json; these are only the last-resort fallback if that file is absent.
+ANCHORS_PATH = ROOT / "data" / "atlas" / "morph_anchors.json"
+MORPH_LO_FALLBACK = 0.85
+MORPH_HI_FALLBACK = 0.974
+
+
+def load_morph_anchors(cli_lo=None, cli_hi=None):
+    """Resolve (lo, hi, source) for the novelty knee: CLI override > calibrated anchors file >
+    fallback. Either CLI value alone overrides just that knee."""
+    lo, hi, src = MORPH_LO_FALLBACK, MORPH_HI_FALLBACK, "fallback"
+    if ANCHORS_PATH.exists():
+        a = json.loads(ANCHORS_PATH.read_text(encoding="utf-8"))
+        lo, hi, src = float(a["lo"]), float(a["hi"]), "morph_anchors.json"
+    if cli_lo is not None:
+        lo, src = float(cli_lo), src + "+cli_lo"
+    if cli_hi is not None:
+        hi, src = float(cli_hi), src + "+cli_hi"
+    if hi <= lo:
+        hi = lo + 0.05
+    return lo, hi, src
 FRONTIER_CAP = 6000      # prune the frontier to the top-N by priority (memory bound)
 JULIA_ROOT_FW = 3.0      # fixed z-plane base-scale root view (matches --julia-root-fw)
 EXPAND_TIMEOUT_S = 900   # hard-kill backstop on a hung --expand call
@@ -171,6 +213,86 @@ def dup_penalty(cx, cy, cloud) -> float:
     return DUP_P0 * math.exp(-(d / DUP_SCALE) ** 2)
 
 
+def priority_terms(eord, g, dup_pen, cos_max, lambda_m, beta, depth, lo, hi):
+    """Pure priority decomposition. Returns (priority, {terms}). At lambda_m==0 AND beta==0 this
+    is byte-identical to the pilot's `eord + gumbel - dup_pen` (novelty/depth terms vanish)."""
+    nov_pen = novelty_penalty(cos_max, lambda_m, lo, hi)
+    depth_bonus = beta * depth
+    prio = eord + g - dup_pen - nov_pen + depth_bonus
+    return prio, dict(eord=eord, gumbel=g, dup_pen=dup_pen, cos_max=cos_max,
+                      nov_pen=nov_pen, depth_bonus=depth_bonus, priority=prio)
+
+
+def novelty_penalty(cos_max: float, lambda_m: float, lo: float, hi: float) -> float:
+    """Morph-space near-repeat penalty: zero at substrate-typical similarity (cos<=lo), ramping
+    linearly to full lambda_m at the near-repeat knee (cos>=hi). Anchors are empirical on the
+    cheap-JPG substrate (morph_anchor_calibrate.py). A near-perceptual-dup of an admitted/
+    expanded look sinks by ~lambda_m E[ord] units BEFORE it is popped. lambda_m=0 -> zero."""
+    if lambda_m <= 0.0:
+        return 0.0
+    frac = (cos_max - lo) / (hi - lo)
+    return lambda_m * min(max(frac, 0.0), 1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Run-scoped morph memory — CLIP embeddings (library recipe) of admitted locations +
+# already-expanded nodes, keyed to the cheap twilight presentation each candidate already
+# carries (no extra render; the CLIP forward batches alongside the v7 forward). cos_max vs
+# this set is the novelty signal. Embeddings are L2-normalized; the max-cosine reduction
+# runs on the CLIP device. Persisted as a plain (M,768) matrix so a resume rebuilds it.
+# --------------------------------------------------------------------------- #
+class MorphMemory:
+    def __init__(self, device: str, path: Path):
+        self.device = device
+        self.path = path
+        self._np = np.zeros((0, 768), np.float32)  # normalized memory rows
+        self._buf: list = []                        # pending rows not yet folded into _np/tensor
+        self.mem = None                             # torch (M,768) on device (lazy)
+        if path.exists():
+            z = np.load(path, allow_pickle=False)
+            self._np = z["mem"].astype(np.float32)
+        self._sync()
+
+    def _sync(self):
+        self.mem = torch.from_numpy(self._np).to(self.device) if len(self._np) else None
+
+    def _flush(self):
+        if not self._buf:
+            return
+        rows = [self._np] + self._buf if len(self._np) else self._buf
+        self._np = np.concatenate([r.reshape(-1, 768) for r in rows], axis=0).astype(np.float32)
+        self._buf = []
+        self._sync()
+
+    def add(self, emb: np.ndarray):
+        """Fold one normalized embedding into memory (buffered; applied on next reduce/save)."""
+        if emb is not None:
+            self._buf.append(np.asarray(emb, np.float32).reshape(1, 768))
+
+    def cos_max(self, embs: np.ndarray) -> np.ndarray:
+        """Max cosine of each row of `embs` (normalized, N x 768) vs memory; 0 if empty."""
+        self._flush()
+        n = len(embs)
+        if self.mem is None or n == 0:
+            return np.zeros(n, np.float32)
+        with torch.no_grad():
+            x = torch.from_numpy(np.asarray(embs, np.float32)).to(self.device)
+            c = (x @ self.mem.T).max(dim=1).values
+        return c.float().cpu().numpy()
+
+    def save(self):
+        self._flush()
+        if not len(self._np):
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.parent / (self.path.stem + "_tmp.npz")
+        np.savez_compressed(tmp, mem=self._np)
+        os.replace(tmp, self.path)
+
+    def __len__(self):
+        return len(self._np) + len(self._buf)
+
+
 # --------------------------------------------------------------------------- #
 # Run-scoped ledger (append-only jsonl + atomic npz feature store). Schema parity with
 # production's outcome_ledger.jsonl; the q3 cloud is rebuilt from these rows.
@@ -230,6 +352,12 @@ class SteeredFrontier:
         self.B = args.batch or B_DEFAULT
         self.budget_s = args.budget * 60.0
         self.seed = args.seed
+        # v1.1 steering coefficients (both 0 -> byte-identical pilot behaviour).
+        self.lambda_m = float(args.lambda_m)
+        self.beta = float(args.beta)
+        self.morph_lo, self.morph_hi, self.anchor_src = load_morph_anchors(
+            args.morph_lo, args.morph_hi)
+        self.prio_log = self.run_dir / "prio_terms.jsonl"
 
         # partitions this run tracks a cloud for (c-plane + julia twins if hooked).
         self.partitions = list(self.families)
@@ -257,7 +385,7 @@ class SteeredFrontier:
         self.est_batch_s = 0.0
         self.totals = dict(expanded=0, candidates=0, harvest_checks=0,
                            canonical_q3=0, admitted=0, q3_dup=0, guarded=0,
-                           julia_roots=0, cap_hits=0, dead_nodes=0)
+                           julia_roots=0, cap_hits=0, dead_nodes=0, novelty_hits=0)
         self.rng = np.random.default_rng(self.seed)
         # per-family native seeders (root source) — re-created fresh on resume.
         self.seeders = {f: ps.NativeSeeder(self.seed, self.scratch / f"native_{f}",
@@ -269,6 +397,17 @@ class SteeredFrontier:
         self.clouds = self.ledger.clouds(self.partitions)   # rebuilt from the durable ledger
         self.hooked_c = defaultdict(list)                   # jpart -> [(c_re,c_im)] already hooked
         self.rebuild_hooked_c()
+
+        # --- morph-novelty machinery (only when lambda_m > 0; off == pilot). ---
+        self.clip_model = self.clip_tf = None
+        self.node_embs: dict = {}                           # node_id -> normalized emb (frontier)
+        clip_dev = "cpu"
+        if self.lambda_m > 0.0:
+            from tools.curation.colored_clip import load_clip   # noqa: E402  (heavy; lazy)
+            self.clip_model, self.clip_tf = load_clip()
+            clip_dev = str(next(self.clip_model.parameters()).device)
+            self.node_embs = self.load_node_embs()
+        self.morph = MorphMemory(clip_dev, self.run_dir / "morph_mem.npz")
 
     def rebuild_hooked_c(self):
         """Reconstruct the set of already-hooked julia parameters from the ledger (the
@@ -283,6 +422,73 @@ class SteeredFrontier:
     @staticmethod
     def _flags(family: str) -> list:
         return [] if family == "mandelbrot" else ["--family", family]
+
+    # ---------------------------------------------------------------- morph
+    @property
+    def node_embs_path(self) -> Path:
+        return self.run_dir / "node_embs.npz"
+
+    def load_node_embs(self) -> dict:
+        """Reload frontier-node embeddings (node_id -> normalized emb) so a resume can fold a
+        popped node into morph memory. Keyed by str(node_id)."""
+        p = self.node_embs_path
+        if not p.exists():
+            return {}
+        z = np.load(p, allow_pickle=False)
+        return {int(k): z[k].astype(np.float32) for k in z.files}
+
+    def save_node_embs(self):
+        """Persist embeddings only for node_ids still on the frontier (drop popped/pruned)."""
+        if self.lambda_m <= 0.0:
+            return
+        live = {n["node_id"] for n in self.frontier}
+        keep = {str(k): v for k, v in self.node_embs.items() if k in live}
+        p = self.node_embs_path
+        tmp = p.parent / (p.stem + "_tmp.npz")
+        np.savez_compressed(tmp, **keep)
+        os.replace(tmp, p)
+
+    @torch.no_grad()
+    def clip_embed(self, imgs: list, bs: int = 64) -> np.ndarray:
+        """L2-normalized CLIP embeddings (library recipe) of PIL RGB images (N x 768)."""
+        outs = []
+        for i in range(0, len(imgs), bs):
+            xb = torch.stack([self.clip_tf(im) for im in imgs[i:i + bs]])
+            xb = xb.to(next(self.clip_model.parameters()).device)
+            outs.append(self.clip_model(xb).float().cpu().numpy())
+        E = np.concatenate(outs, axis=0).astype(np.float32)
+        E /= (np.linalg.norm(E, axis=1, keepdims=True) + 1e-9)
+        return E
+
+    def fold_expanded_into_memory(self, batch):
+        """A node that is about to be expanded joins morph memory (its cheap emb). Roots carry
+        no emb and contribute nothing (they are whole-view seeds, not the near-repeats we damp)."""
+        if self.lambda_m <= 0.0:
+            return
+        for n in batch:
+            e = self.node_embs.pop(n["node_id"], None)
+            if e is not None:
+                self.morph.add(e)
+
+    def score_morph(self, cands):
+        """Embed each candidate's cheap twilight image, stash the normalized emb on the cand,
+        and set cand['cos_max'] = max cosine vs the current morph memory (admitted + expanded).
+        No-op (cos_max=0) when the novelty term is disabled."""
+        for c in cands:
+            c["cos_max"] = 0.0
+            c["emb"] = None
+        if self.lambda_m <= 0.0 or not cands:
+            return
+        imgs = []
+        for c in cands:
+            with Image.open(c["img"]) as im:
+                im.load()
+                imgs.append(im.convert("RGB"))
+        E = self.clip_embed(imgs)
+        cm = self.morph.cos_max(E)
+        for c, e, v in zip(cands, E, cm):
+            c["emb"] = e
+            c["cos_max"] = float(v)
 
     def new_node_id(self) -> int:
         self.node_ctr += 1
@@ -342,11 +548,20 @@ class SteeredFrontier:
 
     # ---------------------------------------------------------------- expand
     def pop_batch(self) -> list[dict]:
-        """Top-B by priority, skipping nodes whose root has hit the M cap."""
+        """Top-B expandable nodes by priority. A node whose root has hit the M cap can NEVER be
+        expanded, so it is EVICTED from the frontier (not merely skipped): a capped root spawns
+        ~M*b children before capping, so if capped nodes are retained they accumulate ~b faster
+        than they drain and eventually saturate FRONTIER_CAP, starving pop_batch and forcing
+        perpetual root replenishment (observed live at batch ~110: 100% of a 6000-node frontier
+        was capped-root dead weight, throughput ~0). Eviction is a no-op below the cap regime the
+        pilot ran in (few caps, frontier << cap), so it does not change short-run behaviour."""
         self.frontier.sort(key=lambda n: -n["priority"])
         batch, rest = [], []
         for n in self.frontier:
-            if len(batch) < self.B and self.expansions_per_root.get(str(n["root_id"]), 0) < M_CAP:
+            if self.expansions_per_root.get(str(n["root_id"]), 0) >= M_CAP:
+                self.node_embs.pop(n["node_id"], None)   # evict: capped root -> dead weight
+                continue
+            if len(batch) < self.B:
                 batch.append(n)
             else:
                 rest.append(n)
@@ -508,6 +723,10 @@ class SteeredFrontier:
         if is_q3 and distinct:
             self.clouds[c["partition"]].append(row)
             self.totals["admitted"] += 1
+            # fold the admitted location's look into morph memory (its cheap emb; reframe only
+            # nudges the frame <=0.25*fw, so the candidate's cheap look stands in for it).
+            if self.lambda_m > 0.0 and c.get("emb") is not None:
+                self.morph.add(c["emb"])
             # julia hook: fire per qualifying (admitted-q3) c-plane parent.
             if self.julia_hook and c["partition"] in self.families:
                 self.add_julia_root(c["partition"], (ocx, ocy), oid)
@@ -531,29 +750,56 @@ class SteeredFrontier:
 
     # ---------------------------------------------------------------- push
     def push_children(self, cands):
+        prio_rows = []
         for c in cands:
-            pen = dup_penalty(c["cx"], c["cy"], self.clouds.get(c["partition"], []))
-            prio = c["cheap_eord"] + gumbel(self.rng, T_GUMBEL) - pen
+            dup_pen = dup_penalty(c["cx"], c["cy"], self.clouds.get(c["partition"], []))
+            cos_max = float(c.get("cos_max", 0.0))
+            g = gumbel(self.rng, T_GUMBEL)               # RNG draw order unchanged from pilot
+            prio, terms = priority_terms(
+                c["cheap_eord"], g, dup_pen, cos_max,
+                self.lambda_m, self.beta, c["depth"], self.morph_lo, self.morph_hi)
             self.frontier.append(dict(
                 node_id=c["node_id"], root_id=c["root_id"], partition=c["partition"], c=c["c"],
                 cx=c["cx"], cy=c["cy"], fw=c["fw"], depth=c["depth"], priority=prio,
                 cheap_eord=c["cheap_eord"], cheap_pgood=c["cheap_pgood"], branch=c["branch"],
             ))
-        # prune to the memory bound (keep the best).
+            if c.get("emb") is not None:
+                self.node_embs[c["node_id"]] = c["emb"]
+            if terms["nov_pen"] > 0.0:
+                self.totals["novelty_hits"] += 1
+            prio_rows.append(dict(
+                batch=self.batch_i, node_id=c["node_id"], root_id=c["root_id"],
+                partition=c["partition"], depth=c["depth"],
+                **{k: round(v, 5) for k, v in terms.items()},
+            ))
+        if prio_rows:
+            with open(self.prio_log, "a", encoding="utf-8") as f:
+                for r in prio_rows:
+                    f.write(json.dumps(r) + "\n")
+        # prune to the memory bound (keep the best); drop pruned nodes' cached embeddings.
         if len(self.frontier) > FRONTIER_CAP:
             self.frontier.sort(key=lambda n: -n["priority"])
+            dropped = self.frontier[FRONTIER_CAP:]
             self.frontier = self.frontier[:FRONTIER_CAP]
+            for n in dropped:
+                self.node_embs.pop(n["node_id"], None)
 
     # ---------------------------------------------------------------- state
     def save_state(self):
         state = dict(
             run_ts=self.run_dir.name, families=self.families, julia_hook=self.julia_hook,
             seed=self.seed, B=self.B, budget_s=self.budget_s, tau_h=self.tau_h,
+            lambda_m=self.lambda_m, beta=self.beta,
+            morph_lo=self.morph_lo, morph_hi=self.morph_hi, anchor_src=self.anchor_src,
             node_ctr=self.node_ctr, seq=self.seq, batch_i=self.batch_i,
             active_s=self.active_s, est_batch_s=self.est_batch_s,
             expansions_per_root=self.expansions_per_root, totals=self.totals,
             frontier=self.frontier, rng=self.rng.bit_generator.state,
         )
+        # morph memory + frontier-node embeddings first (state.json references them), then the
+        # checkpoint. Both are heuristic (priority only) — a stale copy never loses an admission.
+        self.morph.save()
+        self.save_node_embs()
         tmp = self.state_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state), encoding="utf-8")
         os.replace(tmp, self.state_path)
@@ -565,11 +811,15 @@ class SteeredFrontier:
         self.active_s = st["active_s"]; self.est_batch_s = st["est_batch_s"]
         self.expansions_per_root = st["expansions_per_root"]; self.totals = st["totals"]
         self.frontier = st["frontier"]; self.tau_h = st["tau_h"]
+        self.totals.setdefault("novelty_hits", 0)
         self.rng.bit_generator.state = st["rng"]
         # cloud is rebuilt from the DURABLE ledger (source of truth), not the checkpoint,
         # so a kill between ledger-append and checkpoint cannot lose/duplicate an admission.
         self.clouds = self.ledger.clouds(self.partitions)
         self.rebuild_hooked_c()
+        # morph memory (+ frontier-node embeddings) reload from their npz sidecars.
+        if self.lambda_m > 0.0:
+            self.node_embs = self.load_node_embs()
         print(f"[resume] batch {self.batch_i}, frontier {len(self.frontier)}, "
               f"active {self.active_s/60:.1f}m, admitted {self.totals['admitted']} "
               f"(cloud rebuilt from ledger: "
@@ -583,7 +833,11 @@ class SteeredFrontier:
             self.load_state()
         else:
             print(f"[fresh] run {self.run_dir.name}: families={self.families} "
-                  f"julia_hook={self.julia_hook} budget={self.budget_s/60:.0f}m B={self.B}", flush=True)
+                  f"julia_hook={self.julia_hook} budget={self.budget_s/60:.0f}m B={self.B} "
+                  f"lambda_m={self.lambda_m} beta={self.beta}", flush=True)
+            if self.lambda_m > 0.0:
+                print(f"[morph-anchors] lo={self.morph_lo:.4f} hi={self.morph_hi:.4f} "
+                      f"({self.anchor_src})", flush=True)
             print(f"[tau_h] {self.tau_h}", flush=True)
             self.draw_roots()
             self.save_state()
@@ -612,12 +866,14 @@ class SteeredFrontier:
                     break
                 self.batch_i -= 1
                 continue
+            self.fold_expanded_into_memory(batch)   # parents join morph memory before scoring
             self.totals["expanded"] += len(batch)
             cands = self.expand_batch(batch)
             self.totals["candidates"] += len(cands)
             self.score_cheap(cands)
-            self.harvest(cands)
-            self.push_children(cands)
+            self.score_morph(cands)                  # embed + cos_max vs memory (parents incl.)
+            self.harvest(cands)                      # admissions fold into memory
+            self.push_children(cands)                # novelty penalty applied from cos_max
 
             dt = time.time() - tb
             self.active_s += dt
@@ -635,6 +891,8 @@ class SteeredFrontier:
         summary = dict(
             run_ts=self.run_dir.name, mode="steered", families=self.families,
             julia_hook=self.julia_hook, budget_min=self.budget_s / 60.0,
+            lambda_m=self.lambda_m, beta=self.beta, morph_mem=len(self.morph),
+            morph_lo=self.morph_lo, morph_hi=self.morph_hi, anchor_src=self.anchor_src,
             active_min=round(self.active_s / 60.0, 2), batches=self.batch_i,
             tau_h=self.tau_h, totals=self.totals,
             cloud_sizes={p: len(v) for p, v in self.clouds.items()},
@@ -647,6 +905,8 @@ class SteeredFrontier:
         print(f"  ADMITTED distinct q3={self.totals['admitted']}  q3_dup={self.totals['q3_dup']} "
               f"guarded={self.totals['guarded']} julia_roots={self.totals['julia_roots']} "
               f"cap_hits={self.totals['cap_hits']}")
+        print(f"  lambda_m={self.lambda_m} beta={self.beta} novelty_hits={self.totals['novelty_hits']} "
+              f"morph_mem={len(self.morph)}")
         print(f"  cloud: {summary['cloud_sizes']}")
         print(f"  ledger -> {self.ledger.path}\n  summary -> {self.run_dir/'summary.json'}")
 
@@ -660,6 +920,14 @@ def main():
     ap.add_argument("--budget", type=float, default=45.0, help="active-time budget (minutes)")
     ap.add_argument("--batch", type=int, default=0, help="nodes per batch (0 = default 32)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--lambda-m", type=float, default=LAMBDA_M_DEFAULT,
+                    help="morph-novelty penalty magnitude (0 disables; == pilot)")
+    ap.add_argument("--beta", type=float, default=BETA_DEFAULT,
+                    help="depth bonus per rung (0 disables; == pilot)")
+    ap.add_argument("--morph-lo", type=float, default=None,
+                    help="override the zero-penalty cos knee (default: calibrated anchors file)")
+    ap.add_argument("--morph-hi", type=float, default=None,
+                    help="override the full-penalty cos knee (default: calibrated anchors file)")
     ap.add_argument("--resume", action="store_true", help="continue from state.json")
     args = ap.parse_args()
     SteeredFrontier(args).run()

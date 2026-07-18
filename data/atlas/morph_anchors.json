@@ -1,0 +1,25 @@
+{
+  "substrate": "cheap_twilight_jpg (vit_base_patch16_clip_224.openai over color JPG)",
+  "lo": 0.8775,
+  "hi": 0.939,
+  "lower_def": "median cheap-substrate pairwise cos over pilot admissions (distinct looks)",
+  "upper_def": "median cheap cos of 4 morph_gray-near-repeat pairs",
+  "n_admissions": 16,
+  "n_near_repeat_pairs": 4,
+  "n_strict_pairs": 0,
+  "near_repeat_cheap_cos": [
+    0.9516,
+    0.9473,
+    0.9269,
+    0.9307
+  ],
+  "admission_pairwise_cheap_median": 0.8775,
+  "expand_jpg_sample_median": 0.8579,
+  "morphgray_ref": {
+    "loose_cut": 0.95,
+    "strict_cut": 0.974,
+    "lib_median": 0.851,
+    "lib_phoenix": 0.938
+  },
+  "source": "data/discovery/steered_pilot/steered"
+}

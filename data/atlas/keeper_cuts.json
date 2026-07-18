@@ -1,0 +1,99 @@
+{
+  "objective": "F0.5",
+  "beta": 0.5,
+  "min_pos": 15,
+  "baseline": 0.5,
+  "eval": "data/classifier/v7/eval_scores_v7.jsonl",
+  "cuts": {
+    "julia:mandelbrot": {
+      "t": 0.55,
+      "calibrated": true,
+      "n": 178,
+      "pos": 25,
+      "prec": 0.8667,
+      "rec": 0.52,
+      "f": 0.7647,
+      "oof_f": 0.7059
+    },
+    "julia:multibrot3": {
+      "t": 0.27,
+      "calibrated": true,
+      "n": 54,
+      "pos": 21,
+      "prec": 0.5882,
+      "rec": 0.9524,
+      "f": 0.6369,
+      "oof_f": 0.6209
+    },
+    "julia:multibrot4": {
+      "t": 0.53,
+      "calibrated": true,
+      "n": 51,
+      "pos": 24,
+      "prec": 0.7,
+      "rec": 0.5833,
+      "f": 0.6731,
+      "oof_f": 0.45
+    },
+    "julia:multibrot5": {
+      "t": 0.15,
+      "calibrated": true,
+      "n": 39,
+      "pos": 22,
+      "prec": 0.6364,
+      "rec": 0.9545,
+      "f": 0.6818,
+      "oof_f": 0.5797
+    },
+    "mandelbrot": {
+      "t": 0.51,
+      "calibrated": true,
+      "n": 942,
+      "pos": 29,
+      "prec": 0.4545,
+      "rec": 0.3448,
+      "f": 0.4274,
+      "oof_f": 0.1709
+    },
+    "multibrot3": {
+      "t": 0.5,
+      "calibrated": false,
+      "n": 3,
+      "pos": 0,
+      "prec": null,
+      "rec": null,
+      "f": null,
+      "oof_f": null
+    },
+    "multibrot4": {
+      "t": 0.5,
+      "calibrated": false,
+      "n": 5,
+      "pos": 0,
+      "prec": null,
+      "rec": null,
+      "f": null,
+      "oof_f": null
+    },
+    "multibrot5": {
+      "t": 0.5,
+      "calibrated": false,
+      "n": 4,
+      "pos": 0,
+      "prec": null,
+      "rec": null,
+      "f": null,
+      "oof_f": null
+    },
+    "phoenix": {
+      "t": 0.5,
+      "calibrated": false,
+      "n": 3,
+      "pos": 0,
+      "prec": null,
+      "rec": null,
+      "f": null,
+      "oof_f": null
+    }
+  }
+}
