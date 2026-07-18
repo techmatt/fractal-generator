@@ -1,0 +1,246 @@
+"""report.py — emission-v1 report + contact sheets.
+
+Writes `out/emission_v1_report.md` (path anchored at repo root per the prompt) plus a
+release contact sheet and a pool contact sheet grouped by niche, and a machine-readable
+`summary.json`. Kept separate from the driver so the report can be rebuilt from the
+durable pool log without re-colorizing.
+"""
+from __future__ import annotations
+
+import json
+from collections import Counter, defaultdict
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+from tools.emission import descriptor as D
+
+ROOT = Path(__file__).resolve().parents[2]
+REPORT_PATH = ROOT / "out" / "emission_v1_report.md"
+
+
+def _font(sz):
+    for name in ("DejaVuSansMono.ttf", "consola.ttf", "cour.ttf", "arial.ttf"):
+        try:
+            return ImageFont.truetype(name, sz)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _thumb(jpg_rel: str, tw: int, th: int):
+    if not jpg_rel:
+        return Image.new("RGB", (tw, th), (40, 40, 44))
+    p = ROOT / jpg_rel
+    if not p.exists():
+        return Image.new("RGB", (tw, th), (40, 40, 44))
+    with Image.open(p) as im:
+        return im.convert("RGB").resize((tw, th), Image.LANCZOS)
+
+
+# --------------------------------------------------------------------------- #
+# Contact sheets.
+# --------------------------------------------------------------------------- #
+def release_sheet(selected: list, sel_log: list, out_png: Path, cols: int = 4):
+    tw, th, pad, lh, head = 300, 169, 8, 30, 34
+    n = len(selected)
+    rows = (n + cols - 1) // cols
+    W = pad + cols * (tw + pad)
+    H = head + rows * (th + lh + pad) + pad
+    sheet = Image.new("RGB", (W, H), (18, 18, 20))
+    d = ImageDraw.Draw(sheet)
+    d.text((pad, 8), f"emission v1 — release ({n} wallpapers), greedy max-marginal-gain",
+           fill=(235, 235, 235), font=_font(15))
+    logi = {l["id"]: l for l in sel_log}
+    for i, e in enumerate(selected):
+        r = e["_rec"]
+        cx = pad + (i % cols) * (tw + pad)
+        cy = head + (i // cols) * (th + lh + pad)
+        sheet.paste(_thumb(r["jpg"], tw, th), (cx, cy))
+        L = logi.get(r["id"], {})
+        d.text((cx + 2, cy + th + 2),
+               f"{i+1}. {r['type']} {r['morph_cluster']}", fill=(220, 220, 160), font=_font(11))
+        d.text((cx + 2, cy + th + 15),
+               f"{r['palette_flavor']}/{r['render_style']} p3={r['p_ge3']:.2f} "
+               f"niche%={L.get('niche_pct', 0):.2f}", fill=(200, 210, 220), font=_font(10))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out_png)
+
+
+def pool_sheet(gated: list, out_png: Path, max_per_niche: int = 6):
+    tw, th, pad, lh, head = 176, 99, 6, 16, 34
+    by_niche = defaultdict(list)
+    for r in gated:
+        by_niche[tuple(r["cell"])].append(r)
+    niches = sorted(by_niche)
+    ncol = max((min(len(v), max_per_niche) for v in by_niche.values()), default=1)
+    W = 260 + ncol * (tw + pad) + pad
+    H = head + len(niches) * (th + lh) + pad
+    sheet = Image.new("RGB", (W, H), (16, 16, 18))
+    d = ImageDraw.Draw(sheet)
+    d.text((pad, 8), f"emission v1 — gated pool by niche ({len(gated)} wallpapers, "
+           f"{len(niches)} occupied cells)", fill=(235, 235, 235), font=_font(14))
+    for i, niche in enumerate(niches):
+        y = head + i * (th + lh)
+        t, cl, f, s = niche
+        d.text((pad, y + th // 2), f"{t}/{cl}\n{f}/{s}", fill=(180, 200, 230), font=_font(10))
+        for j, r in enumerate(sorted(by_niche[niche], key=lambda z: -z["p_ge3"])[:max_per_niche]):
+            x = 256 + j * (tw + pad)
+            sheet.paste(_thumb(r["jpg"], tw, th), (x, y))
+            d.text((x + 2, y + th + 1), f"{r['id']} {r['p_ge3']:.2f}",
+                   fill=(200, 200, 210), font=_font(9))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out_png)
+
+
+# --------------------------------------------------------------------------- #
+# Report body.
+# --------------------------------------------------------------------------- #
+def write_report(eng, selected: list, sel_log: list, rel_paths: list):
+    out = eng.out
+    gated = eng.pool.gated()
+    allrows = eng.pool.rows
+    n_att = len(allrows)
+    occ = eng.model.occupancy()
+
+    # sheets
+    rel_png = out / "release_sheet.png"
+    pool_png = out / "pool_sheet.png"
+    release_sheet(selected, sel_log, rel_png)
+    pool_sheet(gated, pool_png)
+
+    # morph-cluster count among admitted
+    clusters = Counter()
+    for i, r in eng.by_id.items():
+        clusters[r["family"]] += 0
+    n_clusters_by_type = defaultdict(set)
+    for lid, tag in eng.cluster_tags.items():
+        n_clusters_by_type[eng.by_id[lid]["family"]].add(tag)
+    total_clusters = len({t for t in eng.cluster_tags.values()})
+
+    # realized vs nominal surplus (per head — smooth via wallpaper head, strange via mining)
+    n_pass = len(gated)
+    pass_rate = n_pass / n_att if n_att else 0.0
+    n_err = sum(1 for r in allrows if r.get("error"))
+    wp_gated = [r for r in gated if r.get("head") == "wallpaper"]
+    mn_gated = [r for r in gated if r.get("head") == "mining"]
+    wp_also = sum(1 for r in wp_gated if (r["p_ge3"] or 0) >= 0.90)
+    mn_also = sum(1 for r in mn_gated if (r["p_ge3"] or 0) >= 0.50)
+    also_090 = wp_also
+
+    # colorizer choice — flavor + style distribution vs uniform-random baseline
+    chosen_flavor = Counter(r["palette_flavor"] for r in allrows)
+    chosen_style = Counter(r["render_style"] for r in allrows)
+    n_flavors = len(eng.flavors)
+    n_styles = len(eng.styles)
+    uniform_flavor = n_att / n_flavors if n_flavors else 0
+    uniform_style = n_att / n_styles if n_styles else 0
+
+    L = []
+    L.append("# Emission v1 — diversity-aware emission (deficit colorize + selection)\n")
+    L.append(f"Source ledger: `{eng.ledger.relative_to(ROOT)}` · floor **{eng.floor}** "
+             f"(production gate 0.90) · release N=**{eng.release_n}** · "
+             f"target gated ≥ **{eng.target_gated}**.\n")
+
+    L.append("## Intake — morph clusters among admitted locations\n")
+    L.append(f"- **{len(eng.rows)}** admitted locations "
+             f"(current-decode ∧ decoded_class==3 ∧ guard_pass ∧ distinct)")
+    L.append(f"- **{total_clusters}** morph clusters (within-type, cos>{D.NEAR_DUP_THRESHOLD}) "
+             f"across **{len(n_clusters_by_type)}** fractal types:")
+    for t in sorted(n_clusters_by_type):
+        n_loc = sum(1 for r in eng.rows if r["family"] == t)
+        L.append(f"  - `{t}`: {n_loc} locations → {len(n_clusters_by_type[t])} clusters")
+    L.append("")
+
+    L.append("## Niche occupancy + deficit (before → after)\n")
+    L.append(f"- feasible cells: **{occ['feasible_cells']}** "
+             f"((type,cluster) × {n_flavors} flavors × {n_styles} styles)")
+    L.append(f"- BEFORE (empty pool): 0 populated, deficit = uniform target over all "
+             f"{occ['feasible_cells']} feasible cells")
+    L.append(f"- AFTER: **{occ['populated_cells']}** distinct cells populated by the "
+             f"{n_pass}-wallpaper gated pool; **{occ['capped']}** cells hit the attempt cap "
+             f"and left support")
+    L.append(f"- **{occ['populated_cells']}** distinct cells did the {n_pass}-surplus "
+             f"populate (out of {occ['feasible_cells']} feasible).")
+    # per-axis marginal occupancy of the gated pool (which axis values actually filled)
+    ax_pop = {ax: Counter() for ax in ("type", "morph_cluster", "palette_flavor", "render_style")}
+    for r in gated:
+        for ax in ax_pop:
+            ax_pop[ax][r[ax]] += 1
+    L.append(f"- axis coverage in the gated pool: "
+             f"**{len(ax_pop['type'])}** types · **{len(ax_pop['morph_cluster'])}** morph clusters · "
+             f"**{len(ax_pop['palette_flavor'])}**/{n_flavors} palette flavors · "
+             f"**{len(ax_pop['render_style'])}**/{n_styles} render styles")
+    L.append(f"  - render styles present: "
+             + ", ".join(f"{s}×{c}" for s, c in ax_pop['render_style'].most_common()))
+    L.append("")
+
+    L.append("## Realized vs nominal surplus\n")
+    L.append(f"Render styles route to two heads: **smooth → wallpaper head** "
+             f"(floor {eng.floor}, production gate 0.90); **strange → mining head** "
+             f"(floor {eng.mining_floor}, production gate 0.50). Quality is only compared "
+             f"within a niche, which pins the style/head, so the heads never mix.\n")
+    L.append(f"- attempts: **{n_att}** · gated: **{n_pass}** → post-floor pass rate "
+             f"**{pass_rate:.1%}** · render errors: {n_err}")
+    L.append(f"- wallpaper-head (smooth): **{len(wp_gated)}** gated, **{wp_also}** also clear "
+             f"the 0.90 production gate → the floor's extra admits (0.75–0.90) = "
+             f"{len(wp_gated) - wp_also}")
+    L.append(f"- mining-head (strange): **{len(mn_gated)}** gated, **{mn_also}** also clear "
+             f"the 0.50 production gate → the floor's extra admits ({eng.mining_floor}–0.50) = "
+             f"{len(mn_gated) - mn_also}")
+    extra = (len(wp_gated) - wp_also) + (len(mn_gated) - mn_also)
+    L.append(f"- reading: the permissive floors are doing a "
+             f"{'small' if extra <= n_pass * 0.5 else 'large'} amount of work "
+             f"({extra}/{n_pass} gated wallpapers sit below their production gate).\n")
+
+    L.append("## Colorizer choice — deficit-driven palette/style spread\n")
+    L.append(f"Chosen palette-flavor distribution over {n_att} colorize attempts vs the "
+             f"uniform-random expectation ({uniform_flavor:.1f}/flavor):\n")
+    L.append("| palette flavor | chosen | uniform-random |")
+    L.append("|---|---:|---:|")
+    for f, c in chosen_flavor.most_common():
+        L.append(f"| {f} | {c} | {uniform_flavor:.1f} |")
+    L.append("")
+    L.append(f"Render-style distribution (uniform-random {uniform_style:.1f}/style):\n")
+    L.append("| render style | chosen |")
+    L.append("|---|---:|")
+    for s, c in chosen_style.most_common():
+        L.append(f"| {s} | {c} |")
+    L.append("")
+
+    L.append(f"## Release selection — {len(selected)} picks (greedy max-marginal-gain)\n")
+    L.append("Marginal gain = niche-relative quality (within-niche p_ge3 percentile) × "
+             "coverage gain (1 − max similarity to already-selected under the per-axis "
+             "kernel). `nearest` = the closest already-selected wallpaper (displacement).\n")
+    L.append("| # | id | type/cluster | flavor/style | p_ge3 | niche% | cov.gain | nearest (sim) |")
+    L.append("|--:|---|---|---|--:|--:|--:|---|")
+    for i, (e, l) in enumerate(zip(selected, sel_log), 1):
+        r = e["_rec"]
+        near = f"{l['nearest_selected']} ({l['nearest_sim']:.2f})" if l["nearest_selected"] else "—"
+        L.append(f"| {i} | {r['id']} | {r['type']}/{r['morph_cluster']} | "
+                 f"{r['palette_flavor']}/{r['render_style']} | {r['p_ge3']:.3f} | "
+                 f"{l['niche_pct']:.2f} | {l['coverage_gain']:.2f} | {near} |")
+    L.append("")
+    L.append(f"Release full-res PNGs: **{len(rel_paths)}** under `{eng.release_dir.relative_to(ROOT)}/`.\n")
+    L.append("## Contact sheets\n")
+    L.append(f"- `{rel_png.relative_to(ROOT)}` — the {len(selected)}-wallpaper release")
+    L.append(f"- `{pool_png.relative_to(ROOT)}` — the gated pool grouped by niche\n")
+
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REPORT_PATH.write_text("\n".join(L), encoding="utf-8")
+
+    summary = {
+        "ledger": str(eng.ledger.relative_to(ROOT)),
+        "n_admitted": len(eng.rows), "n_morph_clusters": total_clusters,
+        "feasible_cells": occ["feasible_cells"], "populated_cells": occ["populated_cells"],
+        "capped_cells": occ["capped"],
+        "attempts": n_att, "gated": n_pass, "pass_rate": round(pass_rate, 4),
+        "gated_also_090": also_090, "render_errors": n_err,
+        "release_n": len(selected), "release_rendered": len(rel_paths),
+        "floor": eng.floor, "ranker": selected[0]["_rec"]["ranker"] if selected else None,
+    }
+    (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"[report] {REPORT_PATH}\n[report] {rel_png}\n[report] {pool_png}\n"
+          f"[report] {out/'summary.json'}", flush=True)
+    return summary

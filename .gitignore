@@ -84,6 +84,10 @@ __pycache__/
 # the test render locations and the test palette selection.
 !/data/test_renders.json
 !/data/test_palettes.json
+# Emission-v1 diversity target measure (tools/emission): a hand-editable config that is
+# part of the deficit definition, not a regenerable artifact — commit it.
+!/data/emission/
+!/data/emission/target_measure.json
 # Permanent label corpus (see data/label_corpus/CORPUS_SCHEMA.md): commit the
 # tiny, irreplaceable metadata (schema, batch.json, images.jsonl, scores.json);
 # gitignore crops/ — each crop is a pure function of its row's `render` block,

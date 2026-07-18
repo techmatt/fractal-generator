@@ -1,0 +1,7 @@
+{
+  "_doc": "Hand-editable target measure for emission-v1 diversity. Uniform over feasible cells (type × morph_cluster × palette_flavor × render_style) by default. Add per-region multipliers under weight_overrides: each override multiplies the base weight (1.0) of every cell whose axis values all fall in the override's listed sets. attempt_cap evicts a cell from the target support after that many colorize attempts with zero fills. softmax_temp controls how sharply the deficit-max option is preferred (small → argmax, large → uniform); deficits are range-normalized before softmax so this is scale-free.",
+  "mode": "uniform",
+  "attempt_cap": 6,
+  "softmax_temp": 0.35,
+  "weight_overrides": []
+}
