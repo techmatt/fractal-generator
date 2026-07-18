@@ -24,6 +24,13 @@ sys.path.insert(0, str(_HERE))
 import library_store as store          # noqa: E402
 import library_annotate as ann         # noqa: E402
 from tools.corpus import location as loc_mod  # noqa: E402
+from tools.corpus.corpus_common import active_scorer_version  # noqa: E402
+
+# The real seeder stamps each outcome row with the ACTIVE checkpoint's version, so fixtures
+# must use it too — a hardcoded stamp would read as stale (fresh-q3 harvest gates on
+# is_current_decoded) the moment ACTIVE_CKPT is flipped, which is exactly what happened at
+# the v6->v7 promotion.
+_CUR_SCORER_VERSION = active_scorer_version()
 
 
 # --------------------------------------------------------------------------- #
@@ -45,7 +52,7 @@ def _pool_row(oid, family, fractal_type, cx="0.1", cy="0.2", fw="0.01",
 
 
 def _ledger_row(oid, family):
-    return {"id": oid, "family": family, "scorer_version": "v6", "k3": 0.31,
+    return {"id": oid, "family": family, "scorer_version": _CUR_SCORER_VERSION, "k3": 0.31,
             "raw_top3": [0.3, 0.31, 0.32], "decoded_class": 3, "p_good": 0.42,
             "p_notbad": 0.8, "t_good": 0.24, "reached_depth": 9, "guard_pass": True}
 
@@ -593,7 +600,7 @@ def _orchestrate_args(tmp_path, annotate_plan, total_cap_hours=1.0, session_cap_
         families=["mandelbrot"], per_family_min=2.0,
         total_cap_hours=total_cap_hours, session_cap_hours=session_cap_hours,  # default: never binds
         retain_fields=True, field_cache_gb=20.0, seed=0,
-        mb5_every=1, mb_cplane_min=None, disc_batch=6,
+        mb_cplane_min=None, disc_batch=6,
         phoenix_min=0.0, phoenix_walks=0, est_loc_s=6.0,
         store_records=str(tmp_path / "store" / "records.jsonl"),
         store_thumbs=str(tmp_path / "store" / "thumbs"),

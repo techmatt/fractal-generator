@@ -380,15 +380,11 @@ def orchestrate(args):
         # EMITTED level but supplies the julia-hook parents (the productive part), so it's a
         # per-family BUDGET knob, not a drop. --mb-cplane-min overrides the c-plane budget for
         # multibrot3/4/5 (default: == per_family_min, i.e. NO cut — a conservative default, tune
-        # from the instrumented long run); --mb5-every runs multibrot5 only every Nth cycle.
+        # from the instrumented long run).
         seeder_summ_dir = run_dir / "seeder_summaries"
         seeder_summ_dir.mkdir(parents=True, exist_ok=True)
         fams_run = 0
         for fi, fam in enumerate(families):
-            if fam == "multibrot5" and (cycle - 1) % max(1, args.mb5_every) != 0:
-                log(f"  mb5-every {args.mb5_every}: skipping multibrot5 c-plane discovery "
-                    f"this cycle {cycle} (its twin isn't zero, so it's skipped, not dropped).")
-                continue
             fam_budget_min = _family_cplane_min(fam, args)
             fam_budget_s = fam_budget_min * 60.0
             if remaining() < fam_budget_s:
@@ -924,9 +920,6 @@ def main():
                          "high-degree c-plane base while keeping enough parent supply for the "
                          "productive julia twins; watch fresh_q3_twin / qualifying_parents in the "
                          "run summary so a cut doesn't starve the hooks.")
-    ap.add_argument("--mb5-every", type=int, default=1,
-                    help="run multibrot5 c-plane discovery only every Nth cycle (default 1 = every "
-                         "cycle). Its twin isn't zero, so mb5 is throttled, never deleted.")
     ap.add_argument("--pool-count", type=int, default=POOL_COUNT,
                     help="INERT for selection (the pool is uncapped: --pool-all pools every fresh "
                          "q3). Kept for CLI/log compatibility only.")

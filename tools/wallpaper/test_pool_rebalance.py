@@ -249,9 +249,8 @@ def test_annotate_first_attempt_success_no_retry():
 # =========================================================================== #
 # 3. Per-family c-plane budget knob (Part 2) — changes budget, never zeroes supply.
 # =========================================================================== #
-def _args(per_family_min=7.0, mb_cplane_min=None, mb5_every=1):
-    return argparse.Namespace(per_family_min=per_family_min, mb_cplane_min=mb_cplane_min,
-                              mb5_every=mb5_every)
+def _args(per_family_min=7.0, mb_cplane_min=None):
+    return argparse.Namespace(per_family_min=per_family_min, mb_cplane_min=mb_cplane_min)
 
 
 def test_family_budget_default_no_cut():
@@ -270,15 +269,6 @@ def test_family_budget_cut_multibrot_only_and_nonzero():
         assert b > 0                                          # ...but parent supply NOT zeroed
     # a tighter cut still stays strictly positive (a knob, never a delete)
     assert po._family_cplane_min("multibrot3", _args(mb_cplane_min=0.5)) == 0.5
-
-
-def test_mb5_every_gating_predicate():
-    # the orchestrator runs mb5 iff (cycle-1) % N == 0; N=1 -> every cycle, N=3 -> 1,4,7,...
-    def runs(cycle, n):
-        return (cycle - 1) % max(1, n) == 0
-    assert [c for c in range(1, 8) if runs(c, 1)] == [1, 2, 3, 4, 5, 6, 7]
-    assert [c for c in range(1, 8) if runs(c, 3)] == [1, 4, 7]
-    assert [c for c in range(1, 8) if runs(c, 2)] == [1, 3, 5, 7]
 
 
 # =========================================================================== #
