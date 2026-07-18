@@ -259,6 +259,11 @@ struct Candidate {
 
 /// `guided-descend` entry point.
 pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
+    // Classifier-steered frontier expansion is a distinct mode dispatched here, before
+    // any of the walk machinery below — the walk path stays byte-untouched.
+    if args.expand.is_some() {
+        return run_expand(args);
+    }
     if args.n_walks == 0 {
         return Err("--n-walks must be > 0".into());
     }
@@ -1049,6 +1054,331 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     println!("elapsed: {:.1}s", t0.elapsed().as_secs_f64());
     println!("pool.jsonl + pool_grid.png + tiles/ under {}", out_dir.display());
     println!("sheet: {}", html_path.display());
+    Ok(())
+}
+
+// ===========================================================================
+// Batch frontier expansion (`--expand`) — classifier-steered driver back-end
+// ===========================================================================
+
+/// One frontier node to expand (parsed from the `--expand` JSONL).
+struct ExpandNode {
+    node_id: u64,
+    root_id: u64,
+    cx: f64,
+    cy: f64,
+    fw: f64,
+    depth: u32,
+}
+
+/// Parse the `--expand` frontier-node JSONL. One object per line carrying
+/// `node_id, root_id, cx, cy, fw, depth` (extra keys ignored). Hand-rolled to match the
+/// repo's serde-free JSON convention (same tokenizer shape as [`load_seed_list`]).
+fn load_expand_nodes(path: &str) -> Result<Vec<ExpandNode>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
+    let mut out = Vec::new();
+    for (ln, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let get = |key: &str| -> Result<f64, String> {
+            let pat = format!("\"{key}\"");
+            let i = line
+                .find(&pat)
+                .ok_or_else(|| format!("expand line {}: missing key {key}", ln + 1))?;
+            let rest = &line[i + pat.len()..];
+            let colon = rest.find(':').ok_or_else(|| format!("expand line {}: no ':' after {key}", ln + 1))?;
+            let tok: String = rest[colon + 1..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))
+                .collect();
+            tok.parse::<f64>()
+                .map_err(|_| format!("expand line {}: bad {key} value '{tok}'", ln + 1))
+        };
+        let node = ExpandNode {
+            node_id: get("node_id")? as u64,
+            root_id: get("root_id")? as u64,
+            cx: get("cx")?,
+            cy: get("cy")?,
+            fw: get("fw")?,
+            depth: get("depth")? as u32,
+        };
+        if !(node.fw > 0.0) || !node.cx.is_finite() || !node.cy.is_finite() {
+            return Err(format!("expand line {}: need finite cx/cy and fw>0", ln + 1));
+        }
+        out.push(node);
+    }
+    Ok(out)
+}
+
+/// fw-dependent iteration policy — a **bit-exact mirror** of `auto_maxiter` in
+/// `tools/scoring/active_ckpt.py` (`FW_HOME=3.0`, base 500, k 0.30, clamp [200,8000]).
+/// The cheap-presentation image is scored by the same classifier the fidelity study
+/// measured on `render-one` at `auto_maxiter(fw)`, so the expand mode must reproduce that
+/// exact maxiter to keep the 0.95 cheap-vs-canonical rank fidelity.
+fn auto_maxiter(fw: f64) -> u32 {
+    let ratio = if fw > 0.0 { 3.0 / fw } else { 1.0 };
+    let lz = if ratio > 0.0 { ratio.log2() } else { 0.0 };
+    let val = 500.0 * (1.0 + 0.30 * lz);
+    val.clamp(200.0, 8000.0) as u32
+}
+
+/// Per-node reproducible sub-seed from `(seed, node_id)` — mixes both through SplitMix64
+/// so a node's expansion is identical no matter which batch/order it is popped in.
+fn node_sub_seed(seed: u64, node_id: u64) -> u64 {
+    let mut s = SplitMix64(seed ^ node_id.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    s.next_u64()
+}
+
+/// `guided-descend --expand`: batch frontier-node expansion for the classifier-steered
+/// driver. One rung per node with the existing gates, emitting **every** gate survivor
+/// (the driver ranks them by classifier), each with a cheap twilight_shifted 384-wide
+/// colorized-field JPG. Reuses the walk's kernel / band / screen / policy verbatim; the
+/// walk path is untouched. Deterministic per `(seed, node_id)`.
+fn run_expand(args: &GuidedDescendArgs) -> Result<(), String> {
+    let nodes = load_expand_nodes(args.expand.as_deref().unwrap())?;
+
+    // --- kernel + band resolution (identical to the walk's setup) ---
+    let parse_c2 = |v: &[String], name: &str| -> Result<Complex<f64>, String> {
+        if v.len() != 2 {
+            return Err(format!("--{name} expects exactly two values <re> <im>, got {}", v.len()));
+        }
+        let re = hp::to_f64(&hp::parse_decimal(&v[0], 64)?);
+        let im = hp::to_f64(&hp::parse_decimal(&v[1], 64)?);
+        Ok(Complex::new(re, im))
+    };
+    if args.julia && args.phoenix {
+        return Err("--julia and --phoenix are mutually exclusive dynamical modes".into());
+    }
+    let degree = args.family.degree();
+    let phoenix_cp: Option<(Complex<f64>, Complex<f64>)> = if args.phoenix {
+        if degree != 2 {
+            return Err("--phoenix is degree-2; incompatible with --family multibrot*".into());
+        }
+        let cs = args.julia_c.clone().unwrap_or_else(|| vec!["0.5667".into(), "0".into()]);
+        let ps = args.phoenix_p.clone().unwrap_or_else(|| vec!["-0.5".into(), "0".into()]);
+        Some((parse_c2(&cs, "c")?, parse_c2(&ps, "p")?))
+    } else {
+        None
+    };
+    let julia_c: Option<Complex<f64>> = match (args.julia, &args.julia_c) {
+        (true, None) => return Err("--julia requires --c <re> <im>".into()),
+        (true, Some(c)) => Some(parse_c2(c, "c")?),
+        _ => None,
+    };
+    let dynamical = julia_c.is_some() || phoenix_cp.is_some();
+    let random_boundary = args.random_boundary && !dynamical;
+
+    let (bw_f, bw_d, bw_r) = args.resolved_branch_weights()?;
+    let wsum = bw_f.max(0.0) + bw_d.max(0.0) + bw_r.max(0.0);
+    if wsum <= 0.0 {
+        return Err("target weights sum to zero".into());
+    }
+    let (p_foci, p_density) = (bw_f.max(0.0) / wsum, bw_d.max(0.0) / wsum);
+    let (pl_center, pl_horizon, pl_random) = args.resolved_placement()?;
+    let plsum = pl_center + pl_horizon + pl_random;
+    let sigmas = args.resolved_sigmas()?;
+    let (zoom_lo, zoom_hi) = args.resolved_zoom_band()?;
+    let band = args.band();
+    let descent_band = crate::generate::AcceptBand { interior_max: 1.0, ..band };
+
+    let node_w = args.node_width.max(16);
+    let node_h = (node_w as f64 * 9.0 / 16.0).round().max(1.0) as u32;
+    let foci_div_px = args.foci_diversity_radius.max(0.0) * node_w as f64;
+
+    let black_cap = args.descent_black_cap;
+    let black_cap_on = black_cap > 0.0 && black_cap < 1.0;
+    let occ_floor = args.descent_occ_floor;
+    let occ_on = occ_floor > 0.0 && occ_floor < 1.0;
+    let skip_occ_d1d2 = !args.descent_occ_at_d1d2;
+    let trap = Trap { shape: TrapShape::Point, center: Complex::new(0.0, 0.0), radius: 1.0 };
+    let gate_palette = crate::palette::builtin("default", false).expect("default palette");
+    let params = color_params();
+
+    // Cheap-presentation palette (twilight_shifted, the fidelity-study cheap-node coloring).
+    let cm_text = std::fs::read_to_string(&args.colormaps)
+        .map_err(|e| format!("read {}: {e}", args.colormaps))?;
+    let stops = probe::load_colormap(&cm_text, &args.preview_palette)?;
+    let mirror = probe::colormap_mirror_needed(&cm_text, &args.preview_palette);
+    let cheap_palette =
+        Palette::from_srgb8_stops_mirrored(args.preview_palette.clone(), &stops, false, mirror);
+
+    // Kernel render at an explicit maxiter (gate renders use args.maxiter; the cheap
+    // presentation uses auto_maxiter(fw) to match the fidelity study).
+    let render_kernel = |frame: &Frame, maxiter: u32| -> render::SampleBuffer {
+        if let Some((pc, pp)) = phoenix_cp {
+            let backend = PhoenixBackend::new(pc, pp, maxiter, args.bailout, trap);
+            render::iterate_samples(&backend, frame, 1)
+        } else if let Some(c) = julia_c {
+            let backend = JuliaBackend::new_degree(c, maxiter, args.bailout, trap, degree);
+            render::iterate_samples(&backend, frame, 1)
+        } else {
+            let prec = hp::prec_bits(frame.out_width, frame.frame_width);
+            let cre = BigFloat::from_f64(frame.center.re, prec);
+            let cim = BigFloat::from_f64(frame.center.im, prec);
+            probe::render_mandel_panel(
+                &cre, &cim, frame.center, frame.frame_width, frame.out_width, frame.out_height, 1,
+                maxiter, args.bailout, degree, prec, trap, BackendChoice::F64,
+            )
+            .buf
+        }
+    };
+
+    let out_dir = Path::new(&args.out_dir);
+    let cheap_dir = out_dir.join("cheap");
+    crate::ensure_parent_dir(cheap_dir.join("x"))?;
+
+    let t0 = std::time::Instant::now();
+    let mut jsonl = String::new();
+    let (mut n_cand, mut n_dead) = (0usize, 0usize);
+
+    for node in &nodes {
+        let mut rng = SplitMix64(node_sub_seed(args.seed, node.node_id));
+        let child_depth = node.depth + 1;
+        let parent = Frame {
+            center: Complex::new(node.cx, node.cy),
+            frame_width: node.fw,
+            out_width: node_w,
+            out_height: node_h,
+        };
+        // One zoom draw per rung (shared across the policy candidates, exactly like the walk).
+        let new_fw = node.fw * sample_log_uniform(zoom_lo, zoom_hi, &mut rng);
+        if new_fw < args.min_fw {
+            let _ = writeln!(
+                jsonl,
+                "{{ \"kind\": \"dead\", \"node_id\": {}, \"root_id\": {}, \"parent_depth\": {}, \
+                 \"depth\": {}, \"children\": 0, \"cause\": \"min_fw_floor\" }}",
+                node.node_id, node.root_id, node.depth, child_depth
+            );
+            n_dead += 1;
+            continue;
+        }
+        let new_fh = new_fw * node_h as f64 / node_w as f64;
+
+        // Render the parent node once (args.maxiter, gate fidelity) for the foci finder.
+        let parent_buf = render_kernel(&parent, args.maxiter);
+        // Occ floor is skipped at the depth-1→2 step (parent depth 1), matching the walk.
+        let occ_here = occ_on && !(node.depth == 1 && skip_occ_d1d2);
+
+        // Draw up to n_cand policy centers; collect EVERY gate survivor.
+        let mut saw_black = false;
+        let mut saw_degen = false;
+        let mut saw_occ = false;
+        // (center, branch, placement, focus_score, int_frac, spread, esc_median, occ)
+        let mut survivors: Vec<(Complex<f64>, &'static str, &'static str, f64, f64, f64, f64, f64)> =
+            Vec::new();
+        for _ in 0..args.descent_candidates.max(1) {
+            let (focus, branch, fscore) = pick_target(
+                &parent, &parent_buf.samples, node_w as usize, node_h as usize, &sigmas,
+                (p_foci, p_density), foci_div_px, random_boundary, &mut rng,
+            );
+            let placement = if branch == Branch::Random {
+                Placement::Center
+            } else {
+                pick_placement((pl_center, pl_horizon, pl_random), plsum, &mut rng)
+            };
+            let center = child_center(focus, placement, new_fw, new_fh, &mut rng);
+            let frame = Frame { center, frame_width: new_fw, out_width: node_w, out_height: node_h };
+
+            // Stage 1: cheap PROBE_W interior cap.
+            if black_cap_on {
+                let probe_h = (PROBE_W as f64 * node_h as f64 / node_w as f64).round().max(1.0) as u32;
+                let probe = Frame { out_width: PROBE_W, out_height: probe_h, ..frame };
+                let pbuf = render_kernel(&probe, args.maxiter);
+                if render::black_fraction(&pbuf.samples) as f64 >= black_cap {
+                    saw_black = true;
+                    continue;
+                }
+            }
+            // Stage 2: node render → band cull → occupancy floor.
+            let buf = render_kernel(&frame, args.maxiter);
+            let (int_frac, esc) = generate::screen_stats(&buf.samples, args.maxiter);
+            if !descent_band.test(int_frac, esc.spread, esc.median).accepted {
+                saw_degen = true;
+                continue;
+            }
+            let occ = {
+                let img = render::shade_and_downsample(
+                    &buf.samples, node_w, node_h, 1, &gate_palette, &params, frame.pixel_size(),
+                );
+                energy::occupancy(&img, OCC_GX, OCC_GY, OCC_FLOOR)
+            };
+            if occ_here && occ < occ_floor {
+                saw_occ = true;
+                continue;
+            }
+            survivors.push((
+                center, branch.name(), placement.name(), fscore, int_frac, esc.spread, esc.median, occ,
+            ));
+        }
+
+        if survivors.is_empty() {
+            // Same furthest-reached binding-constraint priority the walk reports.
+            let cause = if saw_occ {
+                "occ_floor"
+            } else if saw_black {
+                "black_cap"
+            } else if saw_degen {
+                "degenerate"
+            } else {
+                "degenerate"
+            };
+            let _ = writeln!(
+                jsonl,
+                "{{ \"kind\": \"dead\", \"node_id\": {}, \"root_id\": {}, \"parent_depth\": {}, \
+                 \"depth\": {}, \"children\": 0, \"cause\": \"{}\" }}",
+                node.node_id, node.root_id, node.depth, child_depth, cause
+            );
+            n_dead += 1;
+            continue;
+        }
+
+        for (ci, (center, branch, placement, fscore, int_frac, spread, esc_median, occ)) in
+            survivors.iter().enumerate()
+        {
+            // Cheap presentation: 384-wide ss1 twilight_shifted colorized field at
+            // auto_maxiter(fw) — the exact fidelity-study cheap-node arm.
+            let cheap_frame = Frame {
+                center: *center,
+                frame_width: new_fw,
+                out_width: node_w,
+                out_height: node_h,
+            };
+            let cbuf = render_kernel(&cheap_frame, auto_maxiter(new_fw));
+            let cimg = render::shade_and_downsample(
+                &cbuf.samples, node_w, node_h, 1, &cheap_palette, &params, cheap_frame.pixel_size(),
+            );
+            let img_rel = format!("cheap/n{}_c{}.jpg", node.node_id, ci);
+            render::save_jpeg(&cimg, &out_dir.join(&img_rel), 90)?;
+
+            let _ = writeln!(
+                jsonl,
+                "{{ \"kind\": \"cand\", \"node_id\": {}, \"root_id\": {}, \"parent_depth\": {}, \
+                 \"depth\": {}, \"child_idx\": {}, \"cx\": {}, \"cy\": {}, \"fw\": {}, \
+                 \"branch\": \"{}\", \"placement\": \"{}\", \"focus_score\": {}, \
+                 \"int_frac\": {}, \"spread\": {}, \"esc_median\": {}, \"occ\": {}, \"img\": \"{}\" }}",
+                node.node_id, node.root_id, node.depth, child_depth, ci,
+                jnum(center.re), jnum(center.im), jnum(new_fw),
+                branch, placement, jnum(*fscore),
+                jnum(*int_frac), jnum(*spread), jnum(*esc_median), jnum(*occ), img_rel,
+            );
+            n_cand += 1;
+        }
+    }
+
+    std::fs::write(out_dir.join("expand.jsonl"), &jsonl)
+        .map_err(|e| format!("write expand.jsonl: {e}"))?;
+    eprintln!(
+        "guided-descend --expand: {} nodes → {} candidates, {} dead ({:.1}s) → {}",
+        nodes.len(), n_cand, n_dead, t0.elapsed().as_secs_f64(),
+        out_dir.join("expand.jsonl").display()
+    );
+    println!(
+        "{{ \"nodes\": {}, \"candidates\": {}, \"dead\": {} }}",
+        nodes.len(), n_cand, n_dead
+    );
     Ok(())
 }
 
@@ -2743,6 +3073,24 @@ pub struct GuidedDescendArgs {
     #[arg(long)]
     pub seed_list: Option<String>,
 
+    /// **Batch frontier-expansion mode** (classifier-steered frontier driver,
+    /// `tools/atlas/steered_frontier.py`). A JSONL file of frontier nodes, one object
+    /// per line: `{"node_id":u64,"root_id":u64,"cx":f64,"cy":f64,"fw":f64,"depth":u32}`
+    /// (kernel/family come from the SAME `--family`/`--julia`/`--c` flags a walk uses,
+    /// so one `--expand` call is homogeneous in family/band). For each node this runs
+    /// **exactly one rung** of the existing per-rung logic (log-uniform zoom
+    /// `[--zoom-lo,--zoom-hi]`, up to `--descent-candidates` policy centers, the same
+    /// black-cap→band→occ-floor gates) and emits **every gate survivor** (not one
+    /// reservoir winner) as a candidate row + a cheap twilight_shifted 384-wide
+    /// colorized-field JPG (the fidelity-study cheap-node presentation, rendered at
+    /// `auto_maxiter(fw)`). RNG per node is derived from `(--seed, node_id)`, so
+    /// expansion is reproducible regardless of batching/order. Nodes whose zoom crosses
+    /// `--min-fw` or whose candidates all fail the gates emit zero children with a cause
+    /// tag. Writes `expand.jsonl` + `cheap/*.jpg` under `--out-dir`. The normal walk path
+    /// is byte-untouched (this is a distinct mode dispatched before it).
+    #[arg(long)]
+    pub expand: Option<String>,
+
     // --- Descent-ablation seam (finder / selection / percentile-band) ---------
     /// Depth-≥2 next-center finder: `legacy` (foci/density/random policy, default,
     /// byte-identical to prior runs) or `percentile` (smooth-iter percentile-band
@@ -3008,6 +3356,32 @@ fn pct_band_for_depth(schedule: &[(u32, f64, f64)], fallback: (f64, f64), d: u32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `auto_maxiter` must be a bit-exact mirror of `tools/scoring/active_ckpt.py`'s
+    /// (the cheap-presentation image is scored by the same classifier the fidelity study
+    /// measured on `render-one` at that maxiter, so any drift breaks the 0.95 rank fidelity).
+    #[test]
+    fn auto_maxiter_mirrors_active_ckpt() {
+        // fw = FW_HOME → ratio 1 → base 500.
+        assert_eq!(auto_maxiter(3.0), 500);
+        // clamp floor / ceiling.
+        assert_eq!(auto_maxiter(1e9), 200); // very shallow (ratio<1) → below floor
+        assert_eq!(auto_maxiter(1e-30), 8000); // extreme zoom → above ceiling
+        // an interior point: fw=1e-6 → 500*(1+0.30*log2(3e6)) = int(3722.6...) = 3722.
+        let ratio = 3.0_f64 / 1e-6;
+        let expect = (500.0 * (1.0 + 0.30 * ratio.log2())) as u32;
+        assert_eq!(auto_maxiter(1e-6), expect);
+    }
+
+    /// The `--expand` per-node sub-seed must be a pure function of `(seed, node_id)` —
+    /// deterministic and node-order-independent (the driver's reproducibility contract).
+    #[test]
+    fn node_sub_seed_is_deterministic_and_distinct() {
+        assert_eq!(node_sub_seed(0, 1), node_sub_seed(0, 1));
+        assert_eq!(node_sub_seed(42, 7), node_sub_seed(42, 7));
+        assert_ne!(node_sub_seed(0, 1), node_sub_seed(0, 2));
+        assert_ne!(node_sub_seed(0, 1), node_sub_seed(1, 1));
+    }
 
     /// The chosen-child occupancy emitted by `best_of_n_step` (the value that lands
     /// in `walks.jsonl`'s `child_occ` and `pool.jsonl`'s `occ`) must equal the
