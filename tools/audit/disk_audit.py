@@ -32,7 +32,7 @@ Protect by what the artifact *is* / how it's used, not by path-pattern version-g
 
 Usage
 -----
-  uv run python tools/audit/disk_audit.py                 # audit whole repo (data/ + out/)
+  uv run python tools/audit/disk_audit.py                 # audit whole repo (data/ + out/ + labels/)
   uv run python tools/audit/disk_audit.py --root data     # audit one root
   uv run python tools/audit/disk_audit.py --min-mb 50     # lower report threshold
   uv run python tools/audit/disk_audit.py --apply --categories scratch   # gated delete
@@ -91,6 +91,14 @@ RULES: list[Rule] = [
     # -- human corpora: labels + the crops they reference ---------------------
     Rule(r"^data/label_corpus/", NEVER, "human location-label corpus"),
     Rule(r"^data/wallpaper_corpus/", NEVER, "human wallpaper-label corpus + batches"),
+    # Repo-root labels/ is the sole home of several thousand human labels: the
+    # batch sidecars whose scores.json is empty AND the legacy label store under a
+    # different key schema. Human labels are unregenerable at any price. Guard on
+    # LOCATION, registry-independent: keying off label_store.SIDECAR_LABELS would
+    # make an unregistered sidecar (already happened twice) look deletable. This sits
+    # above every regenerable/scratch rule so a stray .log/render in labels/ is still
+    # forced NEVER (whole-directory blanket, not just the *.json sidecars).
+    Rule(r"^labels/", NEVER, "repo-root human label store (batch sidecars + legacy labels; unregenerable, registry-independent)"),
 
     # -- active + rollback model checkpoints ----------------------------------
     Rule(r"^data/classifier/v6/", NEVER, "active discovery-gate classifier v6"),
@@ -524,7 +532,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", action="append", default=None,
-                    help="root(s) to audit (repo-relative). Default: data out")
+                    help="root(s) to audit (repo-relative). Default: data out labels")
     ap.add_argument("--min-mb", type=float, default=100.0,
                     help="report threshold in MB (default 100)")
     ap.add_argument("--top", type=int, default=40, help="top-N largest items to list")
@@ -536,7 +544,7 @@ def main():
                     help="comma list of categories to delete: regenerable,scratch")
     args = ap.parse_args()
 
-    roots = [repo / r for r in (args.root or ["data", "out"])]
+    roots = [repo / r for r in (args.root or ["data", "out", "labels"])]
     min_bytes = int(args.min_mb * 1024 * 1024)
 
     total_tree, cat_totals, cat_counts, items, per_dir = audit(repo, roots)
