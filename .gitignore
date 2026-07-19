@@ -138,6 +138,25 @@ __pycache__/
 # lives under out/ (SHEETS_DIR) — never here; the rule below evicts any straggler.
 !/data/discovery/
 /data/discovery/**/contact_sheet.png
+# The steered/dive frontier machinery (steered_frontier.py) adds disposable run
+# output beside the durable ledgers: per-node render scratch (cheap JPGs, field
+# dumps, expand/nodes logs, pool sheets) and regenerable run-internal state
+# (novelty memory, node embeddings, frontier/dive state, harvest/prio/saturation
+# logs) — crash-safety is by ledger-rebuild, so none of it is source. Only the
+# durable harvested-outcome store (outcome_ledger/outcome_feats/probe_rejects/
+# guard_telemetry/summary/walks/pool) is committed, matching the seeder above.
+/data/discovery/**/scratch/
+/data/discovery/**/*.log
+/data/discovery/**/morph_mem.npz
+/data/discovery/**/morph_admissions.npz
+/data/discovery/**/dive_admissions.npz
+/data/discovery/**/node_embs.npz
+/data/discovery/**/state.json
+/data/discovery/**/dive_state.json
+/data/discovery/**/dive_log.jsonl
+/data/discovery/**/harvest_log.jsonl
+/data/discovery/**/prio_terms.jsonl
+/data/discovery/**/saturation.jsonl
 
 # Phase-1 prospect location LIBRARY (tools/wallpaper/prospect_orchestrator.py). The
 # durable records + the consolidated embeddings matrix are load-bearing and

@@ -1,0 +1,1 @@
+{"mode": "baseline", "active_min": 8.0, "active_note": "NOMINAL target budget; baseline overshot per-batch in wall-clock (single-batch julia-hook cost), run in segments", "families": ["mandelbrot", "multibrot3", "multibrot4", "multibrot5"]}

@@ -1,0 +1,60 @@
+{
+  "run_ts": "shakeout_recency",
+  "mode": "steered",
+  "families": [
+    "mandelbrot",
+    "multibrot3",
+    "multibrot4",
+    "multibrot5"
+  ],
+  "julia_hook": true,
+  "budget_min": 9.0,
+  "lambda_m": 0.5,
+  "beta": 0.02,
+  "recency_k": 8,
+  "morph_mem": 268,
+  "morph_perm": 13,
+  "morph_recency": 255,
+  "morph_lo": 0.8775,
+  "morph_hi": 0.939,
+  "anchor_src": "morph_anchors.json",
+  "sat_cos": 0.9328,
+  "sat_frac": 0.5752,
+  "active_min": 8.6,
+  "batches": 17,
+  "tau_h": {
+    "mandelbrot": 0.20102782547473907,
+    "multibrot3": 0.20102782547473907,
+    "multibrot4": 0.7739711046218872,
+    "multibrot5": 0.20102782547473907,
+    "julia:mandelbrot": 0.18439058661460875,
+    "julia:multibrot3": 0.31058982014656067,
+    "julia:multibrot4": 0.20721471309661865,
+    "julia:multibrot5": 0.18631197065114974
+  },
+  "totals": {
+    "expanded": 544,
+    "candidates": 1874,
+    "harvest_checks": 804,
+    "canonical_q3": 762,
+    "admitted": 13,
+    "q3_dup": 749,
+    "guarded": 0,
+    "julia_roots": 6,
+    "cap_hits": 6,
+    "dead_nodes": 10,
+    "novelty_hits": 1621,
+    "nov_scored": 1874,
+    "sat_hits": 1078
+  },
+  "cloud_sizes": {
+    "mandelbrot": 0,
+    "multibrot3": 1,
+    "multibrot4": 1,
+    "multibrot5": 4,
+    "julia:mandelbrot": 0,
+    "julia:multibrot3": 1,
+    "julia:multibrot4": 2,
+    "julia:multibrot5": 4
+  }
+}

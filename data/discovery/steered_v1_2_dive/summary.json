@@ -1,0 +1,35 @@
+{
+  "run_ts": "steered_v1_2_dive",
+  "mode": "dive",
+  "dive_source": "C:\\Code\\fractal-generator\\data\\discovery\\steered_run2",
+  "target_depth": 23,
+  "min_fw": 2e-09,
+  "n_dives_planned": 28,
+  "n_dives_done": 28,
+  "active_min": 9.22,
+  "totals": {
+    "expanded": 0,
+    "candidates": 0,
+    "harvest_checks": 433,
+    "canonical_q3": 225,
+    "admitted": 21,
+    "q3_dup": 205,
+    "guarded": 0,
+    "julia_roots": 0,
+    "cap_hits": 0,
+    "dead_nodes": 26,
+    "novelty_hits": 0,
+    "nov_scored": 0,
+    "sat_hits": 0
+  },
+  "cloud_sizes": {
+    "mandelbrot": 0,
+    "multibrot3": 4,
+    "multibrot4": 6,
+    "multibrot5": 9,
+    "julia:mandelbrot": 0,
+    "julia:multibrot3": 2,
+    "julia:multibrot4": 0,
+    "julia:multibrot5": 0
+  }
+}

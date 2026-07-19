@@ -1,0 +1,82 @@
+{
+  "ts": "20260718_004549",
+  "smoke": false,
+  "wallclock_s": 267.2,
+  "batches": 1,
+  "batch_timings_s": [
+    267.2
+  ],
+  "config": {
+    "family": "multibrot3",
+    "family_flags": [
+      "--family",
+      "multibrot3"
+    ],
+    "reject_radius": 0.2,
+    "q3_density_cap": 5,
+    "max_seed_redraws": 200,
+    "dedup_k": 1.5,
+    "node_width": 384,
+    "sigma_band": "8,10,12,14,16",
+    "depth": [
+      4,
+      14
+    ],
+    "occ_floor": 0.321,
+    "black_cap": 0.3,
+    "batch_seeds": 4,
+    "budget_min": 2.0,
+    "scorer": "data/classifier/v7/model_best.pt",
+    "julia_hook": true,
+    "julia_walks_per_descent": 3
+  },
+  "totals": {
+    "proposed": 4,
+    "probe_rejected": 0,
+    "walked": 4,
+    "harvested_distinct": 0,
+    "q3_dup": 0,
+    "not_q3": 4,
+    "guarded": 0,
+    "julia_parent_qualified": 3,
+    "julia_descents": 3,
+    "julia_walks": 9,
+    "julia_q3": 7,
+    "julia_distinct": 3
+  },
+  "seeds": {
+    "draws": 4,
+    "rejected": 0,
+    "rejected_fraction": 0.0,
+    "saturation": false
+  },
+  "q3_added_this_run": 0,
+  "guard_telemetry": {
+    "n_walks": 4,
+    "clean_harvest": 2,
+    "salvaged_harvest": 2,
+    "dropped": 0,
+    "frames_gated_total": 2
+  },
+  "cumulative": {
+    "q3_cloud_size": 0,
+    "scored_rows": 27
+  },
+  "julia": {
+    "partition": "julia:multibrot3",
+    "render_family": "julia_multibrot3",
+    "parent_qualified": 3,
+    "descents": 3,
+    "walks": 9,
+    "q3": 7,
+    "distinct_added": 3,
+    "cloud_size": 3
+  },
+  "rebalance": {
+    "cplane_descents": 4,
+    "qualifying_parents": 3,
+    "hook_descents": 3,
+    "fresh_q3_base": 0,
+    "fresh_q3_twin": 3
+  }
+}
