@@ -142,6 +142,24 @@ def main():
         return corn_decode(r["p_notbad"], r["p_good"], kc.keeper_cut_for(r["family"], cuts)) == 3
     keepers = [r for r in rows if is_keep(r)]
 
+    # ---- ranker ordering WITHIN the eligible keeper set (pref_loc_v0) ----
+    # Two-part keeper tier: the per-family F0.5 cut above is the ELIGIBILITY FLOOR
+    # ("not clearly bad"); within the eligible set, ordering is by the location
+    # preference ranker (a goodness ranker, not a badness filter). The ranker ranks the
+    # not-bad and NEVER steers — this is a pure report-side ordering of an already-kept
+    # set (scorer.py HARD SCOPE; keeper ranking is an authorized consumer).
+    from tools.ranker.score_locations import LocationRanker, rank_percentiles
+    rk_score, rk_pct = {}, {}
+    try:
+        _lr = LocationRanker()
+        rk_score = _lr.score_rows(keepers, ROOT / "out" / "steered_run2_ranker_tiles")
+        rk_pct = rank_percentiles(rk_score)
+        print(f"ranker: ordered {len(rk_score)} keepers ({_lr.scorer.head}, sets={_lr.sets})",
+              flush=True)
+    except Exception as e:                                    # noqa: BLE001
+        print(f"ranker: unavailable ({e!r}); keeper table stays cut-only, unordered", flush=True)
+    keepers_ranked = sorted(keepers, key=lambda r: -rk_score.get(r["id"], float("-inf")))
+
     out = []
     w = out.append
     lam = summary.get("lambda_m", state.get("lambda_m"))
@@ -177,6 +195,29 @@ def main():
           f"| {PILOT['per_family'].get(fam,0)} |")
     w(f"| **total** | | **{len(rows)}** | **{len(keepers)}** | **{PILOT['admissions']}** |")
     w("")
+
+    # ============================ keeper ranking (pref_loc_v0) ============================
+    w("## Keeper tier — ranker ordering within the eligibility floor\n")
+    w("The per-family F0.5 cut above is the **eligibility floor** (\"not clearly bad\"). Within "
+      "the eligible keeper set, ordering is by the **location preference ranker** "
+      f"(`pref_loc_v0`, {('head '+_lr.scorer.head+', sets '+'+'.join(_lr.sets)) if rk_score else 'UNAVAILABLE'}) "
+      "— a goodness ranker, not the p_good badness filter. Both numbers are shown: the raw "
+      "ranker score and its percentile within this keeper set. The ranker ranks; it never "
+      "steers admission (scorer.py HARD SCOPE).\n")
+    if rk_score:
+        w("| rank | id | family | p_good | keeper cut | ranker score | ranker pct |")
+        w("|--:|---|---|--:|--:|--:|--:|")
+        for i, r in enumerate(keepers_ranked, 1):
+            cut = kc.keeper_cut_for(r["family"], cuts)
+            w(f"| {i} | {r['id']} | {r['family']} | {r['p_good']:.3f} | {cut:.2f} | "
+              f"{rk_score[r['id']]:+.3f} | {rk_pct[r['id']]:.2f} |")
+        w("")
+        w("Note (n small, see ranker validation): the lift is largely CROSS-family (steered "
+          "mandelbrot ranks to the bottom, julia to the top); WITHIN a good-rich family the "
+          "order is still noisy. Legitimate for a pooled keeper set; not yet fine within-family "
+          "taste.\n")
+    else:
+        w("_(ranker unavailable — keeper set shown by the per-family table only)_\n")
 
     # ============================ admissions over time ============================
     w("## Admissions / active-hour over time (decay or floor?)\n")

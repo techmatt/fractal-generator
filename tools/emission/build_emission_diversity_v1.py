@@ -61,7 +61,14 @@ POOL_W, POOL_H, POOL_SS, POOL_FILT = 1280, 720, 2, "lanczos3"     # head-scoring
 REL_W, REL_H, REL_SS, REL_FILT = 2560, 1440, 4, "lanczos3"        # release full-res (wallpaper canon)
 JPG_Q = 95
 
-DEFAULT_FLOOR = 0.75          # global absolute floor (provisional; below 0.90 production gate)
+DEFAULT_FLOOR = 0.75          # wallpaper-head POOL floor (permissive; below the 0.90 gate)
+DEFAULT_MINING_FLOOR = 0.25   # mining-head POOL floor (permissive; below the 0.50 gate)
+# Per-head RELEASE floors — distinct from the pool floors above. Pool admission stays
+# permissive (weak wallpapers remain inventory); SELECTION only draws release candidates
+# above the head's release floor. Defaults = each head's production gate. See the emission
+# v1 finding (a 0.26 mining tile shipped because the permissive pool floor was the only bar).
+DEFAULT_RELEASE_FLOOR = 0.90          # smooth → wallpaper head production gate
+DEFAULT_MINING_RELEASE_FLOOR = 0.50   # strange → mining head production gate
 DEFAULT_TARGET_MEASURE = ROOT / "data" / "emission" / "target_measure.json"
 
 
@@ -274,17 +281,33 @@ class Heads:
 class EmissionDiversity:
     def __init__(self, args):
         self.args = args
-        self.ledger = Path(args.ledger).resolve()
+        # Multi-ledger intake: a release can draw on more than one run-scoped ledger
+        # (e.g. steered_run2 + the dive) — every row is still admitted independently and
+        # carries its own source ledger in provenance. `self.ledger` stays the first for
+        # legacy single-ledger call sites / short report strings.
+        ledger_args = args.ledger if isinstance(args.ledger, (list, tuple)) else [args.ledger]
+        self.ledgers = [Path(x).resolve() for x in ledger_args]
+        self.ledger = self.ledgers[0]
         self.out = Path(args.out).resolve()
+        self.report_path = Path(args.report).resolve() if args.report else \
+            (ROOT / "out" / "emission_v1_report.md")
         self.renders = self.out / "renders"
         self.release_dir = self.out / "release"
         self.field_cache = self.out / "fields"
         self.embs_path = self.out / "morph_embs.npz"
+        self.ranker_feats_path = self.out / "ranker_feats.npz"
+        self.ranker_tiles = self.out / "ranker_tiles"
         self.intake_path = self.out / "intake.json"
         self.colorize_log = self.out / "colorize_log.jsonl"
-        self.floor = float(args.floor)                 # wallpaper-head floor (smooth)
-        self.mining_floor = float(args.mining_floor)   # mining-head floor (strange styles)
+        self.floor = float(args.floor)                 # wallpaper-head POOL floor (smooth)
+        self.mining_floor = float(args.mining_floor)   # mining-head POOL floor (strange styles)
+        self.release_floor = float(args.release_floor)              # wallpaper-head RELEASE floor
+        self.mining_release_floor = float(args.mining_release_floor)  # mining-head RELEASE floor
+        self.intake_floor = None if args.intake_floor is None else float(args.intake_floor)
         self.release_n = int(args.release_n)
+        # target counts RELEASE-ELIGIBLE pool rows (above the per-head release floor), so the
+        # colorize builds a 3×N surplus of genuinely release-grade candidates, not merely
+        # pool-admitted ones (§4 "3× post-floor surplus").
         self.target_gated = args.target_gated or (3 * self.release_n)
         self.max_attempts = int(args.max_attempts)
         self.time_budget_s = float(args.time_budget_min) * 60.0
@@ -293,12 +316,32 @@ class EmissionDiversity:
             d.mkdir(parents=True, exist_ok=True)
         self.rng = np.random.default_rng(self.seed)
         self.pool = Pool(self.out)
+        self.ranker_score: dict = {}     # location_id -> pref_loc_v0 rank score
+        self.ranker_pct: dict = {}       # location_id -> percentile within the intake set
+        self.ranker_mode = "unavailable"
 
     # ---- intake ---------------------------------------------------------- #
+    def _load_all_admitted(self) -> list:
+        """Admitted rows across every ledger, each tagged with its source; dedup by id."""
+        seen, rows = set(), []
+        for lg in self.ledgers:
+            try:
+                label = str(lg.relative_to(ROOT))
+            except ValueError:
+                label = str(lg)                  # ledger outside the repo (e.g. a test tmp dir)
+            for r in D.load_admitted(lg):
+                if r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                r["_source_ledger"] = label
+                rows.append(r)
+        return rows
+
     def intake(self):
-        rows = D.load_admitted(self.ledger)
+        rows = self._load_all_admitted()
         if not rows:
-            raise SystemExit(f"no admitted (current-decode ∧ q3 ∧ guard ∧ distinct) rows in {self.ledger}")
+            srcs = ", ".join(str(l) for l in self.ledgers)
+            raise SystemExit(f"no admitted (current-decode ∧ q3 ∧ guard ∧ distinct) rows in {srcs}")
         if self.intake_path.exists() and self.embs_path.exists():
             meta = json.loads(self.intake_path.read_text(encoding="utf-8"))
             embs = D.load_embs(self.embs_path)
@@ -329,6 +372,34 @@ class EmissionDiversity:
         self.embs = embs
         self.fields = fields
         self.cluster_tags = tags
+        self._score_intake_with_ranker()
+
+    def _score_intake_with_ranker(self):
+        """Score every admitted location with the pref_loc_v0 ranker (v7 + colored on the
+        canonical render — cache hits for run2/dive via features.npz, else rendered once).
+        The ranker ORDERS the colorize queue (order, don't filter — see pick_location); it
+        never gates admission or steers discovery (scorer.py HARD SCOPE). With --intake-floor
+        set, locations below that ranker percentile are dropped from the queue (opt-in)."""
+        from tools.ranker.score_locations import LocationRanker, rank_percentiles
+        try:
+            lr = LocationRanker()
+            self.ranker_score = lr.score_rows(self.rows, self.ranker_tiles,
+                                              persist_npz=self.ranker_feats_path)
+            self.ranker_pct = rank_percentiles(self.ranker_score)
+            self.ranker_mode = f"{lr.scorer.head}:{'+'.join(lr.sets)}"
+            print(f"[intake] ranker scored {len(self.ranker_score)} locations "
+                  f"({self.ranker_mode})", flush=True)
+        except Exception as e:                               # noqa: BLE001
+            print(f"[intake] ranker unavailable ({e!r}); colorize queue stays "
+                  f"coverage-order (unranked)", flush=True)
+            self.ranker_score, self.ranker_pct, self.ranker_mode = {}, {}, "unavailable"
+        if self.intake_floor is not None and self.ranker_pct:
+            keep = [r for r in self.rows if self.ranker_pct.get(r["id"], 1.0) >= self.intake_floor]
+            dropped = len(self.rows) - len(keep)
+            print(f"[intake] --intake-floor {self.intake_floor}: dropped {dropped} locations "
+                  f"below ranker pct {self.intake_floor}; {len(keep)} remain", flush=True)
+            self.rows = keep
+            self.by_id = {r["id"]: r for r in keep}
 
     # ---- axes + deficit model ------------------------------------------- #
     def build_axes(self, dt, cell_to_names: dict, lib):
@@ -354,18 +425,34 @@ class EmissionDiversity:
               f"{len(self.styles)} styles = {len(feasible)} feasible cells "
               f"| resumed attempts={self.pool.n_attempts()} gated={len(self.pool.gated())}", flush=True)
 
-    # ---- location pick (fewest attempts first; spreads coverage) --------- #
+    # ---- location pick (coverage round-robin, ranker-ordered within a round) --------- #
     def pick_location(self, exhausted: set):
+        """Fewest-attempts-first preserves coverage (every location gets a colorize before
+        any gets a second — diversity SUPPLY is untouched); within an equal-attempts round,
+        the pref_loc_v0 ranker feeds higher-quality locations FIRST, so when the colorize
+        budget runs out mid-round the good locations already spent it (order, don't filter)."""
         counts = self.pool.attempts_per_location()
         cand = [r for r in self.rows if r["id"] not in exhausted]
         if not cand:
             return None
-        cand.sort(key=lambda r: (counts.get(r["id"], 0), r["id"]))
+        cand.sort(key=lambda r: (counts.get(r["id"], 0),
+                                 -self.ranker_score.get(r["id"], float("-inf")), r["id"]))
         return cand[0]
 
     # ---- one colorize ---------------------------------------------------- #
     def floor_for(self, style: str) -> float:
+        """POOL admission floor (permissive; weak wallpapers persist as inventory)."""
         return self.floor if head_for_style(style) == "wallpaper" else self.mining_floor
+
+    def release_floor_for(self, style: str) -> float:
+        """RELEASE eligibility floor (per head; distinct from and above the pool floor)."""
+        return self.release_floor if head_for_style(style) == "wallpaper" \
+            else self.mining_release_floor
+
+    def release_eligible(self) -> list:
+        """Gated pool rows whose head score clears their head's RELEASE floor."""
+        return [r for r in self.pool.gated()
+                if (r["p_ge3"] or 0.0) >= self.release_floor_for(r["render_style"])]
 
     def colorize(self, dt, cm, ranker, heads, row) -> dict | None:
         loc_id = row["id"]
@@ -411,7 +498,9 @@ class EmissionDiversity:
             "jpg": str(jpg.relative_to(ROOT)) if jpg.exists() else None,
             "pref_fit": pref_fit, "ranker": ranker.mode,
             "provenance": {
-                "source_ledger": str(self.ledger.relative_to(ROOT)),
+                "source_ledger": row.get("_source_ledger", str(self.ledger.relative_to(ROOT))),
+                "ranker_score": self.ranker_score.get(loc_id),
+                "ranker_pct": self.ranker_pct.get(loc_id),
                 "source_run": row.get("ts"), "node_id": row.get("node_id"),
                 "root_id": row.get("root_id"), "branch": row.get("branch"),
                 "reached_depth": row.get("reached_depth"), "p_good": row.get("p_good"),
@@ -439,25 +528,29 @@ class EmissionDiversity:
         self.build_axes(dt, cell_to_names, lib)
         ranker = PaletteRanker(dt, cell_to_names, lib)
         heads = Heads()
-        print(f"[colorize] wallpaper-floor={self.floor} (gate {heads.wp_gate}) · "
-              f"mining-floor={self.mining_floor} (gate {heads.mining_gate}) · "
-              f"target_gated={self.target_gated} ranker={ranker.mode}", flush=True)
+        print(f"[colorize] pool-floors: wallpaper={self.floor} mining={self.mining_floor} · "
+              f"release-floors: wallpaper={self.release_floor} (gate {heads.wp_gate}) "
+              f"mining={self.mining_release_floor} (gate {heads.mining_gate}) · "
+              f"target={self.target_gated} release-eligible · palette-ranker={ranker.mode} · "
+              f"loc-ranker={self.ranker_mode}", flush=True)
         t0 = time.time()
         exhausted: set = set()
         while True:
-            n_gated = len(self.pool.gated())
-            if n_gated >= self.target_gated:
-                print(f"[colorize] reached target: {n_gated} gated ≥ {self.target_gated}", flush=True)
+            n_rel = len(self.release_eligible())
+            if n_rel >= self.target_gated:
+                print(f"[colorize] reached target: {n_rel} release-eligible ≥ "
+                      f"{self.target_gated}", flush=True)
                 break
             if self.pool.n_attempts() >= self.max_attempts:
-                print(f"[colorize] hit max attempts {self.max_attempts} (gated={n_gated})", flush=True)
+                print(f"[colorize] hit max attempts {self.max_attempts} "
+                      f"(release-eligible={n_rel})", flush=True)
                 break
             if time.time() - t0 > self.time_budget_s:
-                print(f"[colorize] hit time budget (gated={n_gated})", flush=True)
+                print(f"[colorize] hit time budget (release-eligible={n_rel})", flush=True)
                 break
             row = self.pick_location(exhausted)
             if row is None:
-                print(f"[colorize] all locations exhausted (gated={n_gated})", flush=True)
+                print(f"[colorize] all locations exhausted (release-eligible={n_rel})", flush=True)
                 break
             rec = self.colorize(dt, cm, ranker, heads, row)
             if rec is None:
@@ -466,25 +559,68 @@ class EmissionDiversity:
             self.pool.save_state({"seed": self.seed, "rng": self.rng.bit_generator.state,
                                   "n_attempts": self.pool.n_attempts()})
             n_gated = len(self.pool.gated())
+            n_rel = len(self.release_eligible())
             print(f"  [{self.pool.n_attempts()}] {rec['id']} {rec['type']}/{rec['morph_cluster']} "
                   f"{rec['palette_flavor']}/{rec['render_style']} p_ge3="
                   f"{rec['p_ge3'] if rec['p_ge3'] is not None else 'ERR'} "
-                  f"{'PASS' if rec['passed'] else 'floor-rej'} | gated={n_gated}", flush=True)
-        return len(self.pool.gated())
+                  f"{'PASS' if rec['passed'] else 'floor-rej'} | gated={n_gated} "
+                  f"release-eligible={n_rel}", flush=True)
+        return len(self.release_eligible())
+
+    def ranker_reach(self) -> dict:
+        """How far down the ranker ordering the colorize had to reach. Ordering = admitted
+        locations by ranker score desc; 'rank' is the 0-based position in that order. Reports
+        the deepest rank among locations that (a) got any colorize attempt and (b) contributed
+        a RELEASE-ELIGIBLE pool row — the practical measure of whether ranked intake
+        concentrated budget on good locations."""
+        if not self.ranker_score:
+            return {}
+        order = [r["id"] for r in sorted(self.rows,
+                                         key=lambda r: -self.ranker_score.get(r["id"], float("-inf")))]
+        rank_of = {i: k for k, i in enumerate(order)}
+        attempted = {r["location_id"] for r in self.pool.rows}
+        rel_locs = {r["location_id"] for r in self.release_eligible()}
+        att_ranks = [rank_of[i] for i in attempted if i in rank_of]
+        rel_ranks = [rank_of[i] for i in rel_locs if i in rank_of]
+        n = len(order)
+        return {
+            "n_locations": n,
+            "n_attempted": len(att_ranks),
+            "deepest_attempted_rank": max(att_ranks) + 1 if att_ranks else 0,
+            "deepest_attempted_pct": (max(att_ranks) + 1) / n if att_ranks else 0.0,
+            "n_release_locs": len(rel_ranks),
+            "deepest_release_rank": max(rel_ranks) + 1 if rel_ranks else 0,
+            "deepest_release_pct": (max(rel_ranks) + 1) / n if rel_ranks else 0.0,
+        }
 
     # ---- release selection ---------------------------------------------- #
     def select_release(self):
-        gated = self.pool.gated()
+        """Select ≤ N release candidates from the RELEASE-ELIGIBLE subset of the gated pool
+        (per-head floor). Pool-admitted-but-sub-floor wallpapers stay inventory and are never
+        selected. If fewer than N clear the floors, ship fewer — never dip below the floor to
+        fill the count (short-fill is reported honestly)."""
+        eligible = self.release_eligible()
         entries = [{
             "id": r["id"], "type": r["type"], "cluster": r["morph_cluster"],
             "flavor": r["palette_flavor"], "style": r["render_style"],
             "score": r["p_ge3"], "emb": self.embs.get(r["location_id"], None),
             "_rec": r,
-        } for r in gated]
+        } for r in eligible]
         for e in entries:
             emb = e["emb"]
             e["emb"] = emb.tolist() if emb is not None else None
         selected, log = SEL.greedy_select(entries, self.release_n)
+        self.release_short_fill = {
+            "requested": self.release_n,
+            "eligible": len(eligible),
+            "selected": len(selected),
+            "short_by": max(0, self.release_n - len(selected)),
+        }
+        if len(selected) < self.release_n:
+            print(f"[select] SHORT-FILL: {len(selected)}/{self.release_n} — only "
+                  f"{len(eligible)} pool rows clear their head's release floor "
+                  f"(wallpaper {self.release_floor}, mining {self.mining_release_floor}). "
+                  f"Shipping fewer rather than dipping below the floor.", flush=True)
         return selected, log
 
     def render_release(self, selected, skip_render=False):
@@ -516,14 +652,27 @@ class EmissionDiversity:
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ledger", default="data/discovery/steered_run2/outcome_ledger.jsonl")
+    ap.add_argument("--ledger", nargs="+",
+                    default=["data/discovery/steered_run2/outcome_ledger.jsonl"],
+                    help="one or more run-scoped ledgers; admitted rows are unioned (dedup by id)")
     ap.add_argument("--out", default="out/emission_v1")
+    ap.add_argument("--report", default=None,
+                    help="report .md path (default out/emission_v1_report.md)")
     ap.add_argument("--release-n", type=int, default=12)
-    ap.add_argument("--target-gated", type=int, default=0, help="0 → 3×release-n")
+    ap.add_argument("--target-gated", type=int, default=0,
+                    help="0 → 3×release-n RELEASE-ELIGIBLE rows (post-floor surplus)")
     ap.add_argument("--floor", type=float, default=DEFAULT_FLOOR,
-                    help="wallpaper-head floor for smooth (provisional; below the 0.90 gate)")
-    ap.add_argument("--mining-floor", type=float, default=0.25,
-                    help="mining-head floor for strange styles (provisional; permissive, below the 0.50 gate)")
+                    help="wallpaper-head POOL floor for smooth (permissive; below the 0.90 gate)")
+    ap.add_argument("--mining-floor", type=float, default=DEFAULT_MINING_FLOOR,
+                    help="mining-head POOL floor for strange styles (permissive; below the 0.50 gate)")
+    ap.add_argument("--release-floor", type=float, default=DEFAULT_RELEASE_FLOOR,
+                    help="wallpaper-head RELEASE floor (default = 0.90 production gate)")
+    ap.add_argument("--mining-release-floor", type=float, default=DEFAULT_MINING_RELEASE_FLOOR,
+                    help="mining-head RELEASE floor (default = 0.50 production gate)")
+    ap.add_argument("--intake-floor", type=float, default=None,
+                    help="OPTIONAL ranker percentile [0,1]; drop admitted locations below it "
+                         "from the colorize queue. Default OFF (deliberate — the ranker ORDERS "
+                         "the queue, it does not filter diversity supply; this is a later knob).")
     ap.add_argument("--target-measure", default=str(DEFAULT_TARGET_MEASURE))
     ap.add_argument("--max-attempts", type=int, default=240, help="hard-kill backstop")
     ap.add_argument("--time-budget-min", type=float, default=45.0, help="hard-kill backstop")

@@ -20,6 +20,30 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORT_PATH = ROOT / "out" / "emission_v1_report.md"
 
 
+def _v1_release_reconstruction(v1_pool: Path, release_n: int):
+    """Reconstruct what the v1 run (no release floors) would ship from its durable pool:
+    greedy_select over ALL gated rows (the v1 behavior). Returns (rows_by_id, selected_ids,
+    p_ge3_by_id) or None if the v1 pool is absent. Used only for the v2 side-by-side."""
+    if not v1_pool.exists():
+        return None
+    from tools.emission import selection as SEL
+    rows = [json.loads(l) for l in v1_pool.read_text(encoding="utf-8").splitlines() if l.strip()]
+    gated = [r for r in rows if r.get("passed")]
+    if not gated:
+        return None
+    entries = [{
+        "id": r["id"], "type": r["type"], "cluster": r["morph_cluster"],
+        "flavor": r["palette_flavor"], "style": r["render_style"],
+        "score": r["p_ge3"], "emb": None, "_rec": r,
+    } for r in gated]
+    selected, _log = SEL.greedy_select(entries, release_n)
+    return {
+        "by_id": {r["id"]: r for r in gated},
+        "selected": [e["id"] for e in selected],
+        "n_gated": len(gated),
+    }
+
+
 def _font(sz):
     for name in ("DejaVuSansMono.ttf", "consola.ttf", "cour.ttf", "arial.ttf"):
         try:
@@ -137,11 +161,20 @@ def write_report(eng, selected: list, sel_log: list, rel_paths: list):
     uniform_flavor = n_att / n_flavors if n_flavors else 0
     uniform_style = n_att / n_styles if n_styles else 0
 
+    ledger_labels = [str(l.relative_to(ROOT)) for l in getattr(eng, "ledgers", [eng.ledger])]
+    reach = eng.ranker_reach() if hasattr(eng, "ranker_reach") else {}
+    short = getattr(eng, "release_short_fill", {})
+
     L = []
-    L.append("# Emission v1 — diversity-aware emission (deficit colorize + selection)\n")
-    L.append(f"Source ledger: `{eng.ledger.relative_to(ROOT)}` · floor **{eng.floor}** "
-             f"(production gate 0.90) · release N=**{eng.release_n}** · "
-             f"target gated ≥ **{eng.target_gated}**.\n")
+    L.append("# Emission — diversity-aware emission (deficit colorize + ranker-ordered intake "
+             "+ per-head release floors)\n")
+    L.append("Source ledger(s): " + ", ".join(f"`{x}`" for x in ledger_labels) + ".\n")
+    L.append(f"Location ranker (pref_loc_v0, **{eng.ranker_mode}**) ORDERS the colorize queue "
+             f"(order, not filter — diversity supply untouched). Pool floors (permissive): "
+             f"wallpaper **{eng.floor}** / mining **{eng.mining_floor}**. **Release floors** "
+             f"(per head, distinct): wallpaper **{eng.release_floor}** / mining "
+             f"**{eng.mining_release_floor}**. Release N=**{eng.release_n}** · target "
+             f"**{eng.target_gated}** release-eligible (post-floor surplus).\n")
 
     L.append("## Intake — morph clusters among admitted locations\n")
     L.append(f"- **{len(eng.rows)}** admitted locations "
@@ -176,23 +209,49 @@ def write_report(eng, selected: list, sel_log: list, rel_paths: list):
              + ", ".join(f"{s}×{c}" for s, c in ax_pop['render_style'].most_common()))
     L.append("")
 
-    L.append("## Realized vs nominal surplus\n")
+    # per-head release-eligibility (the new floors), and inventory banked below them.
+    wp_rel = sum(1 for r in wp_gated if (r["p_ge3"] or 0) >= eng.release_floor)
+    mn_rel = sum(1 for r in mn_gated if (r["p_ge3"] or 0) >= eng.mining_release_floor)
+    n_rel = wp_rel + mn_rel
+
+    L.append("## Pool inventory + per-head release floors\n")
     L.append(f"Render styles route to two heads: **smooth → wallpaper head** "
-             f"(floor {eng.floor}, production gate 0.90); **strange → mining head** "
-             f"(floor {eng.mining_floor}, production gate 0.50). Quality is only compared "
-             f"within a niche, which pins the style/head, so the heads never mix.\n")
-    L.append(f"- attempts: **{n_att}** · gated: **{n_pass}** → post-floor pass rate "
+             f"(pool floor {eng.floor}, **release floor {eng.release_floor}**); "
+             f"**strange → mining head** (pool floor {eng.mining_floor}, **release floor "
+             f"{eng.mining_release_floor}**). Quality is only compared within a niche, which "
+             f"pins the style/head, so the heads never mix. Pool admission is permissive "
+             f"(weak wallpapers persist as inventory); SELECTION only draws above the release "
+             f"floor.\n")
+    L.append(f"- attempts: **{n_att}** · pool-admitted (gated): **{n_pass}** → pool pass rate "
              f"**{pass_rate:.1%}** · render errors: {n_err}")
-    L.append(f"- wallpaper-head (smooth): **{len(wp_gated)}** gated, **{wp_also}** also clear "
-             f"the 0.90 production gate → the floor's extra admits (0.75–0.90) = "
-             f"{len(wp_gated) - wp_also}")
-    L.append(f"- mining-head (strange): **{len(mn_gated)}** gated, **{mn_also}** also clear "
-             f"the 0.50 production gate → the floor's extra admits ({eng.mining_floor}–0.50) = "
-             f"{len(mn_gated) - mn_also}")
-    extra = (len(wp_gated) - wp_also) + (len(mn_gated) - mn_also)
-    L.append(f"- reading: the permissive floors are doing a "
-             f"{'small' if extra <= n_pass * 0.5 else 'large'} amount of work "
-             f"({extra}/{n_pass} gated wallpapers sit below their production gate).\n")
+    L.append("")
+    L.append("| head | pool-admitted | release-eligible | inventory (below release floor) |")
+    L.append("|---|--:|--:|--:|")
+    L.append(f"| wallpaper (smooth, rel≥{eng.release_floor}) | {len(wp_gated)} | {wp_rel} | "
+             f"{len(wp_gated) - wp_rel} |")
+    L.append(f"| mining (strange, rel≥{eng.mining_release_floor}) | {len(mn_gated)} | {mn_rel} | "
+             f"{len(mn_gated) - mn_rel} |")
+    L.append(f"| **total** | **{n_pass}** | **{n_rel}** | **{n_pass - n_rel}** |")
+    L.append("")
+    L.append(f"**{n_pass - n_rel}/{n_pass}** pool wallpapers are banked as inventory below their "
+             f"head's release floor — exactly the weak tiles the v1 permissive-only bar would "
+             f"have let compete for a release slot. The colorize targeted **{eng.target_gated}** "
+             f"release-eligible (post-floor) and reached **{n_rel}**.\n")
+
+    if reach:
+        L.append("## Ranker reach — did ranked intake concentrate budget on good locations?\n")
+        L.append("Admitted locations ordered by pref_loc_v0 score (desc); 'reach' = the deepest "
+                 "rank the colorize actually touched. If ranked intake works, colorize fills its "
+                 "surplus from the TOP of the ordering and never has to reach deep.\n")
+        L.append(f"- {reach['n_locations']} admitted locations; **{reach['n_attempted']}** got a "
+                 f"colorize attempt, reaching rank **{reach['deepest_attempted_rank']}** "
+                 f"(top {reach['deepest_attempted_pct']:.0%} of the ordering).")
+        L.append(f"- **{reach['n_release_locs']}** locations contributed a release-eligible "
+                 f"wallpaper, the deepest at rank **{reach['deepest_release_rank']}** "
+                 f"(top {reach['deepest_release_pct']:.0%}).")
+        L.append(f"- reading: the surplus was filled within the top "
+                 f"**{reach['deepest_release_pct']:.0%}** of ranker-ordered locations "
+                 f"{'— ranked intake concentrated budget on the good end.' if reach['deepest_release_pct'] < 0.9 else '(reached deep — pool is quality-thin, not a ranking failure).'}\n")
 
     L.append("## Colorizer choice — deficit-driven palette/style spread\n")
     L.append(f"Chosen palette-flavor distribution over {n_att} colorize attempts vs the "
@@ -209,38 +268,75 @@ def write_report(eng, selected: list, sel_log: list, rel_paths: list):
         L.append(f"| {s} | {c} |")
     L.append("")
 
-    L.append(f"## Release selection — {len(selected)} picks (greedy max-marginal-gain)\n")
-    L.append("Marginal gain = niche-relative quality (within-niche p_ge3 percentile) × "
-             "coverage gain (1 − max similarity to already-selected under the per-axis "
-             "kernel). `nearest` = the closest already-selected wallpaper (displacement).\n")
-    L.append("| # | id | type/cluster | flavor/style | p_ge3 | niche% | cov.gain | nearest (sim) |")
-    L.append("|--:|---|---|---|--:|--:|--:|---|")
+    fill_note = ""
+    if short.get("short_by"):
+        fill_note = (f" — **SHORT-FILL {len(selected)}/{eng.release_n}**: only "
+                     f"{short['eligible']} pool rows clear the release floors; shipping fewer "
+                     f"rather than dipping below the floor")
+    L.append(f"## Release selection — {len(selected)} picks (greedy max-marginal-gain){fill_note}\n")
+    L.append("Selection draws ONLY from the release-eligible subset (per-head floor). Marginal "
+             "gain = niche-relative quality (within-niche p_ge3 percentile) × coverage gain "
+             "(1 − max similarity to already-selected under the per-axis kernel). `rk%` = the "
+             "location's pref_loc_v0 percentile among admitted; `nearest` = the closest "
+             "already-selected wallpaper (displacement).\n")
+    L.append("| # | id | type/cluster | flavor/style | p_ge3 | niche% | rk% | cov.gain | nearest (sim) |")
+    L.append("|--:|---|---|---|--:|--:|--:|--:|---|")
     for i, (e, l) in enumerate(zip(selected, sel_log), 1):
         r = e["_rec"]
         near = f"{l['nearest_selected']} ({l['nearest_sim']:.2f})" if l["nearest_selected"] else "—"
+        rkp = eng.ranker_pct.get(r["location_id"])
+        rkp_s = f"{rkp:.2f}" if rkp is not None else "—"
         L.append(f"| {i} | {r['id']} | {r['type']}/{r['morph_cluster']} | "
                  f"{r['palette_flavor']}/{r['render_style']} | {r['p_ge3']:.3f} | "
-                 f"{l['niche_pct']:.2f} | {l['coverage_gain']:.2f} | {near} |")
+                 f"{l['niche_pct']:.2f} | {rkp_s} | {l['coverage_gain']:.2f} | {near} |")
     L.append("")
-    L.append(f"Release full-res PNGs: **{len(rel_paths)}** under `{eng.release_dir.relative_to(ROOT)}/`.\n")
+
+    # v1 side-by-side: reconstruct the v1 release (no release floors) from its durable pool.
+    v1 = _v1_release_reconstruction(ROOT / "out" / "emission_v1" / "pool_log.jsonl", eng.release_n)
+    if v1 and eng.out.name != "emission_v1":
+        L.append("### vs the v1 release (no release floors) — side-by-side\n")
+        L.append("v1 selected from ALL gated pool rows (permissive floor only). Reconstructed "
+                 "here by the same greedy select over the durable v1 pool, annotated with which "
+                 "picks would now fall BELOW their head's release floor (→ inventory, not a "
+                 "release).\n")
+        wp_rf, mn_rf = eng.release_floor, eng.mining_release_floor
+        n_below = 0
+        L.append("| v1 pick | type/style | p_ge3 | ≥ release floor? |")
+        L.append("|---|---|--:|---|")
+        for iid in v1["selected"]:
+            r = v1["by_id"][iid]
+            style = r["render_style"]
+            rf = wp_rf if style == "smooth" else mn_rf
+            p = r["p_ge3"] or 0.0
+            ok = p >= rf
+            n_below += 0 if ok else 1
+            verdict = f"✓ ({p:.2f} ≥ {rf})" if ok else f"✗ {p:.2f} BELOW {rf} → inventory"
+            L.append(f"| {iid} | {r['type']}/{style} | {p:.3f} | {verdict} |")
+        L.append("")
+        L.append(f"**{n_below}/{len(v1['selected'])}** v1 picks now drop to inventory under the "
+                 f"release floors — the sub-floor tiles the v1 permissive-only bar shipped.\n")
     L.append("## Contact sheets\n")
     L.append(f"- `{rel_png.relative_to(ROOT)}` — the {len(selected)}-wallpaper release")
     L.append(f"- `{pool_png.relative_to(ROOT)}` — the gated pool grouped by niche\n")
 
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text("\n".join(L), encoding="utf-8")
+    report_path = getattr(eng, "report_path", REPORT_PATH)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(L), encoding="utf-8")
 
     summary = {
-        "ledger": str(eng.ledger.relative_to(ROOT)),
+        "ledgers": ledger_labels,
         "n_admitted": len(eng.rows), "n_morph_clusters": total_clusters,
         "feasible_cells": occ["feasible_cells"], "populated_cells": occ["populated_cells"],
         "capped_cells": occ["capped"],
         "attempts": n_att, "gated": n_pass, "pass_rate": round(pass_rate, 4),
         "gated_also_090": also_090, "render_errors": n_err,
-        "release_n": len(selected), "release_rendered": len(rel_paths),
-        "floor": eng.floor, "ranker": selected[0]["_rec"]["ranker"] if selected else None,
+        "release_eligible": n_rel, "release_n": len(selected), "release_rendered": len(rel_paths),
+        "pool_floor": eng.floor, "mining_pool_floor": eng.mining_floor,
+        "release_floor": eng.release_floor, "mining_release_floor": eng.mining_release_floor,
+        "loc_ranker": eng.ranker_mode, "ranker_reach": reach, "short_fill": short,
+        "palette_ranker": selected[0]["_rec"]["ranker"] if selected else None,
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(f"[report] {REPORT_PATH}\n[report] {rel_png}\n[report] {pool_png}\n"
+    print(f"[report] {report_path}\n[report] {rel_png}\n[report] {pool_png}\n"
           f"[report] {out/'summary.json'}", flush=True)
     return summary

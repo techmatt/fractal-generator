@@ -226,6 +226,105 @@ def test_pool_resume_no_loss_no_dup(tmp_path):
     assert [x["id"] for x in r.rows] == ["em_000000", "em_000001", "em_000002", "em_000003"]
 
 
+# --------------------------------------------------------------------------- #
+# ranker (pref_loc_v0) — percentiles + cache-only scoring parity (render-free).
+# --------------------------------------------------------------------------- #
+from tools.ranker.score_locations import rank_percentiles, LocationRanker, DEFAULT_FEATURES  # noqa: E402
+
+
+def test_rank_percentiles_ties_share_higher_rank():
+    pct = rank_percentiles({"a": 1.0, "b": 2.0, "c": 2.0})
+    assert pct["a"] == pytest.approx(1 / 3)      # smallest → bottom third
+    assert pct["b"] == pct["c"] == 1.0           # ties both count each other as <= → top
+    assert rank_percentiles({}) == {}
+    assert rank_percentiles({"solo": 5.0})["solo"] == 1.0
+
+
+@pytest.mark.skipif(not (ROOT / "data/ranker/pref_loc_v0/model.npz").exists()
+                    or not DEFAULT_FEATURES.exists(),
+                    reason="pref_loc_v0 artifacts absent")
+def test_location_ranker_cache_hit_matches_direct_scoring():
+    from tools.ranker.scorer import RankerScorer
+    z = np.load(DEFAULT_FEATURES, allow_pickle=True)
+    s = RankerScorer.load()
+    direct = {str(z["ids"][k]): float(v)
+              for k, v in enumerate(s.score_matrix({b: z[b] for b in s.sets}))}
+    lr = LocationRanker()
+    rows = [{"id": str(i)} for i in z["ids"]]
+    mine = lr.score_rows(rows, ROOT / "out" / "_test_ranker_tiles")   # all cache hits
+    assert lr._stack is None                     # torch feature stack never loaded
+    assert max(abs(mine[i] - direct[i]) for i in direct) < 1e-9
+
+
+# --------------------------------------------------------------------------- #
+# driver — per-head release floors + short-fill + multi-ledger intake dedup.
+# --------------------------------------------------------------------------- #
+from tools.emission import build_emission_diversity_v1 as B     # noqa: E402
+
+
+def _args(tmp_path, **over):
+    import argparse
+    a = argparse.Namespace(
+        ledger=["x.jsonl"], out=str(tmp_path / "out"), report=None, release_n=5,
+        target_gated=0, floor=B.DEFAULT_FLOOR, mining_floor=B.DEFAULT_MINING_FLOOR,
+        release_floor=B.DEFAULT_RELEASE_FLOOR, mining_release_floor=B.DEFAULT_MINING_RELEASE_FLOOR,
+        intake_floor=None, target_measure=str(B.DEFAULT_TARGET_MEASURE),
+        max_attempts=240, time_budget_min=45.0, seed=0)
+    for k, v in over.items():
+        setattr(a, k, v)
+    return a
+
+
+def _gate_rec(id, loc, style, p_ge3, cell):
+    return {"id": id, "location_id": loc, "type": cell[0], "morph_cluster": cell[1],
+            "palette_flavor": cell[2], "render_style": style, "cell": list(cell),
+            "p_ge3": p_ge3, "passed": True, "head": B.head_for_style(style)}
+
+
+def test_release_floors_exclude_subfloor_and_short_fill(tmp_path):
+    eng = B.EmissionDiversity(_args(tmp_path))
+    eng.embs = {}
+    # 4 pool-admitted rows in distinct cells: one eligible + one sub-floor per head.
+    recs = [
+        _gate_rec("em_0", "l0", "smooth", 0.95, ("mandelbrot", "m#0", "k16:1", "smooth")),  # ≥0.90 ✓
+        _gate_rec("em_1", "l1", "smooth", 0.80, ("mandelbrot", "m#1", "k16:2", "smooth")),  # <0.90 inv
+        _gate_rec("em_2", "l2", "tia",    0.60, ("mandelbrot", "m#2", "k16:3", "tia")),     # ≥0.50 ✓
+        _gate_rec("em_3", "l3", "tia",    0.30, ("mandelbrot", "m#3", "k16:4", "tia")),     # <0.50 inv
+    ]
+    for r in recs:
+        eng.pool.append(r)
+    elig = {r["id"] for r in eng.release_eligible()}
+    assert elig == {"em_0", "em_2"}                       # sub-floor rows banked as inventory
+    selected, _log = eng.select_release()
+    sel_ids = {e["_rec"]["id"] for e in selected}
+    assert sel_ids == {"em_0", "em_2"}                    # never dips below the floor to fill N=5
+    assert eng.release_short_fill == {"requested": 5, "eligible": 2, "selected": 2, "short_by": 3}
+
+
+def test_release_floor_per_head_boundary(tmp_path):
+    # a mining tile at exactly 0.50 is eligible; a smooth at 0.50 is NOT (its floor is 0.90).
+    eng = B.EmissionDiversity(_args(tmp_path))
+    eng.embs = {}
+    eng.pool.append(_gate_rec("em_0", "l0", "tia", 0.50, ("mandelbrot", "m#0", "k16:1", "tia")))
+    eng.pool.append(_gate_rec("em_1", "l1", "smooth", 0.50, ("mandelbrot", "m#1", "k16:2", "smooth")))
+    assert {r["id"] for r in eng.release_eligible()} == {"em_0"}
+
+
+def test_multi_ledger_intake_dedup_and_source_tag(tmp_path):
+    l1 = tmp_path / "a.jsonl"
+    l2 = tmp_path / "b.jsonl"
+    l1.write_text(json.dumps(_row("shared", "v7")) + "\n"
+                  + json.dumps(_row("only_a", "v7")) + "\n", encoding="utf-8")
+    l2.write_text(json.dumps(_row("shared", "v7")) + "\n"      # dup id across ledgers
+                  + json.dumps(_row("only_b", "v7")) + "\n", encoding="utf-8")
+    eng = B.EmissionDiversity(_args(tmp_path, ledger=[str(l1), str(l2)]))
+    rows = eng._load_all_admitted()
+    ids = [r["id"] for r in rows]
+    assert ids == ["shared", "only_a", "only_b"]            # dedup, first-ledger wins
+    src = {r["id"]: r["_source_ledger"] for r in rows}
+    assert src["shared"].endswith("a.jsonl") and src["only_b"].endswith("b.jsonl")
+
+
 def test_deficit_rebuild_from_pool_log(tmp_path):
     """The build_axes resume path: replaying the pool log reproduces fill+attempt counts."""
     cells = C.build_feasible_cells([("mandelbrot", "m#0")], ["k16:1"], ["smooth", "tia"])
