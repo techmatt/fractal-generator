@@ -95,9 +95,12 @@ TRACKED_CANARIES = [
     "data/label_corpus/batches/julia_ladder_j0/images.jsonl",
     # blindspot: labels live ONLY in images.jsonl (no scores.json exists).
     "data/label_corpus/batches/2026-07-12_blindspot_v6reject_v1/images.jsonl",
-    # The one committed classifier weight: the v5 one-flip rollback anchor. Not
-    # reproducible under GPU float nondeterminism, so no rebuild path. (Every
-    # other v{2..6} weight is gitignored under data/*; this one is force-tracked.)
+    # Committed classifier weights (force-tracked; not reproducible under GPU float
+    # nondeterminism, so no rebuild path). v7 is the LIVE deployed model; v6 is the
+    # one-flip rollback anchor (the role v5 held before the v7 promotion); v5 stays as
+    # the deeper rollback. Every other v{2..4} weight is gitignored under data/*.
+    "data/classifier/v7/model_best.pt",
+    "data/classifier/v6/model_best.pt",
     "data/classifier/v5/model_best.pt",
     # The prospect location library. Both are unregenerable: morph_v6 has no
     # producer and the CLIP arrays only regenerate value-approximate under a

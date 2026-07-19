@@ -1,0 +1,85 @@
+{
+  "family": "mandelbrot",
+  "objective": "F0.5",
+  "grid": [
+    0.02,
+    0.98
+  ],
+  "old_t": 0.14,
+  "old_objective": "F2",
+  "new_t": 0.51,
+  "eval": {
+    "n": 942,
+    "pos": 29
+  },
+  "steered": {
+    "n": 16,
+    "pos": 0
+  },
+  "combined": {
+    "n": 958,
+    "pos": 29
+  },
+  "sweeps": {
+    "f05_eval_only": {
+      "t": 0.51,
+      "f": 0.4274
+    },
+    "f05_combined": {
+      "t": 0.51,
+      "f": 0.4274
+    },
+    "f2_combined": {
+      "t": 0.18,
+      "f": 0.5357
+    }
+  },
+  "at_old_t": {
+    "t": 0.14,
+    "tp": 23,
+    "fp": 79,
+    "fn": 6,
+    "tn": 850,
+    "prec": 0.2255,
+    "rec": 0.7931,
+    "f05": 0.2632,
+    "admit": 102,
+    "disc_q3": 6
+  },
+  "at_new_t": {
+    "t": 0.51,
+    "tp": 10,
+    "fp": 12,
+    "fn": 19,
+    "tn": 917,
+    "prec": 0.4545,
+    "rec": 0.3448,
+    "f05": 0.4274,
+    "admit": 22,
+    "disc_q3": 19
+  },
+  "steered_at_old_t": {
+    "t": 0.14,
+    "tp": 0,
+    "fp": 16,
+    "fn": 0,
+    "tn": 0,
+    "prec": 0.0,
+    "rec": 0.0,
+    "f05": 0.0,
+    "admit": 16,
+    "disc_q3": 0
+  },
+  "steered_at_new_t": {
+    "t": 0.51,
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 16,
+    "prec": 0.0,
+    "rec": 0.0,
+    "f05": 0.0,
+    "admit": 0,
+    "disc_q3": 0
+  }
+}

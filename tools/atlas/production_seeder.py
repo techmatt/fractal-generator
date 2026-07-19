@@ -117,12 +117,12 @@ PER_WALK_RNG = True          # ON for all walk + probe runs
 
 # --- probe / scorer ---
 PROBE_DEPTH = 2              # --depth-min 2 --depth-max 2, keep reached>=2
-SCORER_PATH = ACTIVE_CKPT   # single source of truth (probe.ACTIVE_CKPT — currently v6); explicit, NEVER a default scorer
+SCORER_PATH = ACTIVE_CKPT   # single source of truth (active_ckpt.ACTIVE_CKPT — currently v7); explicit, NEVER a default scorer
 # Provenance stamp for new outcome rows: the classifier version dir ("v6") parsed off the
 # active checkpoint path, so it tracks ACTIVE_CKPT automatically. Stamped by both ledger
 # writers (append_outcome + GatherLedger.append) so post-deploy rows are distinguishable
 # from v5-era rows in the ledger and the q3 cloud.
-SCORER_VERSION = Path(SCORER_PATH).parent.name   # "v6"
+SCORER_VERSION = Path(SCORER_PATH).parent.name   # "v7" (tracks ACTIVE_CKPT)
 
 # --- run ---
 WALLCLOCK_BUDGET_MIN = 30
@@ -218,43 +218,35 @@ def julia_partition(fam: str) -> str:
 # Every value is stamped per outcome row (`t_good`) so the ledger self-describes across
 # the mixed-threshold eras.
 #
-# Provenance of each override:
-#   mandelbrot / julia:mandelbrot -> 0.24
-#     v6 threshold sweep (tools/v6/threshold_sweep.py, labeled eval split): the deg-2
-#     slice — where the classifier is actually POWERED — has a knee at p_good=0.24,
-#     ~2.5x the baseline q3 recall at equal precision. deg-2 = the c-plane quadratic
-#     Mandelbrot and its dynamical Julia twin.
-#   julia:multibrot3 -> 0.30
-#     jm3 revival sweep (labels/jm3_band_v1.json; sweep script not committed,
-#     2026-07-11): the band is 64% q3 yet the baseline 0.50 rejected all of it; p_good
-#     carries directional resolution and the sweep supports anywhere in 0.28-0.36. 0.30
-#     is a deliberately round mid-low pick, not a fitted decimal.
-#   julia:multibrot4 / julia:multibrot5 -> 0.30
-#     jm4/jm5 revival sweep (labels/jm45_band_v1.json; sweep script not committed,
-#     2026-07-12): both bands are 86% q3 (19/22 locations) yet the baseline 0.50 rejected
-#     all of it — even richer than jm3. Both take jm3's lean-low 0.30 (sweep admits with
-#     0.86-0.88 q3 precision and no q1 leak at 0.30); the Stage-2 quality gate nets any
-#     location-level FPs. Independent calls that happen to land on the same value.
-#   phoenix -> 0.18  (PROVISIONAL)
-#     phoenix "take-the-best" study (prompts/phoenix_study_prompt.md, 2026-07-12; N=36,
-#     NOT converged). The fixed Ushiki z-plane is a variety-poor garnish: bulk p_good
-#     continuum 0.042-0.148, a good tail 0.171-0.220, then a lone gap to two standouts at
-#     0.321/0.365. 0.18 sits just above the bulk p75 (0.138), capturing the good tail +
-#     standouts at ~0.14 raw yield (~7 descents/keeper). PROVISIONAL: the 6h run is itself
-#     the big phoenix sampler (every emission records its recipe), so re-threshold post-hoc
-#     if 0.18 proves off. See [[phoenix-tgood-yield-study]].
+# Provenance: ALL values below are the v7 F2-argmax sweep, derived in
+# docs/findings/v7_t_good.md (tools/v7/derive_t_good.py, v7 labeled eval slice; F2 =
+# recall-weighted, the prospecting loop wants to stop discarding good locations). These
+# REPLACE the v6 table wholesale — v7's p_good distribution is markedly more compressed,
+# so every v6 cut (0.24 / 0.30) sat far up v7's tail and starved recall. Each value sits
+# on an F2 plateau (not a knife-edge); see the findings doc for per-partition n/positives,
+# in-sample vs leave-one-out F2, and the eval-set leak the julia:multibrot cuts carry.
 #
-# High-degree families NOT listed (c-plane multibrot3/4/5) stay unpowered on the eval and
-# are HELD at the baseline until their own sweeps land.
+# EXCEPTION — mandelbrot is 0.51, re-derived F0.5 (precision-weighted) with the steered_run2
+# blind labels folded in (docs/findings/mandelbrot_tgood_steered.md). The blind read scored
+# 0/16 mandelbrot admissions good, so the F2 0.14 bar demonstrably over-admits on this family;
+# 0.51 admits 0/16 of those human-rejected tiles. Family-specific tightening (precedent:
+# phoenix 0.18->0.50); the julia families keep their F2 cuts (blind slices too small to move).
+#
+# NOT listed, deliberately (both -> baseline 0.50, see findings doc):
+#   phoenix                    — 3 eval locations / 0 positive: UNDECIDABLE under v7. The
+#                                v6 table's provisional 0.18 was fit on v6's p_good scale
+#                                and is meaningless here; no v7 phoenix eval exists to
+#                                re-derive it, so phoenix falls to baseline until one does.
+#   native multibrot3/4/5      — uncalibrated, 0 eval positives in either direction; no
+#                                invented value.
 # =========================================================================== #
-T_GOOD_BASELINE = 0.50    # conservative default for every unswept / high-degree partition
+T_GOOD_BASELINE = 0.50    # conservative default for every unswept / undecidable partition
 T_GOOD_OVERRIDES = {
-    "mandelbrot": 0.24,        # v6 deg-2 sweep knee
-    "julia:mandelbrot": 0.24,  # deg-2 dynamical twin
-    "julia:multibrot3": 0.30,  # jm3 revival sweep (2026-07-11)
-    "julia:multibrot4": 0.30,  # jm4 revival sweep (2026-07-12)
-    "julia:multibrot5": 0.30,  # jm5 revival sweep (2026-07-12)
-    "phoenix": 0.18,           # phoenix take-the-best study (2026-07-12, PROVISIONAL)
+    "mandelbrot": 0.51,        # F0.5 re-derive w/ steered_run2 labels (was 0.14 F2; see docs/findings/mandelbrot_tgood_steered.md)
+    "julia:mandelbrot": 0.22,  # v7 F2 sweep (n=178, pos=25)
+    "julia:multibrot3": 0.25,  # v7 F2 sweep, census-144 slice (n=54, pos=21)
+    "julia:multibrot4": 0.17,  # v7 F2 sweep, census-144 slice (n=51, pos=24)
+    "julia:multibrot5": 0.10,  # v7 F2 sweep, census-144 slice (n=39, pos=22)
 }
 
 
@@ -1760,7 +1752,7 @@ def _run_phoenix(args):
     with the SAME guarded v6 scorer + per-degree t_good the c-plane `_run` uses. Every
     scored outcome is appended to the run-scoped OUTCOME_LEDGER (redirected by
     --discovery-dir) with the c-plane row schema (id / family=phoenix / decoded_class /
-    p_good / t_good / guard_pass, + scorer_version="v6" stamped by append_outcome), so the
+    p_good / t_good / guard_pass, + scorer_version=SCORER_VERSION stamped by append_outcome), so the
     orchestrator's per-cycle watermark (new_fresh_q3) and fresh-isolation assertion admit
     phoenix rows exactly like the other families and build_fresh_discovery renders them as
     the 9th family (gs.render_family("phoenix") -> outcome viewport, no c).
@@ -1840,7 +1832,7 @@ def _run_phoenix(args):
                 "distinct": is_q3, "dup_of": None,
                 "guard_pass": guard_pass, "guard_fail": None if guard_pass else "sentinel",
             }
-            ledgers.append_outcome(row, None)   # stamps scorer_version="v6"; no feature store
+            ledgers.append_outcome(row, None)   # stamps scorer_version=SCORER_VERSION; no feature store
             totals["walked"] += 1
             if is_q3:
                 totals["q3"] += 1; b_q3 += 1

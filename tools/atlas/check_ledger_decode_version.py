@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
-import corpus_common as cc  # noqa: E402  (is_v6_decoded — canonical v6-stamp discriminator)
+import corpus_common as cc  # noqa: E402  (is_decoded_by — explicit-version stamp discriminator)
 
 DISCOVERY = ROOT / "data" / "discovery"
 DEG2_FAMILIES = ("mandelbrot", "julia:mandelbrot")
@@ -63,7 +63,11 @@ def scan_ledger(path: Path) -> dict:
             continue
         r = json.loads(line)
         stat["rows"] += 1
-        v6 = cc.is_v6_decoded(r)
+        # v6-SPECIFIC by intent: this is a historical v5-vs-v6 migration audit whose
+        # "v6"/"v5" columns mean exactly those versions, so it pins the explicit
+        # version rather than tracking the active checkpoint (which would relabel every
+        # v6 row as "v5" after a v7 flip). See docs/findings/v7_promote_report.md.
+        v6 = cc.is_decoded_by(r, "v6")
         dc = r.get("decoded_class")
         if "decoded_class" not in r:
             stat["no_decoded_class"] += 1

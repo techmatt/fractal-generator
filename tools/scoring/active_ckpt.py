@@ -53,10 +53,17 @@ PALETTE = "twilight_shifted"           # v4/v5 deploy-canonical palette
 # checkpoint from here. Flip ACTIVE_CKPT and the whole gate moves; nothing else hardcodes
 # a version. The load path is version-agnostic (score_lib.Scorer reads mean/std/head from
 # the checkpoint's own config), so only this string changes between versions.
-ACTIVE_CKPT = "data/classifier/v6/model_best.pt"    # v6 multi-family location classifier (LIVE)
-# Rollback: point ACTIVE_CKPT back at this to restore the v5 gate (one-line revert).
+ACTIVE_CKPT = "data/classifier/v7/model_best.pt"    # v7 unified location classifier (LIVE)
+# Rollback: point ACTIVE_CKPT back at v6 (the one-flip rollback anchor, the role v5 held)
+# to restore the prior gate; v5 remains the deeper rollback.
+V6_CKPT_ROLLBACK = "data/classifier/v6/model_best.pt"
 V5_CKPT_ROLLBACK = "data/classifier/v5/model_best.pt"
 DEFAULT_MODEL = ACTIVE_CKPT             # unified location-quality model (== ACTIVE_CKPT)
+# Version token of the live checkpoint ("v6"/"v7"...), parsed off the checkpoint dir. This
+# is the SINGLE SOURCE OF TRUTH for what "current" means: corpus_common.is_current_decoded
+# and production_seeder.SCORER_VERSION both resolve the decode-stamp version from here, so
+# flipping ACTIVE_CKPT moves the whole notion of "current-decoded" with it.
+ACTIVE_VERSION = Path(ACTIVE_CKPT).parent.name   # "v7"
 JPG_Q = 90                              # match corpus crop quality
 DEFAULT_SS = 4                          # ss4 = v4/v5 deploy-canonical antialiased view
 
