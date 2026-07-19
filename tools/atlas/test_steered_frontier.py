@@ -135,3 +135,69 @@ def test_is_keeper_uses_corn_decode():
     assert kc.is_keeper("mandelbrot", 0.9, 0.9, cuts) is True
     assert kc.is_keeper("mandelbrot", 0.9, 0.4, cuts) is False
     assert kc.is_keeper("mandelbrot", 0.4, 0.9, cuts) is False
+
+
+# =========================================================================== #
+# MorphMemory — the v1.2 novelty-memory fix (legacy vs recency semantics).
+# =========================================================================== #
+def _unit(i, d=768):
+    import numpy as np
+    v = np.zeros(d, np.float32); v[i] = 1.0
+    return v
+
+
+def test_morph_memory_legacy_is_all_permanent(tmp_path):
+    # recency_k == 0: admitted AND expanded looks are permanent; end_batch is a no-op.
+    import numpy as np
+    m = sf.MorphMemory("cpu", tmp_path / "m.npz", recency_k=0)
+    m.add_admitted(_unit(0))
+    m.add_expanded(_unit(1))
+    m.end_batch()                                   # no-op in legacy
+    assert m.n_perm == 2 and m.n_recency == 0 and len(m) == 2
+    # a perfect dup of either look reads cos_max ~ 1.
+    cm = m.cos_max(np.stack([_unit(0), _unit(1), _unit(5)]))
+    assert cm[0] > 0.999 and cm[1] > 0.999 and cm[2] < 1e-6
+
+
+def test_morph_memory_recency_window_evicts(tmp_path):
+    # recency_k == 2: admitted permanent; expanded looks live in a 2-batch rolling window.
+    import numpy as np
+    m = sf.MorphMemory("cpu", tmp_path / "m.npz", recency_k=2)
+    m.add_admitted(_unit(0))                        # permanent
+    m.add_expanded(_unit(1)); m.end_batch()         # block A = {e1}
+    m.add_expanded(_unit(2)); m.end_batch()         # block B = {e2}
+    # both windows + the admitted look are live here.
+    cm = m.cos_max(np.stack([_unit(0), _unit(1), _unit(2), _unit(3)]))
+    assert cm[0] > 0.999 and cm[1] > 0.999 and cm[2] > 0.999 and cm[3] < 1e-6
+    m.add_expanded(_unit(3)); m.end_batch()         # block C = {e3}; e1's block evicted (>K)
+    cm = m.cos_max(np.stack([_unit(0), _unit(1), _unit(2), _unit(3)]))
+    assert cm[0] > 0.999                            # admitted look survives (permanent)
+    assert cm[1] < 1e-6                             # e1 evicted from the window
+    assert cm[2] > 0.999 and cm[3] > 0.999          # e2, e3 still in window
+    assert m.n_perm == 1 and m.n_recency == 2
+
+
+def test_morph_memory_current_batch_excluded_until_end(tmp_path):
+    # A look expanded THIS batch is NOT visible to cos_max until end_batch finalizes it into a
+    # block — comparing a candidate to its own just-expanded parent would trivially saturate.
+    import numpy as np
+    m = sf.MorphMemory("cpu", tmp_path / "m.npz", recency_k=4)
+    m.add_expanded(_unit(7))                         # pending, not yet in the window
+    assert m.cos_max(np.stack([_unit(7)]))[0] < 1e-6
+    m.end_batch()                                    # finalized -> visible to the NEXT batch
+    assert m.cos_max(np.stack([_unit(7)]))[0] > 0.999
+
+
+def test_morph_memory_roundtrip_persists_window(tmp_path):
+    # save() + reload preserves permanent + window blocks (so a resume evicts on the same K).
+    import numpy as np
+    p = tmp_path / "m.npz"
+    m = sf.MorphMemory("cpu", p, recency_k=2)
+    m.add_admitted(_unit(0))
+    m.add_expanded(_unit(1)); m.end_batch()
+    m.add_expanded(_unit(2)); m.end_batch()
+    m.save()
+    m2 = sf.MorphMemory("cpu", p, recency_k=2)
+    assert m2.n_perm == 1 and m2.n_recency == 2
+    cm = m2.cos_max(np.stack([_unit(0), _unit(1), _unit(2)]))
+    assert cm[0] > 0.999 and cm[1] > 0.999 and cm[2] > 0.999

@@ -86,6 +86,7 @@ BIN = ps.prescreen.BIN
 B_DEFAULT = 32            # nodes popped + expanded per batch
 T_GUMBEL = 0.08          # priority exploration temperature (Gumbel scale)
 M_CAP = 40               # hard cap on expansions per root_id
+DIVE_NOISE_T = 0.02      # small Gumbel tie-break on the dive argmax-child selection
 DUP_P0 = 1.0             # dup-penalty magnitude at zero distance to the q3 cloud (E[ord] units)
 DUP_SCALE = ps.REJECT_RADIUS   # Gaussian decay scale of the dup penalty (plane coords)
 NEUTRAL_PRIOR = 1.0      # root prior priority (mid E[ord] in [0,2])
@@ -235,43 +236,107 @@ def novelty_penalty(cos_max: float, lambda_m: float, lo: float, hi: float) -> fl
 
 
 # --------------------------------------------------------------------------- #
-# Run-scoped morph memory — CLIP embeddings (library recipe) of admitted locations +
-# already-expanded nodes, keyed to the cheap twilight presentation each candidate already
-# carries (no extra render; the CLIP forward batches alongside the v7 forward). cos_max vs
-# this set is the novelty signal. Embeddings are L2-normalized; the max-cosine reduction
-# runs on the CLIP device. Persisted as a plain (M,768) matrix so a resume rebuilds it.
+# Run-scoped morph memory — CLIP embeddings (library recipe) of the looks a candidate's
+# novelty is measured against. cos_max vs this set is the novelty signal. Embeddings are
+# L2-normalized; the max-cosine reduction runs on the CLIP device.
+#
+# Two semantics (the v1.2 fix). run2 grew ONE undifferentiated set of admitted+expanded
+# looks to 10,420 rows; at that density the cheap-substrate cos_max is past the knee for
+# ~90% of candidates, so the penalty acted as a near-constant down-shift, not a gradient
+# (see steered_run2_report.md "Saturation caveat").
+#   - LEGACY (recency_k == 0, the v1.1/pilot default): every admitted AND expanded look is
+#     permanent; the set grows without bound. Kept as the default so v1.1 runs reproduce.
+#   - RECENCY (recency_k > 0, the fix): the memory the novelty term buys against is
+#     ADMITTED looks only (permanent — "don't re-buy a banked look") PLUS a rolling window
+#     of the last `recency_k` COMPLETED batches' EXPANDED-node looks (cross-batch sibling
+#     suppression on hot lineages, evicted once the lineage cools). The current batch's own
+#     parents are excluded from its candidates' cos_max (see _all_rows) — comparing a child
+#     to its own parent trivially saturates. The window keeps |memory| O(admitted +
+#     recency_k*batch), so cos_max stays a live gradient instead of saturating.
+# Persisted as `perm` (admitted / all-legacy) + `recency` (concatenated window blocks) +
+# `block_sizes` (per-batch block lengths, so a resume evicts on the same boundaries); a
+# legacy `mem`-keyed file still loads (folded into `perm`).
 # --------------------------------------------------------------------------- #
 class MorphMemory:
-    def __init__(self, device: str, path: Path):
+    def __init__(self, device: str, path: Path, recency_k: int = 0):
         self.device = device
         self.path = path
-        self._np = np.zeros((0, 768), np.float32)  # normalized memory rows
-        self._buf: list = []                        # pending rows not yet folded into _np/tensor
-        self.mem = None                             # torch (M,768) on device (lazy)
+        self.recency_k = int(recency_k)             # 0 => legacy (all looks permanent)
+        self._perm: list = []                        # admitted looks (all looks, in legacy)
+        self._cur: list = []                         # current-batch expanded looks (recency mode)
+        self._blocks: list = []                      # last <=recency_k finalized batch blocks
+        self.mem = None                              # torch (M,768) on device (lazy)
+        self._dirty = True
         if path.exists():
             z = np.load(path, allow_pickle=False)
-            self._np = z["mem"].astype(np.float32)
-        self._sync()
+            if "perm" in z.files:
+                if len(z["perm"]):
+                    self._perm = [z["perm"].astype(np.float32)]
+                if "recency" in z.files and "block_sizes" in z.files:
+                    rec = z["recency"].astype(np.float32)
+                    off = 0
+                    for s in z["block_sizes"].astype(int):
+                        if s:
+                            self._blocks.append(rec[off:off + s])
+                        off += int(s)
+            elif len(z["mem"]):                      # legacy single-matrix file
+                self._perm = [z["mem"].astype(np.float32)]
 
-    def _sync(self):
-        self.mem = torch.from_numpy(self._np).to(self.device) if len(self._np) else None
-
-    def _flush(self):
-        if not self._buf:
-            return
-        rows = [self._np] + self._buf if len(self._np) else self._buf
-        self._np = np.concatenate([r.reshape(-1, 768) for r in rows], axis=0).astype(np.float32)
-        self._buf = []
-        self._sync()
-
-    def add(self, emb: np.ndarray):
-        """Fold one normalized embedding into memory (buffered; applied on next reduce/save)."""
+    # -- writes --
+    def add_admitted(self, emb):
+        """An admitted look joins memory PERMANENTLY (never re-buy a banked look)."""
         if emb is not None:
-            self._buf.append(np.asarray(emb, np.float32).reshape(1, 768))
+            self._perm.append(np.asarray(emb, np.float32).reshape(1, 768))
+            self._dirty = True
 
-    def cos_max(self, embs: np.ndarray) -> np.ndarray:
+    def add_expanded(self, emb):
+        """An expanded node's look: recency window in recency mode, permanent in legacy."""
+        if emb is None:
+            return
+        e = np.asarray(emb, np.float32).reshape(1, 768)
+        (self._cur if self.recency_k > 0 else self._perm).append(e)
+        self._dirty = True
+
+    def end_batch(self):
+        """Finalize the current batch's expanded-look block and evict blocks older than K."""
+        if self.recency_k <= 0:
+            return
+        if self._cur:
+            self._blocks.append(np.concatenate([a.reshape(-1, 768) for a in self._cur], axis=0))
+            self._cur = []
+        if len(self._blocks) > self.recency_k:
+            self._blocks = self._blocks[-self.recency_k:]
+        self._dirty = True
+
+    # -- reduce --
+    @staticmethod
+    def _stack(lst):
+        if not lst:
+            return np.zeros((0, 768), np.float32)
+        return np.concatenate([a.reshape(-1, 768) for a in lst], axis=0).astype(np.float32)
+
+    def _all_rows(self):
+        # RECENCY: the window is the last K COMPLETED batches (_blocks). The current batch's
+        # expanded parents sit in _cur and are DELIBERATELY excluded from cos_max until
+        # end_batch folds them into a block — otherwise every candidate is compared against
+        # its own just-expanded parent (a child looks near-identical to its parent on the cheap
+        # substrate), which pins cos_max past the knee and re-creates the run-2 saturation
+        # regardless of memory size. _cur is only ever populated in recency mode; in legacy
+        # add_expanded goes to _perm, so this exclusion is a no-op there.
+        parts = [self._stack(self._perm)] + [b.reshape(-1, 768) for b in self._blocks]
+        parts = [p for p in parts if len(p)]
+        return np.concatenate(parts, axis=0).astype(np.float32) if parts \
+            else np.zeros((0, 768), np.float32)
+
+    def _rebuild(self):
+        rows = self._all_rows()
+        self.mem = torch.from_numpy(rows).to(self.device) if len(rows) else None
+        self._dirty = False
+
+    def cos_max(self, embs) -> np.ndarray:
         """Max cosine of each row of `embs` (normalized, N x 768) vs memory; 0 if empty."""
-        self._flush()
+        if self._dirty:
+            self._rebuild()
         n = len(embs)
         if self.mem is None or n == 0:
             return np.zeros(n, np.float32)
@@ -281,16 +346,28 @@ class MorphMemory:
         return c.float().cpu().numpy()
 
     def save(self):
-        self._flush()
-        if not len(self._np):
+        perm = self._stack(self._perm)
+        blocks = self._blocks + ([np.concatenate([a.reshape(-1, 768) for a in self._cur], axis=0)]
+                                 if self._cur else [])
+        rec = self._stack(blocks) if blocks else np.zeros((0, 768), np.float32)
+        sizes = np.asarray([len(b) for b in blocks], np.int64)
+        if not len(perm) and not len(rec):
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.parent / (self.path.stem + "_tmp.npz")
-        np.savez_compressed(tmp, mem=self._np)
+        np.savez_compressed(tmp, perm=perm, recency=rec, block_sizes=sizes)
         os.replace(tmp, self.path)
 
+    @property
+    def n_perm(self) -> int:
+        return sum(len(a.reshape(-1, 768)) for a in self._perm)
+
+    @property
+    def n_recency(self) -> int:
+        return sum(len(b) for b in self._blocks) + sum(len(a.reshape(-1, 768)) for a in self._cur)
+
     def __len__(self):
-        return len(self._np) + len(self._buf)
+        return self.n_perm + self.n_recency
 
 
 # --------------------------------------------------------------------------- #
@@ -348,20 +425,42 @@ class SteeredFrontier:
         for f in self.families:
             if f not in C_PLANE:
                 raise SystemExit(f"--families must be c-plane ({C_PLANE}); got {f!r}")
-        self.julia_hook = bool(args.julia_hook)
         self.B = args.batch or B_DEFAULT
         self.budget_s = args.budget * 60.0
         self.seed = args.seed
-        # v1.1 steering coefficients (both 0 -> byte-identical pilot behaviour).
-        self.lambda_m = float(args.lambda_m)
+        # --- dive mode (single-track descent off a completed run's admissions) ---
+        self.dive = bool(getattr(args, "dive", False))
+        if self.dive and not getattr(args, "dive_source", None):
+            raise SystemExit("--dive requires --dive-source <completed run dir>")
+        # single-track dives don't spawn julia roots (no frontier); force the hook off there.
+        self.julia_hook = bool(args.julia_hook) and not self.dive
+        self.dive_source = Path(args.dive_source).resolve() if getattr(args, "dive_source", None) else None
+        self.dive_target_depth = int(getattr(args, "dive_target_depth", 23))
+        self.dive_min_fw = float(getattr(args, "dive_min_fw", 2e-9))
+        self.expand_min_fw = self.dive_min_fw if self.dive else None
+        self.dive_state_path = self.run_dir / "dive_state.json"
+        self.dive_log = self.run_dir / "dive_log.jsonl"
+        self.cur_dive = None                             # (dive_id, start_group, source_id) live
+        # v1.1 steering coefficients (both 0 -> byte-identical pilot behaviour). Dive forces the
+        # morph term OFF (single-track has no frontier to steer; novelty is measured OFFLINE).
+        self.lambda_m = 0.0 if self.dive else float(args.lambda_m)
         self.beta = float(args.beta)
         self.morph_lo, self.morph_hi, self.anchor_src = load_morph_anchors(
             args.morph_lo, args.morph_hi)
         self.prio_log = self.run_dir / "prio_terms.jsonl"
+        self.sat_log = self.run_dir / "saturation.jsonl"
+        # v1.2 morph-memory semantics: recency_k>0 => admitted-only + last-K-batch expanded
+        # window (the saturation fix); 0 => legacy all-permanent (v1.1 default, reproduces).
+        self.recency_k = int(args.recency_k) if getattr(args, "mem_recency", False) else 0
+        # saturation = candidates whose novelty penalty is within 10% of full (cos_max past
+        # 90% of the [lo,hi] ramp): a near-constant offset, not a gradient. Report shows this
+        # dropping under the recency fix.
+        self.sat_cos = self.morph_lo + 0.9 * (self.morph_hi - self.morph_lo)
 
-        # partitions this run tracks a cloud for (c-plane + julia twins if hooked).
+        # partitions this run tracks a cloud for (c-plane + julia twins if hooked; dive covers
+        # all twins so a start from any source partition has a cloud + tau_h).
         self.partitions = list(self.families)
-        if self.julia_hook:
+        if self.julia_hook or self.dive:
             self.partitions += [ps.julia_partition(f) for f in self.families]
 
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -385,7 +484,8 @@ class SteeredFrontier:
         self.est_batch_s = 0.0
         self.totals = dict(expanded=0, candidates=0, harvest_checks=0,
                            canonical_q3=0, admitted=0, q3_dup=0, guarded=0,
-                           julia_roots=0, cap_hits=0, dead_nodes=0, novelty_hits=0)
+                           julia_roots=0, cap_hits=0, dead_nodes=0, novelty_hits=0,
+                           nov_scored=0, sat_hits=0)
         self.rng = np.random.default_rng(self.seed)
         # per-family native seeders (root source) — re-created fresh on resume.
         self.seeders = {f: ps.NativeSeeder(self.seed, self.scratch / f"native_{f}",
@@ -407,7 +507,7 @@ class SteeredFrontier:
             self.clip_model, self.clip_tf = load_clip()
             clip_dev = str(next(self.clip_model.parameters()).device)
             self.node_embs = self.load_node_embs()
-        self.morph = MorphMemory(clip_dev, self.run_dir / "morph_mem.npz")
+        self.morph = MorphMemory(clip_dev, self.run_dir / "morph_mem.npz", self.recency_k)
 
     def rebuild_hooked_c(self):
         """Reconstruct the set of already-hooked julia parameters from the ledger (the
@@ -468,7 +568,7 @@ class SteeredFrontier:
         for n in batch:
             e = self.node_embs.pop(n["node_id"], None)
             if e is not None:
-                self.morph.add(e)
+                self.morph.add_expanded(e)
 
     def score_morph(self, cands):
         """Embed each candidate's cheap twilight image, stash the normalized emb on the cand,
@@ -585,6 +685,8 @@ class SteeredFrontier:
         cmd = [str(BIN), "guided-descend", "--expand", str(nodes_in),
                "--seed", str(self.seed), "--out-dir", str(gdir)] + EXPAND_FLAGS + \
               descend_flags(partition, c)
+        if self.expand_min_fw is not None:               # dive: stop before the fw floor w/ margin
+            cmd += ["--min-fw", repr(self.expand_min_fw)]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=EXPAND_TIMEOUT_S)
         except subprocess.TimeoutExpired:
@@ -719,6 +821,9 @@ class SteeredFrontier:
         )
         if c["c"] is not None:                       # julia twin outcome carries the parameter c
             row["julia_c_re"], row["julia_c_im"] = c["c"][0], c["c"][1]
+        if self.cur_dive is not None:                # dive: stamp provenance for the read
+            row["mix_source"] = "dive"
+            row["dive_id"], row["dive_start_group"], row["dive_source_id"] = self.cur_dive
         self.ledger.append(row, feat)
         if is_q3 and distinct:
             self.clouds[c["partition"]].append(row)
@@ -726,7 +831,7 @@ class SteeredFrontier:
             # fold the admitted location's look into morph memory (its cheap emb; reframe only
             # nudges the frame <=0.25*fw, so the candidate's cheap look stands in for it).
             if self.lambda_m > 0.0 and c.get("emb") is not None:
-                self.morph.add(c["emb"])
+                self.morph.add_admitted(c["emb"])
             # julia hook: fire per qualifying (admitted-q3) c-plane parent.
             if self.julia_hook and c["partition"] in self.families:
                 self.add_julia_root(c["partition"], (ocx, ocy), oid)
@@ -751,6 +856,7 @@ class SteeredFrontier:
     # ---------------------------------------------------------------- push
     def push_children(self, cands):
         prio_rows = []
+        batch_sat = 0                                    # saturated candidates this batch
         for c in cands:
             dup_pen = dup_penalty(c["cx"], c["cy"], self.clouds.get(c["partition"], []))
             cos_max = float(c.get("cos_max", 0.0))
@@ -767,11 +873,26 @@ class SteeredFrontier:
                 self.node_embs[c["node_id"]] = c["emb"]
             if terms["nov_pen"] > 0.0:
                 self.totals["novelty_hits"] += 1
+            if cos_max >= self.sat_cos:                  # within 10% of full penalty
+                batch_sat += 1
             prio_rows.append(dict(
                 batch=self.batch_i, node_id=c["node_id"], root_id=c["root_id"],
                 partition=c["partition"], depth=c["depth"],
                 **{k: round(v, 5) for k, v in terms.items()},
             ))
+        # per-batch saturation fraction (the v1.2 novelty-fix telemetry): fraction of pushed
+        # candidates whose novelty penalty is within 10% of full. A high fraction => the term
+        # is a constant offset, not a gradient. Logged so the report shows it drop under the fix.
+        if self.lambda_m > 0.0 and cands:
+            self.totals["nov_scored"] += len(cands)
+            self.totals["sat_hits"] += batch_sat
+            with open(self.sat_log, "a", encoding="utf-8") as f:
+                f.write(json.dumps(dict(
+                    batch=self.batch_i, n=len(cands), sat=batch_sat,
+                    frac=round(batch_sat / len(cands), 4),
+                    mem_perm=self.morph.n_perm, mem_recency=self.morph.n_recency,
+                    mem_total=len(self.morph),
+                )) + "\n")
         if prio_rows:
             with open(self.prio_log, "a", encoding="utf-8") as f:
                 for r in prio_rows:
@@ -789,7 +910,7 @@ class SteeredFrontier:
         state = dict(
             run_ts=self.run_dir.name, families=self.families, julia_hook=self.julia_hook,
             seed=self.seed, B=self.B, budget_s=self.budget_s, tau_h=self.tau_h,
-            lambda_m=self.lambda_m, beta=self.beta,
+            lambda_m=self.lambda_m, beta=self.beta, recency_k=self.recency_k,
             morph_lo=self.morph_lo, morph_hi=self.morph_hi, anchor_src=self.anchor_src,
             node_ctr=self.node_ctr, seq=self.seq, batch_i=self.batch_i,
             active_s=self.active_s, est_batch_s=self.est_batch_s,
@@ -812,6 +933,7 @@ class SteeredFrontier:
         self.expansions_per_root = st["expansions_per_root"]; self.totals = st["totals"]
         self.frontier = st["frontier"]; self.tau_h = st["tau_h"]
         self.totals.setdefault("novelty_hits", 0)
+        self.totals.setdefault("nov_scored", 0); self.totals.setdefault("sat_hits", 0)
         self.rng.bit_generator.state = st["rng"]
         # cloud is rebuilt from the DURABLE ledger (source of truth), not the checkpoint,
         # so a kill between ledger-append and checkpoint cannot lose/duplicate an admission.
@@ -825,8 +947,190 @@ class SteeredFrontier:
               f"(cloud rebuilt from ledger: "
               f"{sum(len(v) for v in self.clouds.values())} places)", flush=True)
 
+    # ================================================================= dive
+    # Single-track descent off a completed run's admissions. Each rung reuses the frontier
+    # expand machinery (up to --descent-candidates survivors, existing gates), harvests every
+    # survivor at the per-partition tau_h exactly as normal mode, then continues down the
+    # cheap-p_good argmax child (small Gumbel tie-break, no breadth). One path per dive.
+    # Terminates on: target depth reached, all candidates gate-dead, or the fw floor (the
+    # Rust expand emits a min_fw_floor `dead` before crossing --min-fw = dive_min_fw). The
+    # run-scoped ledger is the durable admission record; a per-dive checkpoint makes resume
+    # skip finished dives without re-descending.
+    # ---------------------------------------------------------------------- #
+    def _load_source_admissions(self):
+        led = self.dive_source / "outcome_ledger.jsonl"
+        if not led.exists():
+            raise SystemExit(f"--dive-source has no outcome_ledger.jsonl: {led}")
+        rows = [json.loads(l) for l in open(led, encoding="utf-8") if l.strip()]
+        adm = [r for r in rows if r.get("distinct") and r.get("decoded_class") == 3]
+        if not adm:
+            raise SystemExit(f"no distinct-q3 admissions in {led}")
+        return adm
+
+    @staticmethod
+    def _canon_pgood(r):
+        v = r.get("canon_pgood")
+        return float(v) if v is not None else float(r.get("p_good", 0.0))
+
+    def _build_dive_plan(self):
+        """Deterministic plan: top-N admissions by canonical p_good + M random controls
+        (disjoint from top, drawn regardless of score). Each entry starts a dive at the
+        admission's outcome viewport, continuing downward."""
+        adm = self._load_source_admissions()
+        ranked = sorted(adm, key=lambda r: (-self._canon_pgood(r), r["id"]))
+        n_top = int(self.args.n_top)
+        n_ctrl = int(self.args.n_control)
+        top = ranked[:n_top]
+        top_ids = {r["id"] for r in top}
+        pool = [r for r in ranked if r["id"] not in top_ids]
+        rng = np.random.default_rng(self.seed)
+        k = min(n_ctrl, len(pool))
+        ctrl = [pool[i] for i in sorted(rng.choice(len(pool), size=k, replace=False))] if k else []
+
+        def entry(r, group, i):
+            c = None
+            if r.get("julia_c_re") is not None:
+                c = [str(r["julia_c_re"]), str(r["julia_c_im"])]
+            return dict(
+                dive_id=f"dive_{i:03d}", start_group=group, source_id=r["id"],
+                partition=r["family"], c=c,
+                cx=float(r["outcome_cx"]), cy=float(r["outcome_cy"]), fw=float(r["outcome_fw"]),
+                depth=int(r.get("reached_depth", 2)), source_pgood=self._canon_pgood(r),
+            )
+        plan = [entry(r, "top", i) for i, r in enumerate(top)]
+        plan += [entry(r, "control", n_top + i) for i, r in enumerate(ctrl)]
+        return plan
+
+    def one_dive(self, e) -> dict:
+        """Descend a single track from plan entry `e`. Returns the dive record."""
+        self.cur_dive = (e["dive_id"], e["start_group"], e["source_id"])
+        partition, c = e["partition"], e["c"]
+        key = (partition, tuple(c) if c else None)
+        rid = self.new_node_id()
+        node = dict(node_id=rid, root_id=rid, partition=partition, c=c,
+                    cx=e["cx"], cy=e["cy"], fw=e["fw"], depth=e["depth"])
+        admissions, rungs = [], 0
+        cause = "target_depth"
+        n_adm_before = self.totals["admitted"]
+        while node["depth"] < self.dive_target_depth:
+            self.batch_i += 1
+            cands = self.expand_group(key, [node])
+            if not cands:
+                cause = "gate_dead_or_floor"
+                break
+            self.score_cheap(cands)
+            adm_before = self.totals["admitted"]
+            self.harvest(cands)                          # standard admission to the run ledger
+            n_new = self.totals["admitted"] - adm_before
+            rungs += 1
+            # argmax child by cheap p_good (small Gumbel tie-break; no breadth).
+            best = max(cands, key=lambda cc: cc["cheap_pgood"] + gumbel(self.rng, DIVE_NOISE_T))
+            node = dict(node_id=best["node_id"], root_id=rid, partition=partition, c=c,
+                        cx=best["cx"], cy=best["cy"], fw=best["fw"], depth=best["depth"])
+            if n_new:                                    # collect this dive's admitted oids
+                for r in self.ledger.rows[-n_new:]:
+                    admissions.append(dict(id=r["id"], depth=r["reached_depth"],
+                                           p_good=r["p_good"], canon_pgood=r.get("canon_pgood"),
+                                           cx=r["outcome_cx"], cy=r["outcome_cy"], fw=r["outcome_fw"]))
+        rec = dict(dive_id=e["dive_id"], start_group=e["start_group"], source_id=e["source_id"],
+                   partition=partition, start_depth=e["depth"], start_pgood=e["source_pgood"],
+                   end_depth=node["depth"], rungs=rungs, end_cause=cause,
+                   n_admitted=self.totals["admitted"] - n_adm_before, admissions=admissions)
+        self.cur_dive = None
+        with open(self.dive_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+        return rec
+
+    def save_dive_state(self, plan, done_idx):
+        self.morph.save()
+        state = dict(
+            run_ts=self.run_dir.name, mode="dive", seed=self.seed,
+            dive_source=str(self.dive_source), target_depth=self.dive_target_depth,
+            min_fw=self.dive_min_fw, plan=plan, done_idx=done_idx,
+            node_ctr=self.node_ctr, seq=self.seq, batch_i=self.batch_i,
+            active_s=self.active_s, est_dive_s=self.est_batch_s,
+            totals=self.totals, rng=self.rng.bit_generator.state,
+        )
+        tmp = self.dive_state_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp, self.dive_state_path)
+        self.ledger.save_feats()
+
+    def load_dive_state(self):
+        st = json.loads(self.dive_state_path.read_text(encoding="utf-8"))
+        self.node_ctr = st["node_ctr"]; self.seq = st["seq"]; self.batch_i = st["batch_i"]
+        self.active_s = st["active_s"]; self.est_batch_s = st["est_dive_s"]
+        self.totals = st["totals"]
+        self.totals.setdefault("nov_scored", 0); self.totals.setdefault("sat_hits", 0)
+        self.rng.bit_generator.state = st["rng"]
+        self.clouds = self.ledger.clouds(self.partitions)
+        # the ledger is the durable source of truth; re-sync the admitted counter to it so a
+        # resume across a mid-dive boundary can't leave the stat lagging the real admissions.
+        self.totals["admitted"] = sum(
+            1 for r in self.ledger.rows if r.get("distinct") and r.get("decoded_class") == 3)
+        print(f"[dive-resume] {st['done_idx']}/{len(st['plan'])} dives done, "
+              f"active {self.active_s/60:.1f}m, admitted {self.totals['admitted']}", flush=True)
+        return st["plan"], st["done_idx"]
+
+    def run_dive(self):
+        if self.args.resume and self.dive_state_path.exists():
+            plan, done_idx = self.load_dive_state()
+        else:
+            plan = self._build_dive_plan()
+            done_idx = 0
+            ng = sum(1 for e in plan if e["start_group"] == "control")
+            print(f"[dive-fresh] {len(plan)} dives ({len(plan)-ng} top + {ng} control) off "
+                  f"{self.dive_source.name}; target_depth={self.dive_target_depth} "
+                  f"min_fw={self.dive_min_fw:g}", flush=True)
+            print(f"[tau_h] {self.tau_h}", flush=True)
+            self.save_dive_state(plan, done_idx)
+
+        while done_idx < len(plan):
+            if self.stop_path.exists():
+                print("[STOP] sentinel present — halting at dive boundary.", flush=True)
+                break
+            # don't start a dive that can't finish in the remaining budget (est from history).
+            if self.budget_s and self.est_batch_s > 0 and \
+                    self.active_s + self.est_batch_s > self.budget_s:
+                print(f"[budget] active {self.active_s/60:.1f}m + est dive "
+                      f"{self.est_batch_s:.0f}s would exceed {self.budget_s/60:.0f}m — stopping "
+                      f"at {done_idx}/{len(plan)}.", flush=True)
+                break
+            e = plan[done_idx]
+            tb = time.time()
+            rec = self.one_dive(e)
+            dt = time.time() - tb
+            self.active_s += dt
+            self.est_batch_s = dt if self.est_batch_s == 0 else 0.6 * self.est_batch_s + 0.4 * dt
+            done_idx += 1
+            self.save_dive_state(plan, done_idx)
+            print(f"  {rec['dive_id']} [{rec['start_group']}] start d{rec['start_depth']} "
+                  f"-> d{rec['end_depth']} ({rec['rungs']} rungs, {rec['end_cause']}) "
+                  f"admitted={rec['n_admitted']} | {dt:.0f}s active={self.active_s/60:.1f}m "
+                  f"({done_idx}/{len(plan)})", flush=True)
+
+        self.finish_dive(plan, done_idx)
+
+    def finish_dive(self, plan, done_idx):
+        summary = dict(
+            run_ts=self.run_dir.name, mode="dive", dive_source=str(self.dive_source),
+            target_depth=self.dive_target_depth, min_fw=self.dive_min_fw,
+            n_dives_planned=len(plan), n_dives_done=done_idx,
+            active_min=round(self.active_s / 60.0, 2), totals=self.totals,
+            cloud_sizes={p: len(v) for p, v in self.clouds.items()},
+        )
+        (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        print("\n=== DIVE SUMMARY ===")
+        print(f"  {done_idx}/{len(plan)} dives, active {self.active_s/60:.1f}m")
+        print(f"  ADMITTED distinct q3={self.totals['admitted']} q3_dup={self.totals['q3_dup']} "
+              f"guarded={self.totals['guarded']} canonical_q3={self.totals['canonical_q3']}")
+        print(f"  cloud: {summary['cloud_sizes']}")
+        print(f"  ledger -> {self.ledger.path}\n  dive_log -> {self.dive_log}")
+
     # ---------------------------------------------------------------- run
     def run(self):
+        if self.dive:
+            return self.run_dive()
         global ROOT_LOW_WATER
         ROOT_LOW_WATER = self.B
         if self.args.resume and self.state_path.exists():
@@ -834,10 +1138,13 @@ class SteeredFrontier:
         else:
             print(f"[fresh] run {self.run_dir.name}: families={self.families} "
                   f"julia_hook={self.julia_hook} budget={self.budget_s/60:.0f}m B={self.B} "
-                  f"lambda_m={self.lambda_m} beta={self.beta}", flush=True)
+                  f"lambda_m={self.lambda_m} beta={self.beta} recency_k={self.recency_k}", flush=True)
             if self.lambda_m > 0.0:
+                mode = f"recency (admitted + last {self.recency_k} batches)" if self.recency_k \
+                    else "legacy (all-permanent)"
                 print(f"[morph-anchors] lo={self.morph_lo:.4f} hi={self.morph_hi:.4f} "
-                      f"({self.anchor_src})", flush=True)
+                      f"({self.anchor_src}); memory={mode}, sat knee cos>={self.sat_cos:.4f}",
+                      flush=True)
             print(f"[tau_h] {self.tau_h}", flush=True)
             self.draw_roots()
             self.save_state()
@@ -874,15 +1181,21 @@ class SteeredFrontier:
             self.score_morph(cands)                  # embed + cos_max vs memory (parents incl.)
             self.harvest(cands)                      # admissions fold into memory
             self.push_children(cands)                # novelty penalty applied from cos_max
+            self.morph.end_batch()                   # finalize recency block, evict > K (no-op legacy)
 
             dt = time.time() - tb
             self.active_s += dt
             self.est_batch_s = dt if self.est_batch_s == 0 else 0.5 * self.est_batch_s + 0.5 * dt
             self.save_state()
             if self.batch_i % 1 == 0:
+                sat = ""
+                if self.lambda_m > 0.0 and cands:
+                    bs = sum(1 for c in cands if float(c.get("cos_max", 0.0)) >= self.sat_cos)
+                    sat = (f" sat={bs}/{len(cands)}={bs/len(cands):.2f} "
+                           f"mem={self.morph.n_perm}+{self.morph.n_recency}")
                 print(f"  batch {self.batch_i}: exp={len(batch)} cand={len(cands)} "
                       f"admitted(cum)={self.totals['admitted']} julia_roots={self.totals['julia_roots']} "
-                      f"frontier={len(self.frontier)} | {dt:.0f}s active={self.active_s/60:.1f}m", flush=True)
+                      f"frontier={len(self.frontier)}{sat} | {dt:.0f}s active={self.active_s/60:.1f}m", flush=True)
 
         self.finish()
 
@@ -891,8 +1204,13 @@ class SteeredFrontier:
         summary = dict(
             run_ts=self.run_dir.name, mode="steered", families=self.families,
             julia_hook=self.julia_hook, budget_min=self.budget_s / 60.0,
-            lambda_m=self.lambda_m, beta=self.beta, morph_mem=len(self.morph),
+            lambda_m=self.lambda_m, beta=self.beta, recency_k=self.recency_k,
+            morph_mem=len(self.morph), morph_perm=self.morph.n_perm,
+            morph_recency=self.morph.n_recency,
             morph_lo=self.morph_lo, morph_hi=self.morph_hi, anchor_src=self.anchor_src,
+            sat_cos=round(self.sat_cos, 4),
+            sat_frac=(round(self.totals["sat_hits"] / self.totals["nov_scored"], 4)
+                      if self.totals.get("nov_scored") else None),
             active_min=round(self.active_s / 60.0, 2), batches=self.batch_i,
             tau_h=self.tau_h, totals=self.totals,
             cloud_sizes={p: len(v) for p, v in self.clouds.items()},
@@ -905,8 +1223,12 @@ class SteeredFrontier:
         print(f"  ADMITTED distinct q3={self.totals['admitted']}  q3_dup={self.totals['q3_dup']} "
               f"guarded={self.totals['guarded']} julia_roots={self.totals['julia_roots']} "
               f"cap_hits={self.totals['cap_hits']}")
-        print(f"  lambda_m={self.lambda_m} beta={self.beta} novelty_hits={self.totals['novelty_hits']} "
-              f"morph_mem={len(self.morph)}")
+        sf = (f"{self.totals['sat_hits']}/{self.totals['nov_scored']}="
+              f"{self.totals['sat_hits']/self.totals['nov_scored']:.3f}"
+              if self.totals.get("nov_scored") else "n/a")
+        print(f"  lambda_m={self.lambda_m} beta={self.beta} recency_k={self.recency_k} "
+              f"novelty_hits={self.totals['novelty_hits']} sat_frac={sf} "
+              f"morph_mem={len(self.morph)} (perm {self.morph.n_perm} + recency {self.morph.n_recency})")
         print(f"  cloud: {summary['cloud_sizes']}")
         print(f"  ledger -> {self.ledger.path}\n  summary -> {self.run_dir/'summary.json'}")
 
@@ -928,7 +1250,26 @@ def main():
                     help="override the zero-penalty cos knee (default: calibrated anchors file)")
     ap.add_argument("--morph-hi", type=float, default=None,
                     help="override the full-penalty cos knee (default: calibrated anchors file)")
-    ap.add_argument("--resume", action="store_true", help="continue from state.json")
+    ap.add_argument("--mem-recency", action="store_true",
+                    help="v1.2 morph-memory fix: novelty measured vs ADMITTED looks + a rolling "
+                         "window of the last --recency-k batches' expanded looks (default off => "
+                         "legacy all-permanent, reproduces v1.1)")
+    ap.add_argument("--recency-k", type=int, default=8,
+                    help="recency window size in batches for --mem-recency (default 8)")
+    # --- dive mode ---
+    ap.add_argument("--dive", action="store_true",
+                    help="single-track descent off a completed run's admissions (uses dive_state.json)")
+    ap.add_argument("--dive-source", type=str, default=None,
+                    help="completed run dir whose admissions seed the dives (required with --dive)")
+    ap.add_argument("--dive-target-depth", type=int, default=23,
+                    help="stop a dive at this reached depth (default 23)")
+    ap.add_argument("--dive-min-fw", type=float, default=2e-9,
+                    help="dive fw floor: stop before a zoom would cross it (default 2e-9)")
+    ap.add_argument("--n-top", type=int, default=20,
+                    help="dives from the top source admissions by canonical p_good (default 20)")
+    ap.add_argument("--n-control", type=int, default=8,
+                    help="control dives from random source admissions regardless of score (default 8)")
+    ap.add_argument("--resume", action="store_true", help="continue from state.json / dive_state.json")
     args = ap.parse_args()
     SteeredFrontier(args).run()
 
