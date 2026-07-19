@@ -1,0 +1,25 @@
+{
+  "source_ledger": "data\\discovery\\fresh_runs\\prospect_run1\\outcome_ledger.jsonl",
+  "ledger_start_line": 252,
+  "filter": "scorer_version==v6 & decoded_class==3 & guard_pass (all families)",
+  "head_exclude": false,
+  "raw_matches": 27,
+  "unrenderable_dropped": 0,
+  "within_set_dups_dropped": 2,
+  "excluded_head_corpus_by_key": 0,
+  "excluded_head_corpus_by_proximity": 0,
+  "unseen_available": 25,
+  "pilot_count": 25,
+  "per_family_chosen": {
+    "julia:mandelbrot": 6,
+    "julia:multibrot4": 5,
+    "mandelbrot": 3,
+    "multibrot4": 1,
+    "phoenix": 10
+  },
+  "head_corpus_batches": [
+    "2026-07-05_wallpaper_bootstrap_v1",
+    "2026-07-05_wallpaper_humanq3_v1"
+  ],
+  "head_corpus_distinct_keys": 0
+}

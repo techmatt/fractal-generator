@@ -36,7 +36,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))   # corpus_common, location
 
-from corpus_common import render_block, render_corpus_crop, is_v6_decoded  # noqa: E402
+from corpus_common import render_block, render_corpus_crop, is_current_decoded  # noqa: E402
 
 # --- render recipe (Recipe 1 = render-one --palette) at browsable/triage res -----
 PALETTE = "twilight_shifted"                          # the ablation's fixed neutral palette
@@ -166,10 +166,12 @@ def main():
     rows = load_rows(round_dir)
     n_total = len(rows)
 
-    # --- step 2: confirm v6 stamp on every fresh row --------------------------
-    n_v6 = sum(1 for r in rows if is_v6_decoded(r))
-    stamp_clean = (n_v6 == n_total)
-    print(f"v6 stamp: {n_v6}/{n_total} rows scorer_version=='v6'  "
+    # --- step 2: confirm the current-model stamp on every fresh row -----------
+    from corpus_common import active_scorer_version
+    cur = active_scorer_version()
+    n_cur = sum(1 for r in rows if is_current_decoded(r))
+    stamp_clean = (n_cur == n_total)
+    print(f"current stamp: {n_cur}/{n_total} rows scorer_version=='{cur}'  "
           f"({'CLEAN' if stamp_clean else 'MIXED — investigate'})")
 
     # --- drop degenerate-guard fails (not the co-evolution question) ----------
@@ -216,7 +218,8 @@ def main():
 
     # --- persist the stratification (traceable for a later relabel round) -----
     strat = {
-        "round_ts": args.round_ts, "n_total": n_total, "n_v6_stamped": n_v6,
+        "round_ts": args.round_ts, "n_total": n_total, "n_current_stamped": n_cur,
+        "current_version": cur,
         "stamp_clean": stamp_clean, "guard_verdict_counts": verdict_counts,
         "guard_pass": n_gp, "t_good": T_GOOD, "band_lo": BAND_LO, "band_hi": BAND_HI,
         "band_counts": {b: len(by_band[b]) for b in BANDS},
@@ -240,10 +243,10 @@ def write_report(round_dir, s, sheet_paths, verdict_counts):
 Round `{s['round_ts']}` · Mandelbrot c-plane deg-2 · guard-OFF gather on the shipped
 random-survivor selection default (no `--selection` flag) · scored by v6.
 
-## v6 stamp
-{s['n_v6_stamped']}/{s['n_total']} fresh rows carry `scorer_version=="v6"` — \
-**{'CLEAN' if s['stamp_clean'] else 'MIXED (investigate before consuming as v6 verdicts)'}**. \
-Unlike the head-v3 slice, this round's ledger is a clean current-v6 decode.
+## current-model stamp
+{s['n_current_stamped']}/{s['n_total']} fresh rows carry `scorer_version=="{s.get('current_version','?')}"` — \
+**{'CLEAN' if s['stamp_clean'] else 'MIXED (investigate before consuming as current verdicts)'}**. \
+Unlike the head-v3 slice, this round's ledger is a clean current-model decode.
 
 ## Population
 - Total gather outcomes (guard-OFF): **{s['n_total']}**

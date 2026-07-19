@@ -75,7 +75,7 @@ DEPTH_MAX = 14
 OCC_FLOOR = 0.321
 BLACK_CAP = 0.30
 WORKERS = 4                # project rule: max 4
-SCORER_PATH = ACTIVE_CKPT  # single source of truth (probe.ACTIVE_CKPT — currently v6)
+SCORER_PATH = ACTIVE_CKPT  # single source of truth (active_ckpt.ACTIVE_CKPT — currently v7)
 
 FAMILIES = [
     # (key, guided-descend extra flags, reframe-Location family, (c_re,c_im)|None)

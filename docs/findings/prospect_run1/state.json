@@ -1,0 +1,16 @@
+{
+  "started": "2026-07-16T22:40:22",
+  "run_id": "prospect_run1",
+  "cycles_done": 13,
+  "harvested_watermark": 1616,
+  "accumulated_active_s": 50174.883,
+  "total_cap_hours": 24.0,
+  "totals": {
+    "cycles": 13,
+    "discovery_families": 52,
+    "fresh_q3": 211,
+    "records_added": 153,
+    "phase_failures": 0
+  },
+  "failed_cycles": []
+}

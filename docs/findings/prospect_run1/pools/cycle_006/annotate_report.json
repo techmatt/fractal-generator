@@ -1,0 +1,7 @@
+{
+  "cycle": 6,
+  "pool_unique_locations": 8,
+  "dropped_coord_dup": 2,
+  "dropped_field_fail": 0,
+  "records_written": 6
+}

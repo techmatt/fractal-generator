@@ -78,11 +78,13 @@ def round_ledger_path(round_dir: Path) -> Path:
 
 def recap(round_dir: Path) -> dict:
     """Cumulative tally from the round's mandelbrot gather ledger."""
+    sys.path.insert(0, str(ROOT / "tools" / "corpus"))
+    import corpus_common as cc  # noqa: E402  (is_current_decoded — current-stamp discriminator)
     led = round_ledger_path(round_dir)
     n = 0
     dec = {1: 0, 2: 0, 3: 0}
     guard = {}
-    v6 = 0
+    cur = 0
     if led.exists():
         for line in open(led, encoding="utf-8"):
             line = line.strip()
@@ -95,10 +97,10 @@ def recap(round_dir: Path) -> dict:
                 dec[d] += 1
             v = r.get("guard_verdict", "?")
             guard[v] = guard.get(v, 0) + 1
-            if r.get("scorer_version") == "v6":
-                v6 += 1
+            if cc.is_current_decoded(r):
+                cur += 1
     return {"n": n, "dec": dec, "guard": guard, "guard_pass": guard.get("pass", 0),
-            "v6": v6}
+            "current": cur}
 
 
 def print_recap(round_dir: Path):
@@ -107,7 +109,7 @@ def print_recap(round_dir: Path):
     gstr = " ".join(f"{k}={v}" for k, v in sorted(g.items()))
     print(f"  cumulative: {r['n']} outcomes  decoded 1/2/3="
           f"{r['dec'][1]}/{r['dec'][2]}/{r['dec'][3]}  guard[{gstr}]  "
-          f"v6-stamped={r['v6']}/{r['n']}  | GUARD-PASS={r['guard_pass']}", flush=True)
+          f"current-stamped={r['current']}/{r['n']}  | GUARD-PASS={r['guard_pass']}", flush=True)
 
 
 # =========================================================================== #

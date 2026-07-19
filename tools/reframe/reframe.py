@@ -82,7 +82,7 @@ import location as loc_mod  # noqa: E402  (the one render-one flag builder + fam
 
 OUT_DIR = ROOT / "out" / "reframe"
 SPEED_DIR = ROOT / "out" / "reframe_speed"    # source of the V1 reference picks
-DEFAULT_MODEL = ACTIVE_CKPT   # single source of truth (probe.ACTIVE_CKPT — currently v6)
+DEFAULT_MODEL = ACTIVE_CKPT   # single source of truth (active_ckpt.ACTIVE_CKPT — currently v7)
 
 # --- degenerate-outcome guard hook (opt-in; OFF => byte-identical to today) ---
 # When DUMP_GUARD_FIELD is set, `_render` ALSO dumps the raw smooth field co-located

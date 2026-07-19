@@ -14,9 +14,11 @@ everything downstream (v2 gate, MAP-Elites selector, full-res emit) is emit_v1's
 Location set (unseen, machine-q3, ALL families):
   * Source = data/discovery/outcome_ledger.jsonl by default; override with --ledger to
     point at a single fresh-discovery run's ledger (the run-isolation precondition — the
-    accumulated default sweeps in every historical v6 q3). The gather/<class> ledgers are
-    v5-decoded and carry no scorer_version stamp, so they never leak in.
-  * decoded_class == 3  ∧  guard_pass  ∧  scorer_version == "v6".
+    accumulated default sweeps in every historical q3). Any row decoded by a non-current
+    classifier (gather/<class> ledgers are v5-decoded/unstamped; every v6-stamped row once
+    the active checkpoint is v7) reads as not-current, so it never leaks in.
+  * decoded_class == 3  ∧  guard_pass  ∧  scorer_version == <active version>
+    (the live checkpoint's version, resolved from active_ckpt.ACTIVE_VERSION).
   * Families: ALL 9 (mandelbrot, multibrot3/4/5, julia:mandelbrot, julia:multibrot3/4/5,
     phoenix). Each ledger row maps to render coords via the canonical
     gather_select.render_family + outcome_geometry (Julia -> z-plane viewport at fixed
@@ -65,7 +67,7 @@ import sample_location as SL          # noqa: E402  (run_location retain-all, lo
 import query_sampler as qs            # noqa: E402  (load_pool_library, PaletteSampler)
 import colormap as cm                 # noqa: E402  (stretch_field)
 import location as loc_mod            # noqa: E402  (canonical Location, from_render_block, location_key)
-import corpus_common as cc            # noqa: E402  (is_v6_decoded — v6-stamp guard)
+import corpus_common as cc            # noqa: E402  (is_current_decoded — current-stamp guard)
 import gather_select as gs            # noqa: E402  (canonical ledger->render family map + outcome_geometry)
 from active_ckpt import auto_maxiter        # noqa: E402  (native fw-dependent maxiter policy)
 from label_crop import (              # noqa: E402  (shared label-crop spec — Recipe-2 tail)
@@ -194,7 +196,7 @@ def _spatially_in(loc, corpus_coords):
 def select_sources(seed, count, head_exclude=True):
     """Unseen machine-q3 locations (all families), family-balanced round-robin to `count`.
 
-    Filter: scorer_version=="v6" ∧ decoded_class==3 ∧ guard_pass (ALL families).
+    Filter: scorer_version==<current> ∧ decoded_class==3 ∧ guard_pass (ALL families).
     Exclude: any location in the head corpus (exact key OR same-family spatial proximity) —
       UNLESS `head_exclude=False` (the Phase-1 library loop, which pools every fresh q3 and
       dedups against the library STORE downstream, not against the wallpaper head's corpus).
@@ -212,12 +214,12 @@ def select_sources(seed, count, head_exclude=True):
         if not line.strip():
             continue
         d = json.loads(line)
-        if (not cc.is_v6_decoded(d) or d.get("decoded_class") != 3
+        if (not cc.is_current_decoded(d) or d.get("decoded_class") != 3
                 or not d.get("guard_pass")):
             continue
         tl = _to_location(d)
         if tl is None:
-            # v6/class-3/guard-pass but not renderable (e.g. a julia row missing its z-plane
+            # current/class-3/guard-pass but not renderable (e.g. a julia row missing its z-plane
             # viewport). Counted so the Phase-1 reconciliation can see it as a real (non-dup)
             # drop rather than a silent leak.
             n_unrenderable += 1
@@ -254,7 +256,7 @@ def select_sources(seed, count, head_exclude=True):
     report = {
         "source_ledger": str(DISCOVERY_LEDGER.relative_to(ROOT)),
         "ledger_start_line": LEDGER_START_LINE,
-        "filter": "scorer_version==v6 & decoded_class==3 & guard_pass (all families)",
+        "filter": f"scorer_version=={cc.active_scorer_version()} & decoded_class==3 & guard_pass (all families)",
         "head_exclude": head_exclude,
         "raw_matches": n_raw,
         "unrenderable_dropped": n_unrenderable,
@@ -387,7 +389,7 @@ def _print_composition(report, count):
     print("=" * 74)
     print(f"source: {report['source_ledger']}")
     print(f"filter: {report['filter']}")
-    print(f"raw v6/class-3/guard-pass matches (all fam): {report['raw_matches']:4}")
+    print(f"raw current/class-3/guard-pass matches (all fam): {report['raw_matches']:4}")
     print(f"  within-set key dups dropped           : {report['within_set_dups_dropped']:4}")
     print(f"  excluded (in head corpus, exact key)  : {report['excluded_head_corpus_by_key']:4}")
     print(f"  excluded (head corpus, spatial prox)  : {report['excluded_head_corpus_by_proximity']:4}")

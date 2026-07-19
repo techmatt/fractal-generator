@@ -1,0 +1,631 @@
+2026-07-16T22:40:22 [INFO] START prospect run 'prospect_run1'  total_cap=24.0h  families=['mandelbrot', 'multibrot3', 'multibrot4', 'multibrot5']  julia_hook=on  per_family=7.0m  pool=UNCAPPED(all-fresh-q3)  retain_fields=True field_cache=20.0GB
+2026-07-16T22:40:22 [INFO]   run ledger (empty, run-scoped): C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl
+2026-07-16T22:40:22 [INFO]   library store: C:\Code\fractal-generator\data\library\records.jsonl  embeddings: C:\Code\fractal-generator\data\library_embeddings\shards
+2026-07-16T22:40:23 [INFO] startup sweep: reclaimed 2 orphaned seeder scratch dir(s), ~4.61 GiB under C:\Code\fractal-generator\out\atlas\production_seeder (hard-killed-run leftovers; clean runs self-purge on exit)
+2026-07-16T22:40:23 [INFO] GPU baseline: 771 MiB
+2026-07-16T22:40:23 [INFO] ===== CYCLE 1 =====  budget remaining 24.00h  ledger watermark 0
+2026-07-16T22:40:23 [INFO] GPU pre-discovery[mandelbrot]: 771 MiB used (baseline 771, Δ+0 MiB)
+2026-07-16T22:40:23 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-16T22:40:23 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 1000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_001_mandelbrot.json --batch 12
+2026-07-16T22:47:40 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [7.3m]
+2026-07-16T22:47:40 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=24 qual_parents=1 hook_desc=1 q3 base=1 twin=1
+2026-07-16T22:47:40 [INFO] GPU post-discovery[mandelbrot]: 740 MiB used (baseline 771, Δ-31 MiB)
+2026-07-16T22:47:40 [INFO] GPU pre-discovery[multibrot3]: 740 MiB used (baseline 771, Δ-31 MiB)
+2026-07-16T22:47:40 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-16T22:47:40 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 1137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_001_multibrot3.json --batch 12
+2026-07-16T23:01:53 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [14.2m]
+2026-07-16T23:01:53 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=20 qual_parents=3 hook_desc=3 q3 base=0 twin=1
+2026-07-16T23:01:53 [INFO] GPU post-discovery[multibrot3]: 740 MiB used (baseline 771, Δ-31 MiB)
+2026-07-16T23:01:53 [INFO] GPU pre-discovery[multibrot4]: 740 MiB used (baseline 771, Δ-31 MiB)
+2026-07-16T23:01:53 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-16T23:01:53 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 1274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_001_multibrot4.json --batch 12
+2026-07-16T23:11:15 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [9.4m]
+2026-07-16T23:11:15 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=12 qual_parents=2 hook_desc=2 q3 base=1 twin=1
+2026-07-16T23:11:15 [INFO] GPU post-discovery[multibrot4]: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-16T23:11:15 [INFO] GPU pre-discovery[multibrot5]: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-16T23:11:15 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-16T23:11:15 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 1411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_001_multibrot5.json --batch 12
+2026-07-16T23:20:58 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.7m]
+2026-07-16T23:20:58 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=11 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-16T23:20:58 [INFO] GPU post-discovery[multibrot5]: 739 MiB used (baseline 771, Δ-32 MiB)
+2026-07-16T23:20:58 [INFO] GPU pre-discovery[phoenix]: 739 MiB used (baseline 771, Δ-32 MiB)
+2026-07-16T23:20:58 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-16T23:20:58 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 1900 --batch 12
+2026-07-16T23:32:04 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [11.1m]
+2026-07-16T23:32:04 [INFO] GPU post-discovery[phoenix]: 739 MiB used (baseline 771, Δ-32 MiB)
+2026-07-16T23:32:04 [INFO]   cycle 1 discovery: 4/4 families ran, +124 ledger rows, 18 fresh q3
+2026-07-16T23:32:04 [INFO] GPU pre-pool: 739 MiB used (baseline 771, Δ-32 MiB)
+2026-07-16T23:32:04 [INFO] PHASE start 'pool:cycle1'  expected~36.0m  kill@108.0m
+2026-07-16T23:32:04 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 0 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_001 --pool-all --no-head-exclude --seed 0
+2026-07-16T23:46:22 [INFO] PHASE end   'pool:cycle1'  rc=0 killed=False  [14.3m]
+2026-07-16T23:46:22 [INFO] GPU post-pool: 729 MiB used (baseline 771, Δ-42 MiB)
+2026-07-16T23:46:22 [INFO]   fresh-isolation OK: all 216 pooled rows originate from this cycle's ledger rows [0:124] (124 fresh ids)
+2026-07-16T23:46:22 [INFO] GPU pre-annotate: 729 MiB used (baseline 771, Δ-42 MiB)
+2026-07-16T23:46:22 [INFO] PHASE start 'annotate:cycle1'  expected~2.1m  kill@7.1m
+2026-07-16T23:46:22 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_001 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 0 --run-id prospect_run1 --cycle 1 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-16T23:47:27 [INFO] PHASE end   'annotate:cycle1'  rc=0 killed=False  [1.1m]
+2026-07-16T23:47:27 [INFO] GPU post-annotate: 729 MiB used (baseline 771, Δ-42 MiB)
+2026-07-16T23:47:27 [INFO]   cycle 1 annotate: +17 library records (store now 17; est_loc now 4.3s)
+2026-07-16T23:47:27 [INFO]   reconcile: q3_found=18 = recorded=17 + coord_dup=1 (within_set=0+store/batch=1) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-16T23:47:27 [INFO]   cycle 1 purge: reclaimed ~0.08 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-16T23:47:27 [INFO]   cycle 1 wall=4024.0s (discovery=2434.6s phoenix=666.3s pool=857.8s annotate=64.6s)
+2026-07-16T23:47:27 [INFO] HEARTBEAT cycle=1 budget_remaining=22.88h records_total=17 fresh_q3_total=18 phase_failures=0
+2026-07-16T23:47:27 [INFO] ===== CYCLE 2 =====  budget remaining 22.88h  ledger watermark 124
+2026-07-16T23:47:27 [INFO] GPU pre-discovery[mandelbrot]: 729 MiB used (baseline 771, Δ-42 MiB)
+2026-07-16T23:47:27 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-16T23:47:27 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 2000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_002_mandelbrot.json --batch 12
+2026-07-16T23:54:58 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [7.5m]
+2026-07-16T23:54:58 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=22 qual_parents=4 hook_desc=4 q3 base=5 twin=3
+2026-07-16T23:54:58 [INFO] GPU post-discovery[mandelbrot]: 727 MiB used (baseline 771, Δ-44 MiB)
+2026-07-16T23:54:58 [INFO] GPU pre-discovery[multibrot3]: 727 MiB used (baseline 771, Δ-44 MiB)
+2026-07-16T23:54:58 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-16T23:54:58 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 2137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_002_multibrot3.json --batch 12
+2026-07-17T00:08:14 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [13.3m]
+2026-07-17T00:08:14 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=21 qual_parents=4 hook_desc=4 q3 base=0 twin=2
+2026-07-17T00:08:14 [INFO] GPU post-discovery[multibrot3]: 727 MiB used (baseline 771, Δ-44 MiB)
+2026-07-17T00:08:14 [INFO] GPU pre-discovery[multibrot4]: 727 MiB used (baseline 771, Δ-44 MiB)
+2026-07-17T00:08:14 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T00:08:14 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 2274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_002_multibrot4.json --batch 12
+2026-07-17T00:17:18 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [9.1m]
+2026-07-17T00:17:18 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=12 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T00:17:18 [INFO] GPU post-discovery[multibrot4]: 697 MiB used (baseline 771, Δ-74 MiB)
+2026-07-17T00:17:18 [INFO] GPU pre-discovery[multibrot5]: 697 MiB used (baseline 771, Δ-74 MiB)
+2026-07-17T00:17:18 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T00:17:18 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 2411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_002_multibrot5.json --batch 12
+2026-07-17T00:24:58 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [7.7m]
+2026-07-17T00:24:58 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=10 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T00:24:58 [INFO] GPU post-discovery[multibrot5]: 697 MiB used (baseline 771, Δ-74 MiB)
+2026-07-17T00:24:58 [INFO] GPU pre-discovery[phoenix]: 697 MiB used (baseline 771, Δ-74 MiB)
+2026-07-17T00:24:58 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T00:24:58 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 2900 --batch 12
+2026-07-17T00:35:23 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.4m]
+2026-07-17T00:35:23 [INFO] GPU post-discovery[phoenix]: 697 MiB used (baseline 771, Δ-74 MiB)
+2026-07-17T00:35:23 [INFO]   cycle 2 discovery: 4/4 families ran, +128 ledger rows, 20 fresh q3
+2026-07-17T00:35:23 [INFO] GPU pre-pool: 697 MiB used (baseline 771, Δ-74 MiB)
+2026-07-17T00:35:23 [INFO] PHASE start 'pool:cycle2'  expected~40.0m  kill@120.0m
+2026-07-17T00:35:23 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 124 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_002 --pool-all --no-head-exclude --seed 0
+2026-07-17T00:49:22 [INFO] PHASE end   'pool:cycle2'  rc=0 killed=False  [14.0m]
+2026-07-17T00:49:22 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T00:49:22 [INFO]   fresh-isolation OK: all 228 pooled rows originate from this cycle's ledger rows [124:252] (128 fresh ids)
+2026-07-17T00:49:22 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T00:49:22 [INFO] PHASE start 'annotate:cycle2'  expected~1.7m  kill@6.7m
+2026-07-17T00:49:22 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_002 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 124 --run-id prospect_run1 --cycle 2 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T00:50:17 [INFO] PHASE end   'annotate:cycle2'  rc=0 killed=False  [0.9m]
+2026-07-17T00:50:17 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T00:50:17 [INFO]   cycle 2 annotate: +16 library records (store now 33; est_loc now 3.3s)
+2026-07-17T00:50:17 [INFO]   reconcile: q3_found=20 = recorded=16 + coord_dup=4 (within_set=1+store/batch=3) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T00:50:18 [INFO]   cycle 2 purge: reclaimed ~0.08 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T00:50:18 [INFO]   cycle 2 wall=3770.6s (discovery=2250.4s phoenix=625.6s pool=838.2s annotate=55.7s)
+2026-07-17T00:50:18 [INFO] HEARTBEAT cycle=2 budget_remaining=21.83h records_total=33 fresh_q3_total=38 phase_failures=0
+2026-07-17T00:50:18 [INFO] ===== CYCLE 3 =====  budget remaining 21.83h  ledger watermark 252
+2026-07-17T00:50:18 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T00:50:18 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T00:50:18 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 3000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_003_mandelbrot.json --batch 12
+2026-07-17T00:58:02 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [7.7m]
+2026-07-17T00:58:02 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=22 qual_parents=3 hook_desc=3 q3 base=3 twin=3
+2026-07-17T00:58:02 [INFO] GPU post-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T00:58:02 [INFO] GPU pre-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T00:58:02 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T00:58:02 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 3137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_003_multibrot3.json --batch 12
+2026-07-17T01:10:10 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [12.1m]
+2026-07-17T01:10:10 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=23 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T01:10:10 [INFO] GPU post-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:10:10 [INFO] GPU pre-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:10:10 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T01:10:10 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 3274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_003_multibrot4.json --batch 12
+2026-07-17T01:19:51 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [9.7m]
+2026-07-17T01:19:51 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=12 qual_parents=2 hook_desc=2 q3 base=1 twin=2
+2026-07-17T01:19:51 [INFO] GPU post-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:19:51 [INFO] GPU pre-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:19:51 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T01:19:51 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 3411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_003_multibrot5.json --batch 12
+2026-07-17T01:29:28 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.6m]
+2026-07-17T01:29:28 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=11 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T01:29:28 [INFO] GPU post-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:29:28 [INFO] GPU pre-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:29:28 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T01:29:28 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 3900 --batch 12
+2026-07-17T01:41:45 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [12.3m]
+2026-07-17T01:41:45 [INFO] GPU post-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:41:45 [INFO]   cycle 3 discovery: 4/4 families ran, +122 ledger rows, 27 fresh q3
+2026-07-17T01:41:45 [INFO] GPU pre-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T01:41:45 [INFO] PHASE start 'pool:cycle3'  expected~54.0m  kill@162.0m
+2026-07-17T01:41:45 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 252 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_003 --pool-all --no-head-exclude --seed 0
+2026-07-17T02:02:48 [INFO] PHASE end   'pool:cycle3'  rc=0 killed=False  [21.0m]
+2026-07-17T02:02:48 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:02:48 [INFO]   fresh-isolation OK: all 300 pooled rows originate from this cycle's ledger rows [252:374] (122 fresh ids)
+2026-07-17T02:02:48 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:02:48 [INFO] PHASE start 'annotate:cycle3'  expected~1.7m  kill@6.7m
+2026-07-17T02:02:48 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_003 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 252 --run-id prospect_run1 --cycle 3 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T02:04:05 [INFO] PHASE end   'annotate:cycle3'  rc=0 killed=False  [1.3m]
+2026-07-17T02:04:05 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:04:05 [INFO]   cycle 3 annotate: +21 library records (store now 54; est_loc now 3.0s)
+2026-07-17T02:04:05 [INFO]   reconcile: q3_found=27 = recorded=21 + coord_dup=6 (within_set=2+store/batch=4) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T02:04:05 [INFO]   cycle 3 purge: reclaimed ~0.09 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T02:04:05 [INFO]   cycle 3 wall=4427.5s (discovery=2349.9s phoenix=737.4s pool=1262.1s annotate=77.4s)
+2026-07-17T02:04:05 [INFO] HEARTBEAT cycle=3 budget_remaining=20.60h records_total=54 fresh_q3_total=65 phase_failures=0
+2026-07-17T02:04:05 [INFO] ===== CYCLE 4 =====  budget remaining 20.60h  ledger watermark 374
+2026-07-17T02:04:05 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:04:05 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T02:04:05 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 4000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_004_mandelbrot.json --batch 12
+2026-07-17T02:12:42 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [8.6m]
+2026-07-17T02:12:42 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=33 qual_parents=2 hook_desc=2 q3 base=0 twin=1
+2026-07-17T02:12:42 [INFO] GPU post-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:12:42 [INFO] GPU pre-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:12:42 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T02:12:42 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 4137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_004_multibrot3.json --batch 12
+2026-07-17T02:24:47 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [12.1m]
+2026-07-17T02:24:47 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=20 qual_parents=2 hook_desc=2 q3 base=0 twin=0
+2026-07-17T02:24:47 [INFO] GPU post-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:24:47 [INFO] GPU pre-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:24:47 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T02:24:47 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 4274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_004_multibrot4.json --batch 12
+2026-07-17T02:34:11 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [9.4m]
+2026-07-17T02:34:11 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=12 qual_parents=2 hook_desc=2 q3 base=0 twin=0
+2026-07-17T02:34:11 [INFO] GPU post-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:34:11 [INFO] GPU pre-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:34:11 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T02:34:11 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 4411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_004_multibrot5.json --batch 12
+2026-07-17T02:43:47 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.6m]
+2026-07-17T02:43:47 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=10 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T02:43:47 [INFO] GPU post-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:43:47 [INFO] GPU pre-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:43:47 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T02:43:47 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 4900 --batch 12
+2026-07-17T02:54:43 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.9m]
+2026-07-17T02:54:43 [INFO] GPU post-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:54:43 [INFO]   cycle 4 discovery: 4/4 families ran, +132 ledger rows, 8 fresh q3
+2026-07-17T02:54:43 [INFO] GPU pre-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T02:54:43 [INFO] PHASE start 'pool:cycle4'  expected~16.0m  kill@48.0m
+2026-07-17T02:54:43 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 374 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_004 --pool-all --no-head-exclude --seed 0
+2026-07-17T03:01:36 [INFO] PHASE end   'pool:cycle4'  rc=0 killed=False  [6.9m]
+2026-07-17T03:01:36 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:01:36 [INFO]   fresh-isolation OK: all 96 pooled rows originate from this cycle's ledger rows [374:506] (132 fresh ids)
+2026-07-17T03:01:36 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:01:36 [INFO] PHASE start 'annotate:cycle4'  expected~0.7m  kill@5.7m
+2026-07-17T03:01:36 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_004 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 374 --run-id prospect_run1 --cycle 4 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T03:01:55 [INFO] PHASE end   'annotate:cycle4'  rc=0 killed=False  [0.3m]
+2026-07-17T03:01:55 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:01:55 [INFO]   cycle 4 annotate: +4 library records (store now 58; est_loc now 3.0s)
+2026-07-17T03:01:55 [INFO]   reconcile: q3_found=8 = recorded=4 + coord_dup=4 (within_set=0+store/batch=4) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T03:01:55 [INFO]   cycle 4 purge: reclaimed ~0.04 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T03:01:55 [INFO]   cycle 4 wall=3469.6s (discovery=2381.4s phoenix=656.4s pool=412.6s annotate=18.7s)
+2026-07-17T03:01:55 [INFO] HEARTBEAT cycle=4 budget_remaining=19.64h records_total=58 fresh_q3_total=73 phase_failures=0
+2026-07-17T03:01:55 [INFO] ===== CYCLE 5 =====  budget remaining 19.64h  ledger watermark 506
+2026-07-17T03:01:55 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:01:55 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T03:01:55 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 5000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_005_mandelbrot.json --batch 12
+2026-07-17T03:10:32 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [8.6m]
+2026-07-17T03:10:32 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=20 qual_parents=5 hook_desc=5 q3 base=2 twin=3
+2026-07-17T03:10:32 [INFO] GPU post-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:10:32 [INFO] GPU pre-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:10:32 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T03:10:32 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 5137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_005_multibrot3.json --batch 12
+2026-07-17T03:19:30 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [9.0m]
+2026-07-17T03:19:30 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=10 qual_parents=2 hook_desc=2 q3 base=0 twin=2
+2026-07-17T03:19:30 [INFO] GPU post-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:19:30 [INFO] GPU pre-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:19:30 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T03:19:30 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 5274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_005_multibrot4.json --batch 12
+2026-07-17T03:27:46 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [8.3m]
+2026-07-17T03:27:46 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=9 qual_parents=2 hook_desc=2 q3 base=0 twin=0
+2026-07-17T03:27:46 [INFO] GPU post-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:27:46 [INFO] GPU pre-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:27:46 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T03:27:46 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 5411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_005_multibrot5.json --batch 12
+2026-07-17T03:37:15 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.5m]
+2026-07-17T03:37:15 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=11 qual_parents=2 hook_desc=2 q3 base=0 twin=0
+2026-07-17T03:37:15 [INFO] GPU post-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:37:15 [INFO] GPU pre-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:37:15 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T03:37:15 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 5900 --batch 12
+2026-07-17T03:47:58 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.7m]
+2026-07-17T03:47:58 [INFO] GPU post-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:47:58 [INFO]   cycle 5 discovery: 4/4 families ran, +119 ledger rows, 17 fresh q3
+2026-07-17T03:47:58 [INFO] GPU pre-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T03:47:58 [INFO] PHASE start 'pool:cycle5'  expected~34.0m  kill@102.0m
+2026-07-17T03:47:58 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 506 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_005 --pool-all --no-head-exclude --seed 0
+2026-07-17T04:03:03 [INFO] PHASE end   'pool:cycle5'  rc=0 killed=False  [15.1m]
+2026-07-17T04:03:03 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:03:03 [INFO]   fresh-isolation OK: all 204 pooled rows originate from this cycle's ledger rows [506:625] (119 fresh ids)
+2026-07-17T04:03:03 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:03:03 [INFO] PHASE start 'annotate:cycle5'  expected~1.2m  kill@6.2m
+2026-07-17T04:03:03 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_005 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 506 --run-id prospect_run1 --cycle 5 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T04:03:53 [INFO] PHASE end   'annotate:cycle5'  rc=0 killed=False  [0.8m]
+2026-07-17T04:03:54 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:03:54 [INFO]   cycle 5 annotate: +13 library records (store now 71; est_loc now 2.7s)
+2026-07-17T04:03:54 [INFO]   reconcile: q3_found=17 = recorded=13 + coord_dup=4 (within_set=0+store/batch=4) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T04:03:54 [INFO]   cycle 5 purge: reclaimed ~0.07 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T04:03:54 [INFO]   cycle 5 wall=3718.9s (discovery=2120.1s phoenix=642.9s pool=904.5s annotate=50.8s)
+2026-07-17T04:03:54 [INFO] HEARTBEAT cycle=5 budget_remaining=18.61h records_total=71 fresh_q3_total=90 phase_failures=0
+2026-07-17T04:03:54 [INFO] ===== CYCLE 6 =====  budget remaining 18.61h  ledger watermark 625
+2026-07-17T04:03:54 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:03:54 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T04:03:54 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 6000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_006_mandelbrot.json --batch 12
+2026-07-17T04:12:45 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [8.9m]
+2026-07-17T04:12:45 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=34 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T04:12:45 [INFO] GPU post-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:12:45 [INFO] GPU pre-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:12:45 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T04:12:45 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 6137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_006_multibrot3.json --batch 12
+2026-07-17T04:19:52 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [7.1m]
+2026-07-17T04:19:52 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=12 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T04:19:52 [INFO] GPU post-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:19:52 [INFO] GPU pre-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:19:52 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T04:19:52 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 6274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_006_multibrot4.json --batch 12
+2026-07-17T04:27:51 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [8.0m]
+2026-07-17T04:27:51 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=10 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T04:27:51 [INFO] GPU post-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:27:51 [INFO] GPU pre-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:27:51 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T04:27:51 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 6411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_006_multibrot5.json --batch 12
+2026-07-17T04:38:33 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [10.7m]
+2026-07-17T04:38:33 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=11 qual_parents=2 hook_desc=2 q3 base=0 twin=0
+2026-07-17T04:38:33 [INFO] GPU post-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:38:33 [INFO] GPU pre-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:38:33 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T04:38:33 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 6900 --batch 12
+2026-07-17T04:50:03 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [11.5m]
+2026-07-17T04:50:03 [INFO] GPU post-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:50:03 [INFO]   cycle 6 discovery: 4/4 families ran, +109 ledger rows, 8 fresh q3
+2026-07-17T04:50:03 [INFO] GPU pre-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:50:03 [INFO] PHASE start 'pool:cycle6'  expected~16.0m  kill@48.0m
+2026-07-17T04:50:03 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 625 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_006 --pool-all --no-head-exclude --seed 0
+2026-07-17T04:57:55 [INFO] PHASE end   'pool:cycle6'  rc=0 killed=False  [7.9m]
+2026-07-17T04:57:55 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:57:55 [INFO]   fresh-isolation OK: all 96 pooled rows originate from this cycle's ledger rows [625:734] (109 fresh ids)
+2026-07-17T04:57:55 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:57:55 [INFO] PHASE start 'annotate:cycle6'  expected~0.7m  kill@5.7m
+2026-07-17T04:57:55 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_006 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 625 --run-id prospect_run1 --cycle 6 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T04:58:28 [INFO] PHASE end   'annotate:cycle6'  rc=0 killed=False  [0.5m]
+2026-07-17T04:58:28 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:58:28 [INFO]   cycle 6 annotate: +6 library records (store now 77; est_loc now 2.4s)
+2026-07-17T04:58:28 [INFO]   reconcile: q3_found=8 = recorded=6 + coord_dup=2 (within_set=0+store/batch=2) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T04:58:28 [INFO]   cycle 6 purge: reclaimed ~0.03 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T04:58:28 [INFO]   cycle 6 wall=3274.2s (discovery=2079.2s phoenix=689.8s pool=471.7s annotate=33.0s)
+2026-07-17T04:58:28 [INFO] HEARTBEAT cycle=6 budget_remaining=17.70h records_total=77 fresh_q3_total=98 phase_failures=0
+2026-07-17T04:58:28 [INFO] ===== CYCLE 7 =====  budget remaining 17.70h  ledger watermark 734
+2026-07-17T04:58:28 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T04:58:28 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T04:58:28 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 7000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_007_mandelbrot.json --batch 12
+2026-07-17T05:07:19 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [8.8m]
+2026-07-17T05:07:19 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=34 qual_parents=1 hook_desc=1 q3 base=1 twin=1
+2026-07-17T05:07:19 [INFO] GPU post-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:07:19 [INFO] GPU pre-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:07:19 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T05:07:19 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 7137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_007_multibrot3.json --batch 12
+2026-07-17T05:15:28 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [8.2m]
+2026-07-17T05:15:28 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=11 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T05:15:28 [INFO] GPU post-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:15:28 [INFO] GPU pre-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:15:28 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T05:15:28 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 7274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_007_multibrot4.json --batch 12
+2026-07-17T05:25:58 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [10.5m]
+2026-07-17T05:25:58 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=11 qual_parents=2 hook_desc=2 q3 base=0 twin=1
+2026-07-17T05:25:58 [INFO] GPU post-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:25:58 [INFO] GPU pre-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:25:58 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T05:25:58 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 7411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_007_multibrot5.json --batch 12
+2026-07-17T05:35:06 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.1m]
+2026-07-17T05:35:06 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=11 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T05:35:06 [INFO] GPU post-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:35:06 [INFO] GPU pre-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:35:06 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T05:35:06 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 7900 --batch 12
+2026-07-17T05:45:34 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.5m]
+2026-07-17T05:45:34 [INFO] GPU post-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:45:34 [INFO]   cycle 7 discovery: 4/4 families ran, +115 ledger rows, 15 fresh q3
+2026-07-17T05:45:34 [INFO] GPU pre-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T05:45:34 [INFO] PHASE start 'pool:cycle7'  expected~30.0m  kill@90.0m
+2026-07-17T05:45:34 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 734 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_007 --pool-all --no-head-exclude --seed 0
+2026-07-17T06:01:04 [INFO] PHASE end   'pool:cycle7'  rc=0 killed=False  [15.5m]
+2026-07-17T06:01:04 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:01:04 [INFO]   fresh-isolation OK: all 180 pooled rows originate from this cycle's ledger rows [734:849] (115 fresh ids)
+2026-07-17T06:01:04 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:01:04 [INFO] PHASE start 'annotate:cycle7'  expected~0.9m  kill@5.9m
+2026-07-17T06:01:04 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_007 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 734 --run-id prospect_run1 --cycle 7 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T06:02:12 [INFO] PHASE end   'annotate:cycle7'  rc=0 killed=False  [1.1m]
+2026-07-17T06:02:12 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:02:12 [INFO]   cycle 7 annotate: +13 library records (store now 90; est_loc now 3.0s)
+2026-07-17T06:02:12 [INFO]   reconcile: q3_found=15 = recorded=13 + coord_dup=2 (within_set=0+store/batch=2) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T06:02:12 [INFO]   cycle 7 purge: reclaimed ~0.06 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T06:02:12 [INFO]   cycle 7 wall=3823.9s (discovery=2198.1s phoenix=627.9s pool=930.1s annotate=67.2s)
+2026-07-17T06:02:12 [INFO] HEARTBEAT cycle=7 budget_remaining=16.64h records_total=90 fresh_q3_total=113 phase_failures=0
+2026-07-17T06:02:12 [INFO] ===== CYCLE 8 =====  budget remaining 16.64h  ledger watermark 849
+2026-07-17T06:02:12 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:02:12 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T06:02:12 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 8000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_008_mandelbrot.json --batch 12
+2026-07-17T06:11:23 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [9.2m]
+2026-07-17T06:11:23 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=33 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T06:11:24 [INFO] GPU post-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:11:24 [INFO] GPU pre-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:11:24 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T06:11:24 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 8137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_008_multibrot3.json --batch 12
+2026-07-17T06:18:49 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [7.4m]
+2026-07-17T06:18:49 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=11 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T06:18:49 [INFO] GPU post-discovery[multibrot3]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:18:49 [INFO] GPU pre-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:18:49 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T06:18:49 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 8274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_008_multibrot4.json --batch 12
+2026-07-17T06:30:54 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [12.1m]
+2026-07-17T06:30:54 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=21 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T06:30:54 [INFO] GPU post-discovery[multibrot4]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:30:54 [INFO] GPU pre-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:30:54 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T06:30:54 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 8411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_008_multibrot5.json --batch 12
+2026-07-17T06:38:13 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [7.3m]
+2026-07-17T06:38:13 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=9 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T06:38:13 [INFO] GPU post-discovery[multibrot5]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:38:13 [INFO] GPU pre-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:38:13 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T06:38:13 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 8900 --batch 12
+2026-07-17T06:48:32 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.3m]
+2026-07-17T06:48:32 [INFO] GPU post-discovery[phoenix]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:48:32 [INFO]   cycle 8 discovery: 4/4 families ran, +119 ledger rows, 7 fresh q3
+2026-07-17T06:48:32 [INFO] GPU pre-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:48:32 [INFO] PHASE start 'pool:cycle8'  expected~14.0m  kill@42.0m
+2026-07-17T06:48:32 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 849 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_008 --pool-all --no-head-exclude --seed 0
+2026-07-17T06:55:38 [INFO] PHASE end   'pool:cycle8'  rc=0 killed=False  [7.1m]
+2026-07-17T06:55:38 [INFO] GPU post-pool: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:55:38 [INFO]   fresh-isolation OK: all 84 pooled rows originate from this cycle's ledger rows [849:968] (119 fresh ids)
+2026-07-17T06:55:38 [INFO] GPU pre-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:55:38 [INFO] PHASE start 'annotate:cycle8'  expected~0.7m  kill@5.7m
+2026-07-17T06:55:38 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_008 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 849 --run-id prospect_run1 --cycle 8 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T06:55:57 [INFO] PHASE end   'annotate:cycle8'  rc=0 killed=False  [0.3m]
+2026-07-17T06:55:57 [INFO] GPU post-annotate: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:55:57 [INFO]   cycle 8 annotate: +3 library records (store now 93; est_loc now 3.0s)
+2026-07-17T06:55:57 [INFO]   reconcile: q3_found=7 = recorded=3 + coord_dup=4 (within_set=0+store/batch=4) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T06:55:57 [INFO]   cycle 8 purge: reclaimed ~0.03 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T06:55:57 [INFO]   cycle 8 wall=3225.7s (discovery=2160.6s phoenix=619.3s pool=426.1s annotate=19.1s)
+2026-07-17T06:55:57 [INFO] HEARTBEAT cycle=8 budget_remaining=15.74h records_total=93 fresh_q3_total=120 phase_failures=0
+2026-07-17T06:55:57 [INFO] ===== CYCLE 9 =====  budget remaining 15.74h  ledger watermark 968
+2026-07-17T06:55:57 [INFO] GPU pre-discovery[mandelbrot]: 699 MiB used (baseline 771, Δ-72 MiB)
+2026-07-17T06:55:57 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T06:55:57 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 9000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_009_mandelbrot.json --batch 12
+2026-07-17T07:05:42 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [9.7m]
+2026-07-17T07:05:42 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=33 qual_parents=2 hook_desc=2 q3 base=1 twin=1
+2026-07-17T07:05:42 [INFO] GPU post-discovery[mandelbrot]: 687 MiB used (baseline 771, Δ-84 MiB)
+2026-07-17T07:05:42 [INFO] GPU pre-discovery[multibrot3]: 687 MiB used (baseline 771, Δ-84 MiB)
+2026-07-17T07:05:42 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T07:05:42 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 9137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_009_multibrot3.json --batch 12
+2026-07-17T07:17:51 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [12.2m]
+2026-07-17T07:17:51 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=21 qual_parents=2 hook_desc=2 q3 base=0 twin=2
+2026-07-17T07:17:51 [INFO] GPU post-discovery[multibrot3]: 594 MiB used (baseline 771, Δ-177 MiB)
+2026-07-17T07:17:51 [INFO] GPU pre-discovery[multibrot4]: 605 MiB used (baseline 771, Δ-166 MiB)
+2026-07-17T07:17:51 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T07:17:51 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 9274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_009_multibrot4.json --batch 12
+2026-07-17T07:30:33 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [12.7m]
+2026-07-17T07:30:33 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=20 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T07:30:33 [INFO] GPU post-discovery[multibrot4]: 750 MiB used (baseline 771, Δ-21 MiB)
+2026-07-17T07:30:33 [INFO] GPU pre-discovery[multibrot5]: 750 MiB used (baseline 771, Δ-21 MiB)
+2026-07-17T07:30:33 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T07:30:33 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 9411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_009_multibrot5.json --batch 12
+2026-07-17T07:41:12 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [10.7m]
+2026-07-17T07:41:12 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=10 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T07:41:12 [INFO] GPU post-discovery[multibrot5]: 785 MiB used (baseline 771, Δ+14 MiB)
+2026-07-17T07:41:12 [INFO] GPU pre-discovery[phoenix]: 785 MiB used (baseline 771, Δ+14 MiB)
+2026-07-17T07:41:12 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T07:41:12 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 9900 --batch 12
+2026-07-17T07:52:19 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [11.1m]
+2026-07-17T07:52:19 [INFO] GPU post-discovery[phoenix]: 748 MiB used (baseline 771, Δ-23 MiB)
+2026-07-17T07:52:19 [INFO]   cycle 9 discovery: 4/4 families ran, +138 ledger rows, 20 fresh q3
+2026-07-17T07:52:19 [INFO] GPU pre-pool: 748 MiB used (baseline 771, Δ-23 MiB)
+2026-07-17T07:52:19 [INFO] PHASE start 'pool:cycle9'  expected~40.0m  kill@120.0m
+2026-07-17T07:52:19 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 968 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_009 --pool-all --no-head-exclude --seed 0
+2026-07-17T08:10:10 [INFO] PHASE end   'pool:cycle9'  rc=0 killed=False  [17.8m]
+2026-07-17T08:10:10 [INFO] GPU post-pool: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T08:10:10 [INFO]   fresh-isolation OK: all 240 pooled rows originate from this cycle's ledger rows [968:1106] (138 fresh ids)
+2026-07-17T08:10:10 [INFO] GPU pre-annotate: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T08:10:10 [INFO] PHASE start 'annotate:cycle9'  expected~1.3m  kill@6.3m
+2026-07-17T08:10:10 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_009 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 968 --run-id prospect_run1 --cycle 9 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T08:11:04 [INFO] PHASE end   'annotate:cycle9'  rc=0 killed=False  [0.9m]
+2026-07-17T08:11:04 [INFO] GPU post-annotate: 745 MiB used (baseline 771, Δ-26 MiB)
+2026-07-17T08:11:04 [INFO]   cycle 9 annotate: +13 library records (store now 106; est_loc now 2.8s)
+2026-07-17T08:11:04 [INFO]   reconcile: q3_found=20 = recorded=13 + coord_dup=7 (within_set=0+store/batch=7) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T08:11:04 [INFO]   cycle 9 purge: reclaimed ~0.08 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T08:11:04 [INFO]   cycle 9 wall=4506.4s (discovery=2714.5s phoenix=666.9s pool=1070.5s annotate=53.7s)
+2026-07-17T08:11:04 [INFO] HEARTBEAT cycle=9 budget_remaining=14.49h records_total=106 fresh_q3_total=140 phase_failures=0
+2026-07-17T08:11:04 [INFO] ===== CYCLE 10 =====  budget remaining 14.49h  ledger watermark 1106
+2026-07-17T08:11:04 [INFO] GPU pre-discovery[mandelbrot]: 745 MiB used (baseline 771, Δ-26 MiB)
+2026-07-17T08:11:04 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T08:11:04 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 10000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_010_mandelbrot.json --batch 12
+2026-07-17T08:20:30 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [9.4m]
+2026-07-17T08:20:30 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=21 qual_parents=5 hook_desc=5 q3 base=1 twin=3
+2026-07-17T08:20:30 [INFO] GPU post-discovery[mandelbrot]: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T08:20:30 [INFO] GPU pre-discovery[multibrot3]: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T08:20:30 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T08:20:30 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 10137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_010_multibrot3.json --batch 12
+2026-07-17T08:32:00 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [11.5m]
+2026-07-17T08:32:00 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=23 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T08:32:00 [INFO] GPU post-discovery[multibrot3]: 792 MiB used (baseline 771, Δ+21 MiB)
+2026-07-17T08:32:00 [INFO] GPU pre-discovery[multibrot4]: 792 MiB used (baseline 771, Δ+21 MiB)
+2026-07-17T08:32:00 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T08:32:00 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 10274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_010_multibrot4.json --batch 12
+2026-07-17T08:40:52 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [8.9m]
+2026-07-17T08:40:52 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=11 qual_parents=2 hook_desc=2 q3 base=1 twin=1
+2026-07-17T08:40:52 [INFO] GPU post-discovery[multibrot4]: 765 MiB used (baseline 771, Δ-6 MiB)
+2026-07-17T08:40:52 [INFO] GPU pre-discovery[multibrot5]: 765 MiB used (baseline 771, Δ-6 MiB)
+2026-07-17T08:40:52 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T08:40:52 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 10411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_010_multibrot5.json --batch 12
+2026-07-17T08:48:37 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [7.7m]
+2026-07-17T08:48:37 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=10 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T08:48:37 [INFO] GPU post-discovery[multibrot5]: 751 MiB used (baseline 771, Δ-20 MiB)
+2026-07-17T08:48:37 [INFO] GPU pre-discovery[phoenix]: 751 MiB used (baseline 771, Δ-20 MiB)
+2026-07-17T08:48:37 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T08:48:37 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 10900 --batch 12
+2026-07-17T08:59:02 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.4m]
+2026-07-17T08:59:02 [INFO] GPU post-discovery[phoenix]: 735 MiB used (baseline 771, Δ-36 MiB)
+2026-07-17T08:59:02 [INFO]   cycle 10 discovery: 4/4 families ran, +125 ledger rows, 22 fresh q3
+2026-07-17T08:59:02 [INFO] GPU pre-pool: 735 MiB used (baseline 771, Δ-36 MiB)
+2026-07-17T08:59:02 [INFO] PHASE start 'pool:cycle10'  expected~44.0m  kill@132.0m
+2026-07-17T08:59:02 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1106 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_010 --pool-all --no-head-exclude --seed 0
+2026-07-17T09:17:57 [INFO] PHASE end   'pool:cycle10'  rc=0 killed=False  [18.9m]
+2026-07-17T09:17:57 [INFO] GPU post-pool: 720 MiB used (baseline 771, Δ-51 MiB)
+2026-07-17T09:17:57 [INFO]   fresh-isolation OK: all 264 pooled rows originate from this cycle's ledger rows [1106:1231] (125 fresh ids)
+2026-07-17T09:17:57 [INFO] GPU pre-annotate: 720 MiB used (baseline 771, Δ-51 MiB)
+2026-07-17T09:17:57 [INFO] PHASE start 'annotate:cycle10'  expected~1.4m  kill@6.4m
+2026-07-17T09:17:57 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_010 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1106 --run-id prospect_run1 --cycle 10 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T09:18:46 [INFO] PHASE end   'annotate:cycle10'  rc=0 killed=False  [0.8m]
+2026-07-17T09:18:46 [INFO] GPU post-annotate: 720 MiB used (baseline 771, Δ-51 MiB)
+2026-07-17T09:18:46 [INFO]   cycle 10 annotate: +13 library records (store now 119; est_loc now 2.5s)
+2026-07-17T09:18:46 [INFO]   reconcile: q3_found=22 = recorded=13 + coord_dup=9 (within_set=0+store/batch=9) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T09:18:46 [INFO]   cycle 10 purge: reclaimed ~0.09 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T09:18:46 [INFO]   cycle 10 wall=4062.4s (discovery=2252.9s phoenix=624.8s pool=1134.6s annotate=49.5s)
+2026-07-17T09:18:46 [INFO] HEARTBEAT cycle=10 budget_remaining=13.36h records_total=119 fresh_q3_total=162 phase_failures=0
+2026-07-17T09:18:46 [INFO] ===== CYCLE 11 =====  budget remaining 13.36h  ledger watermark 1231
+2026-07-17T09:18:46 [INFO] GPU pre-discovery[mandelbrot]: 720 MiB used (baseline 771, Δ-51 MiB)
+2026-07-17T09:18:46 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T09:18:46 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 11000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_011_mandelbrot.json --batch 12
+2026-07-17T09:27:36 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [8.8m]
+2026-07-17T09:27:36 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=23 qual_parents=5 hook_desc=5 q3 base=4 twin=3
+2026-07-17T09:27:36 [INFO] GPU post-discovery[mandelbrot]: 768 MiB used (baseline 771, Δ-3 MiB)
+2026-07-17T09:27:36 [INFO] GPU pre-discovery[multibrot3]: 768 MiB used (baseline 771, Δ-3 MiB)
+2026-07-17T09:27:36 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T09:27:36 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 11137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_011_multibrot3.json --batch 12
+2026-07-17T09:39:42 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [12.1m]
+2026-07-17T09:39:42 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=23 qual_parents=1 hook_desc=1 q3 base=0 twin=1
+2026-07-17T09:39:42 [INFO] GPU post-discovery[multibrot3]: 732 MiB used (baseline 771, Δ-39 MiB)
+2026-07-17T09:39:42 [INFO] GPU pre-discovery[multibrot4]: 732 MiB used (baseline 771, Δ-39 MiB)
+2026-07-17T09:39:42 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T09:39:42 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 11274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_011_multibrot4.json --batch 12
+2026-07-17T09:48:04 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [8.4m]
+2026-07-17T09:48:04 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=11 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T09:48:04 [INFO] GPU post-discovery[multibrot4]: 733 MiB used (baseline 771, Δ-38 MiB)
+2026-07-17T09:48:04 [INFO] GPU pre-discovery[multibrot5]: 733 MiB used (baseline 771, Δ-38 MiB)
+2026-07-17T09:48:04 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T09:48:04 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 11411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_011_multibrot5.json --batch 12
+2026-07-17T09:57:23 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.3m]
+2026-07-17T09:57:23 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=10 qual_parents=2 hook_desc=2 q3 base=2 twin=2
+2026-07-17T09:57:23 [INFO] GPU post-discovery[multibrot5]: 649 MiB used (baseline 771, Δ-122 MiB)
+2026-07-17T09:57:23 [INFO] GPU pre-discovery[phoenix]: 649 MiB used (baseline 771, Δ-122 MiB)
+2026-07-17T09:57:23 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T09:57:23 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 11900 --batch 12
+2026-07-17T10:08:26 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [11.0m]
+2026-07-17T10:08:26 [INFO] GPU post-discovery[phoenix]: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:08:26 [INFO]   cycle 11 discovery: 4/4 families ran, +130 ledger rows, 21 fresh q3
+2026-07-17T10:08:26 [INFO] GPU pre-pool: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:08:26 [INFO] PHASE start 'pool:cycle11'  expected~42.0m  kill@126.0m
+2026-07-17T10:08:26 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1231 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_011 --pool-all --no-head-exclude --seed 0
+2026-07-17T10:27:12 [INFO] PHASE end   'pool:cycle11'  rc=0 killed=False  [18.8m]
+2026-07-17T10:27:12 [INFO] GPU post-pool: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:27:12 [INFO]   fresh-isolation OK: all 252 pooled rows originate from this cycle's ledger rows [1231:1361] (130 fresh ids)
+2026-07-17T10:27:12 [INFO] GPU pre-annotate: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:27:12 [INFO] PHASE start 'annotate:cycle11'  expected~1.2m  kill@6.2m
+2026-07-17T10:27:12 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_011 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1231 --run-id prospect_run1 --cycle 11 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T10:28:13 [INFO] PHASE end   'annotate:cycle11'  rc=0 killed=False  [1.0m]
+2026-07-17T10:28:13 [INFO] GPU post-annotate: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:28:13 [INFO]   cycle 11 annotate: +16 library records (store now 135; est_loc now 2.5s)
+2026-07-17T10:28:13 [INFO]   reconcile: q3_found=21 = recorded=16 + coord_dup=5 (within_set=0+store/batch=5) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T10:28:13 [INFO]   cycle 11 purge: reclaimed ~0.10 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T10:28:13 [INFO]   cycle 11 wall=4166.7s (discovery=2316.8s phoenix=662.3s pool=1126.7s annotate=60.3s)
+2026-07-17T10:28:13 [INFO] HEARTBEAT cycle=11 budget_remaining=12.20h records_total=135 fresh_q3_total=183 phase_failures=0
+2026-07-17T10:28:13 [INFO] ===== CYCLE 12 =====  budget remaining 12.20h  ledger watermark 1361
+2026-07-17T10:28:13 [INFO] GPU pre-discovery[mandelbrot]: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:28:13 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T10:28:13 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 12000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_012_mandelbrot.json --batch 12
+2026-07-17T10:38:33 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [10.3m]
+2026-07-17T10:38:33 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=34 qual_parents=2 hook_desc=2 q3 base=1 twin=2
+2026-07-17T10:38:33 [INFO] GPU post-discovery[mandelbrot]: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:38:33 [INFO] GPU pre-discovery[multibrot3]: 641 MiB used (baseline 771, Δ-130 MiB)
+2026-07-17T10:38:33 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T10:38:33 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 12137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_012_multibrot3.json --batch 12
+2026-07-17T10:50:10 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [11.6m]
+2026-07-17T10:50:10 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=22 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T10:50:10 [INFO] GPU post-discovery[multibrot3]: 670 MiB used (baseline 771, Δ-101 MiB)
+2026-07-17T10:50:10 [INFO] GPU pre-discovery[multibrot4]: 670 MiB used (baseline 771, Δ-101 MiB)
+2026-07-17T10:50:10 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T10:50:10 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 12274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_012_multibrot4.json --batch 12
+2026-07-17T10:57:40 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [7.5m]
+2026-07-17T10:57:40 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=10 qual_parents=1 hook_desc=1 q3 base=1 twin=1
+2026-07-17T10:57:40 [INFO] GPU post-discovery[multibrot4]: 666 MiB used (baseline 771, Δ-105 MiB)
+2026-07-17T10:57:40 [INFO] GPU pre-discovery[multibrot5]: 666 MiB used (baseline 771, Δ-105 MiB)
+2026-07-17T10:57:40 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T10:57:40 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 12411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_012_multibrot5.json --batch 12
+2026-07-17T11:07:09 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [9.5m]
+2026-07-17T11:07:09 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=10 qual_parents=2 hook_desc=2 q3 base=0 twin=0
+2026-07-17T11:07:09 [INFO] GPU post-discovery[multibrot5]: 800 MiB used (baseline 771, Δ+29 MiB)
+2026-07-17T11:07:09 [INFO] GPU pre-discovery[phoenix]: 800 MiB used (baseline 771, Δ+29 MiB)
+2026-07-17T11:07:09 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T11:07:09 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 12900 --batch 12
+2026-07-17T11:17:40 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.5m]
+2026-07-17T11:17:40 [INFO] GPU post-discovery[phoenix]: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T11:17:40 [INFO]   cycle 12 discovery: 4/4 families ran, +127 ledger rows, 11 fresh q3
+2026-07-17T11:17:40 [INFO] GPU pre-pool: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T11:17:40 [INFO] PHASE start 'pool:cycle12'  expected~22.0m  kill@66.0m
+2026-07-17T11:17:40 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1361 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_012 --pool-all --no-head-exclude --seed 0
+2026-07-17T11:27:47 [INFO] PHASE end   'pool:cycle12'  rc=0 killed=False  [10.1m]
+2026-07-17T11:27:47 [INFO] GPU post-pool: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T11:27:47 [INFO]   fresh-isolation OK: all 132 pooled rows originate from this cycle's ledger rows [1361:1488] (127 fresh ids)
+2026-07-17T11:27:47 [INFO] GPU pre-annotate: 737 MiB used (baseline 771, Δ-34 MiB)
+2026-07-17T11:27:47 [INFO] PHASE start 'annotate:cycle12'  expected~0.8m  kill@5.8m
+2026-07-17T11:27:47 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_012 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1361 --run-id prospect_run1 --cycle 12 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T11:28:27 [INFO] PHASE end   'annotate:cycle12'  rc=0 killed=False  [0.7m]
+2026-07-17T11:28:27 [INFO] GPU post-annotate: 738 MiB used (baseline 771, Δ-33 MiB)
+2026-07-17T11:28:27 [INFO]   cycle 12 annotate: +9 library records (store now 144; est_loc now 2.3s)
+2026-07-17T11:28:27 [INFO]   reconcile: q3_found=11 = recorded=9 + coord_dup=2 (within_set=0+store/batch=2) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T11:28:27 [INFO]   cycle 12 purge: reclaimed ~0.05 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T11:28:27 [INFO]   cycle 12 wall=3614.0s (discovery=2336.0s phoenix=630.3s pool=607.7s annotate=39.3s)
+2026-07-17T11:28:27 [INFO] HEARTBEAT cycle=12 budget_remaining=11.20h records_total=144 fresh_q3_total=194 phase_failures=0
+2026-07-17T11:28:27 [INFO] ===== CYCLE 13 =====  budget remaining 11.20h  ledger watermark 1488
+2026-07-17T11:28:27 [INFO] GPU pre-discovery[mandelbrot]: 738 MiB used (baseline 771, Δ-33 MiB)
+2026-07-17T11:28:27 [INFO] PHASE start 'discovery:mandelbrot'  expected~7.0m  kill@21.0m
+2026-07-17T11:28:27 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family mandelbrot --julia-hook --budget 7.0 --seed 13000 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_013_mandelbrot.json --batch 12
+2026-07-17T11:37:35 [INFO] PHASE end   'discovery:mandelbrot'  rc=0 killed=False  [9.1m]
+2026-07-17T11:37:35 [INFO]   rebalance[mandelbrot] budget=7.0m: cplane_desc=23 qual_parents=3 hook_desc=3 q3 base=3 twin=3
+2026-07-17T11:37:35 [INFO] GPU post-discovery[mandelbrot]: 815 MiB used (baseline 771, Δ+44 MiB)
+2026-07-17T11:37:35 [INFO] GPU pre-discovery[multibrot3]: 815 MiB used (baseline 771, Δ+44 MiB)
+2026-07-17T11:37:35 [INFO] PHASE start 'discovery:multibrot3'  expected~7.0m  kill@21.0m
+2026-07-17T11:37:35 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot3 --julia-hook --budget 7.0 --seed 13137 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_013_multibrot3.json --batch 12
+2026-07-17T11:48:19 [INFO] PHASE end   'discovery:multibrot3'  rc=0 killed=False  [10.7m]
+2026-07-17T11:48:19 [INFO]   rebalance[multibrot3] budget=7.0m: cplane_desc=22 qual_parents=0 hook_desc=0 q3 base=0 twin=0
+2026-07-17T11:48:19 [INFO] GPU post-discovery[multibrot3]: 844 MiB used (baseline 771, Δ+73 MiB)
+2026-07-17T11:48:19 [INFO] GPU pre-discovery[multibrot4]: 844 MiB used (baseline 771, Δ+73 MiB)
+2026-07-17T11:48:19 [INFO] PHASE start 'discovery:multibrot4'  expected~7.0m  kill@21.0m
+2026-07-17T11:48:19 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot4 --julia-hook --budget 7.0 --seed 13274 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_013_multibrot4.json --batch 12
+2026-07-17T11:59:42 [INFO] PHASE end   'discovery:multibrot4'  rc=0 killed=False  [11.4m]
+2026-07-17T11:59:42 [INFO]   rebalance[multibrot4] budget=7.0m: cplane_desc=18 qual_parents=1 hook_desc=1 q3 base=0 twin=0
+2026-07-17T11:59:42 [INFO] GPU post-discovery[multibrot4]: 766 MiB used (baseline 771, Δ-5 MiB)
+2026-07-17T11:59:42 [INFO] GPU pre-discovery[multibrot5]: 766 MiB used (baseline 771, Δ-5 MiB)
+2026-07-17T11:59:42 [INFO] PHASE start 'discovery:multibrot5'  expected~7.0m  kill@21.0m
+2026-07-17T11:59:42 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --family multibrot5 --julia-hook --budget 7.0 --seed 13411 --summary-out C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\seeder_summaries\cycle_013_multibrot5.json --batch 12
+2026-07-17T12:09:46 [INFO] PHASE end   'discovery:multibrot5'  rc=0 killed=False  [10.1m]
+2026-07-17T12:09:46 [INFO]   rebalance[multibrot5] budget=7.0m: cplane_desc=11 qual_parents=2 hook_desc=2 q3 base=0 twin=1
+2026-07-17T12:09:46 [INFO] GPU post-discovery[multibrot5]: 862 MiB used (baseline 771, Δ+91 MiB)
+2026-07-17T12:09:46 [INFO] GPU pre-discovery[phoenix]: 862 MiB used (baseline 771, Δ+91 MiB)
+2026-07-17T12:09:46 [INFO] PHASE start 'discovery:phoenix'  expected~10.0m  kill@30.0m
+2026-07-17T12:09:46 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\atlas\production_seeder.py --run-phoenix --discovery-dir C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1 --budget 10.0 --seed 13900 --batch 12
+2026-07-17T12:20:16 [INFO] PHASE end   'discovery:phoenix'  rc=0 killed=False  [10.5m]
+2026-07-17T12:20:16 [INFO] GPU post-discovery[phoenix]: 830 MiB used (baseline 771, Δ+59 MiB)
+2026-07-17T12:20:16 [INFO]   cycle 13 discovery: 4/4 families ran, +128 ledger rows, 17 fresh q3
+2026-07-17T12:20:16 [INFO] GPU pre-pool: 830 MiB used (baseline 771, Δ+59 MiB)
+2026-07-17T12:20:16 [INFO] PHASE start 'pool:cycle13'  expected~34.0m  kill@102.0m
+2026-07-17T12:20:16 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\build_fresh_discovery.py --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1488 --batch-dir C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_013 --pool-all --no-head-exclude --seed 0
+2026-07-17T12:36:00 [INFO] PHASE end   'pool:cycle13'  rc=0 killed=False  [15.7m]
+2026-07-17T12:36:00 [INFO] GPU post-pool: 822 MiB used (baseline 771, Δ+51 MiB)
+2026-07-17T12:36:00 [INFO]   fresh-isolation OK: all 204 pooled rows originate from this cycle's ledger rows [1488:1616] (128 fresh ids)
+2026-07-17T12:36:00 [INFO] GPU pre-annotate: 822 MiB used (baseline 771, Δ+51 MiB)
+2026-07-17T12:36:00 [INFO] PHASE start 'annotate:cycle13'  expected~1.0m  kill@6.0m
+2026-07-17T12:36:00 [INFO]   cmd: C:\Code\fractal-generator\.venv\Scripts\python.exe -u C:\Code\fractal-generator\tools\wallpaper\library_annotate.py --pool C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\pools\cycle_013 --ledger C:\Code\fractal-generator\data\discovery\fresh_runs\prospect_run1\outcome_ledger.jsonl --ledger-start-line 1488 --run-id prospect_run1 --cycle 13 --field-cache-gb 20.0 --records C:\Code\fractal-generator\data\library\records.jsonl --thumbs C:\Code\fractal-generator\data\library\thumbs --emb-shards C:\Code\fractal-generator\data\library_embeddings\shards --field-cache-dir C:\Code\fractal-generator\data\library\field_cache
+2026-07-17T12:36:36 [INFO] PHASE end   'annotate:cycle13'  rc=0 killed=False  [0.6m]
+2026-07-17T12:36:36 [INFO] GPU post-annotate: 822 MiB used (baseline 771, Δ+51 MiB)
+2026-07-17T12:36:36 [INFO]   cycle 13 annotate: +9 library records (store now 153; est_loc now 2.1s)
+2026-07-17T12:36:36 [INFO]   reconcile: q3_found=17 = recorded=9 + coord_dup=8 (within_set=0+store/batch=8) + field_fail=0 (rate=0.00) + deferred=0 [excl_head=0 unexplained=0]
+2026-07-17T12:36:37 [INFO]   cycle 13 purge: reclaimed ~0.08 GiB of disposable intermediates (killed-seeder scratch + pool crops + emit field residual); durable band preserved
+2026-07-17T12:36:37 [INFO]   cycle 13 wall=4089.7s (discovery=2478.7s phoenix=630.1s pool=944.0s annotate=36.3s)
+2026-07-17T12:36:37 [INFO] HEARTBEAT cycle=13 budget_remaining=10.06h records_total=153 fresh_q3_total=211 phase_failures=0
+2026-07-17T12:36:37 [INFO] STOP sentinel present — graceful shutdown at cycle boundary after 13 cycle(s). Removing sentinel so the next resume isn't blocked.
+2026-07-17T12:36:37 [INFO] GPU final: 822 MiB used (baseline 771, Δ+51 MiB)
+2026-07-17T12:36:37 [INFO] ======================================================================
+2026-07-17T12:36:37 [INFO]   all cycles reconciled cleanly (0 failed).
+2026-07-17T12:36:37 [INFO] RUN PAUSED 'prospect_run1' [STOP sentinel (graceful)]: 13 cycles (0 failed), +153 library records this run (153 total in store), 211 fresh q3, 0 phase failures
+2026-07-17T12:36:37 [INFO]   budget: accumulated 13.938h of 24.0h total (10.062h remaining); this session 13.938h
+2026-07-17T12:36:37 [INFO]   reconciliation: q3_found=211 = records=153 + coord_dup=58 + field_fail=0 + unexplained=0 (unexplained MUST be 0)
+2026-07-17T12:36:37 [INFO]   rebalance[mandelbrot]: cplane_desc=356 qual_parents=34 hook_desc=34 q3 base=22 twin=24 (over 13 cycle-runs)
+2026-07-17T12:36:37 [INFO]   rebalance[multibrot3]: cplane_desc=239 qual_parents=18 hook_desc=18 q3 base=0 twin=8 (over 13 cycle-runs)
+2026-07-17T12:36:37 [INFO]   rebalance[multibrot4]: cplane_desc=169 qual_parents=18 hook_desc=18 q3 base=4 twin=6 (over 13 cycle-runs)
+2026-07-17T12:36:37 [INFO]   rebalance[multibrot5]: cplane_desc=135 qual_parents=13 hook_desc=13 q3 base=2 twin=3 (over 13 cycle-runs)
+2026-07-17T12:36:37 [INFO]   library records -> C:\Code\fractal-generator\data\library\records.jsonl
+2026-07-17T12:36:37 [INFO]   embeddings -> C:\Code\fractal-generator\data\library_embeddings\shards (13 shards, 215 vecs)
+2026-07-17T12:36:37 [INFO]   thumbnails -> C:\Code\fractal-generator\data\library\thumbs (153)
+2026-07-17T12:36:37 [INFO]   run summary -> C:\Code\fractal-generator\out\wallpaper\prospect\prospect_run1\run_summary.json

@@ -82,65 +82,93 @@ PROVENANCE_KEYS = (
 )
 
 
-# --- v6-decode stamp guard (discovery outcome ledgers) ---------------------
+# --- decode-version stamp guard (discovery outcome ledgers) ----------------
 #
 # A discovery-ledger row's `decoded_class` is the PERSISTED q3 hard-class verdict
 # (corn_decode of raw_top3), stamped at harvest time by whichever classifier the
-# seeder ran. production_seeder began writing `scorer_version="v6"` only partway
-# through the gather runs, so a large body of older rows carry a v5-vintage
-# `decoded_class` and NO stamp: the entire `gather/mandelbrot` and
-# `gather/phoenix` partitions predate the stamp, as do the first chunks of
-# multibrot{3,4,5} and ~237 rows of the main `outcome_ledger.jsonl`. Those v5
-# verdicts must NEVER be consumed where a v6 readout is required (fresh-discovery
+# seeder ran, via `scorer_version` (the version dir of the active checkpoint —
+# "v6", "v7", ...). Historically production_seeder began stamping only partway
+# through the gather runs, so a body of older rows carry a v5-vintage
+# `decoded_class` and NO stamp (the entire `gather/mandelbrot` and `gather/phoenix`
+# partitions, the first chunks of multibrot{3,4,5}, ~237 rows of the main
+# `outcome_ledger.jsonl`). More generally, a verdict from a NON-CURRENT classifier
+# must never be consumed where a current-model readout is required (fresh-discovery
 # emit, wallpaper-head "fresh machine-q3" selection).
 #
-# Discriminator: `scorer_version == "v6"`. A row without that exact stamp is
-# v5-decoded (or pre-stamp) and its `decoded_class` is not a v6 verdict. This is
-# an explicit stamp field — no path/source inference needed.
+# Discriminator: `scorer_version == <active version>`, where the active version is
+# resolved from tools/scoring/active_ckpt.ACTIVE_VERSION — the ONE source of truth
+# for what "current" means. A row whose stamp differs is decoded by a different
+# (older) model and its `decoded_class` is not a current verdict. This is an
+# explicit stamp field — no path/source inference needed. When the active checkpoint
+# is flipped, the meaning of "current-decoded" moves with it automatically, and
+# previously-current rows (e.g. every v6-stamped row after a v7 flip) correctly read
+# as not-current — that is expected, not a bug.
 #
-# READ-ONLY: this guard REJECTS v5 rows; it never re-decodes, re-stamps, or
-# mutates a ledger. Re-running v6 on the v5 locations is a separate,
-# compute-bearing project and out of scope here.
-V6_SCORER_VERSION = "v6"   # must match tools/atlas/production_seeder.SCORER_VERSION
+# READ-ONLY: this guard REJECTS stale rows; it never re-decodes, re-stamps, or
+# mutates a ledger. Re-decoding stale locations under the current model is a
+# separate, compute-bearing project and out of scope here.
 
 
-class V5DecodeError(ValueError):
-    """A v5-decoded ledger row reached a path that requires a v6 verdict."""
+def active_scorer_version() -> str:
+    """The `scorer_version` token of the LIVE checkpoint (e.g. "v7"), resolved from
+    tools/scoring/active_ckpt.ACTIVE_VERSION — the single source of truth for what
+    "current" means. Flip ACTIVE_CKPT and this moves with it."""
+    scoring = os.path.join(ROOT, "tools", "scoring")
+    if scoring not in sys.path:
+        sys.path.insert(0, scoring)
+    import active_ckpt  # noqa: E402  (stdlib-only at import; no torch pulled in)
+    return active_ckpt.ACTIVE_VERSION
 
 
-def is_v6_decoded(row) -> bool:
-    """Canonical predicate: True iff `row`'s decode verdict carries the v6 stamp.
-
-    The ONE place the v6-stamp discriminator is defined. Consumers that require a
-    v6 readout gate on this rather than open-coding the `scorer_version` check, so
-    the stamp field can never drift out of sync across call sites."""
-    return row.get("scorer_version") == V6_SCORER_VERSION
+class StaleDecodeError(ValueError):
+    """A row decoded by a non-current classifier reached a path that requires the
+    current model's verdict."""
 
 
-def v6_rows_only(rows):
-    """Filter an iterable of ledger rows to v6-stamped ones.
+def is_decoded_by(row, version) -> bool:
+    """True iff `row`'s decode verdict carries the given `scorer_version` stamp.
 
-    Returns `(kept, excluded)` — the kept rows plus the count of v5/unstamped rows
-    dropped. For pool-builders that legitimately discard v5 rows and want to report
-    how many they excluded."""
+    The explicit-version primitive. Use this ONLY when a callsite genuinely wants a
+    specific historical version (e.g. an audit of the v5->v6 migration); for
+    "decoded by the model that is live right now" use `is_current_decoded`."""
+    return row.get("scorer_version") == version
+
+
+def is_current_decoded(row) -> bool:
+    """Canonical predicate: True iff `row`'s decode verdict was produced by the
+    ACTIVE checkpoint (the version from tools/scoring/active_ckpt.ACTIVE_VERSION).
+
+    The ONE place the current-stamp discriminator is defined. Consumers that require
+    a current-model readout gate on this rather than open-coding the `scorer_version`
+    check, so the stamp field can never drift out of sync across call sites."""
+    return is_decoded_by(row, active_scorer_version())
+
+
+def current_rows_only(rows):
+    """Filter an iterable of ledger rows to current-stamped ones.
+
+    Returns `(kept, excluded)` — the kept rows plus the count of stale/unstamped
+    rows dropped. For pool-builders that legitimately discard non-current rows and
+    want to report how many they excluded."""
     kept, excluded = [], 0
     for r in rows:
-        if is_v6_decoded(r):
+        if is_current_decoded(r):
             kept.append(r)
         else:
             excluded += 1
     return kept, excluded
 
 
-def require_v6(row):
-    """Return `row` if it is v6-stamped, else raise `V5DecodeError`.
+def require_current(row):
+    """Return `row` if it is current-stamped, else raise `StaleDecodeError`.
 
-    For single-row verdict-trust paths that must never proceed on a v5 verdict."""
-    if not is_v6_decoded(row):
-        raise V5DecodeError(
-            f"ledger row {row.get('id')!r} is v5-decoded "
-            f"(scorer_version={row.get('scorer_version')!r}); refusing to consume "
-            f"its decoded_class={row.get('decoded_class')!r} as a v6 verdict"
+    For single-row verdict-trust paths that must never proceed on a stale verdict."""
+    if not is_current_decoded(row):
+        raise StaleDecodeError(
+            f"ledger row {row.get('id')!r} is stale-decoded "
+            f"(scorer_version={row.get('scorer_version')!r}, "
+            f"current={active_scorer_version()!r}); refusing to consume its "
+            f"decoded_class={row.get('decoded_class')!r} as a current verdict"
         )
     return row
 

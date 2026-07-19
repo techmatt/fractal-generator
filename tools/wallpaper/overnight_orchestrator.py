@@ -57,7 +57,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "corpus"))
-import corpus_common as cc  # noqa: E402  (is_v6_decoded — the v6-stamp discriminator)
+import corpus_common as cc  # noqa: E402  (is_current_decoded — the current-stamp discriminator)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -379,7 +379,7 @@ def new_fresh_q3(ledger: Path, start_line: int) -> list[dict]:
             if i < start_line or not line.strip():
                 continue
             d = json.loads(line)
-            if cc.is_v6_decoded(d) and d.get("guard_pass") and d.get("decoded_class") == 3:
+            if cc.is_current_decoded(d) and d.get("guard_pass") and d.get("decoded_class") == 3:
                 rows.append(d)
     return rows
 

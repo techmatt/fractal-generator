@@ -69,7 +69,7 @@ from label_crop import (              # noqa: E402  (shared label-crop spec — 
 )
 from pool_rule import top_k_pool  # noqa: E402  (shared pool rule; lifted out of build_humanq3)
 import build_fresh_discovery as BFD   # noqa: E402  (_to_location, _head_corpus_exclusion, _spatially_in)
-import corpus_common as cc            # noqa: E402  (is_v6_decoded — v6-stamp guard)
+import corpus_common as cc            # noqa: E402  (is_current_decoded — current-stamp guard)
 
 WALLPAPER_CORPUS = ROOT / "data" / "wallpaper_corpus"
 LABELS_DIR = ROOT / "labels"
@@ -267,11 +267,11 @@ def select_fresh(seed, count, reused_sources):
                 continue
             d = json.loads(line)
             # v6-stamp guard: `decoded_class` from a v5-decoded (unstamped) row is
-            # NOT a v6 machine-q3 verdict — reject it here, matching the sibling
-            # build_fresh_discovery emit path. The gather/mandelbrot partition is
-            # 100% v5, so without this the "fresh machine-q3" pool is dominated by
-            # v5 verdicts masquerading as v6.
-            if not cc.is_v6_decoded(d):
+            # NOT a current-model machine-q3 verdict — reject it here, matching the
+            # sibling build_fresh_discovery emit path. The gather/mandelbrot partition is
+            # 100% v5, and after a checkpoint flip every prior-version row is stale too, so
+            # without this the "fresh machine-q3" pool is dominated by non-current verdicts.
+            if not cc.is_current_decoded(d):
                 if (d.get("decoded_class") == 3 and d.get("guard_pass")
                         and d.get("family") in DEG2_FAMILIES):
                     n_excl_v5 += 1
@@ -332,7 +332,7 @@ def select_fresh(seed, count, reused_sources):
         })
     report = {
         "ledgers": [str(l.relative_to(ROOT)) for l in FRESH_LEDGERS],
-        "filter": "scorer_version==v6 & decoded_class==3 & guard_pass & family∈{mandelbrot,julia:mandelbrot}",
+        "filter": f"scorer_version=={cc.active_scorer_version()} & decoded_class==3 & guard_pass & family∈{{mandelbrot,julia:mandelbrot}}",
         "raw_matches": n_raw, "within_set_or_reused_dups": n_dup,
         "excluded_v5_decoded_q3": n_excl_v5,
         "excluded_head_corpus_by_key": n_excl_key,

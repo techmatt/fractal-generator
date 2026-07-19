@@ -66,7 +66,7 @@ GUARD_W, GUARD_H, GUARD_SS = 640, 360, 2
 GUARD_STAT_RES = f"{GUARD_W}x{GUARD_H} ss{GUARD_SS} 16:9"
 
 # The location-quality classifier the guard wraps. Resolved from the single source of
-# truth (probe.ACTIVE_CKPT — currently v6); explicit, NEVER a bare default scorer.
+# truth (active_ckpt.ACTIVE_CKPT — currently v7); explicit, NEVER a bare default scorer.
 SCORER_PATH = ACTIVE_CKPT
 
 
