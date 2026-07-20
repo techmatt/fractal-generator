@@ -1,0 +1,35 @@
+{
+  "run_ts": "dive",
+  "mode": "dive",
+  "dive_source": "C:\\Code\\fractal-generator\\data\\discovery\\campaign1\\breadth",
+  "target_depth": 23,
+  "min_fw": 2e-09,
+  "n_dives_planned": 314,
+  "n_dives_done": 314,
+  "active_min": 106.53,
+  "totals": {
+    "expanded": 0,
+    "candidates": 0,
+    "harvest_checks": 5965,
+    "canonical_q3": 2723,
+    "admitted": 254,
+    "q3_dup": 2469,
+    "guarded": 0,
+    "julia_roots": 0,
+    "cap_hits": 0,
+    "dead_nodes": 270,
+    "novelty_hits": 0,
+    "nov_scored": 0,
+    "sat_hits": 0
+  },
+  "cloud_sizes": {
+    "mandelbrot": 44,
+    "multibrot3": 74,
+    "multibrot4": 20,
+    "multibrot5": 64,
+    "julia:mandelbrot": 2,
+    "julia:multibrot3": 27,
+    "julia:multibrot4": 14,
+    "julia:multibrot5": 9
+  }
+}
