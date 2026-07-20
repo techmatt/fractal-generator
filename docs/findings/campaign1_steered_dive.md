@@ -37,6 +37,18 @@ looks (80% marginal-distinct)** vs breadth's 97%, the shortfall concentrated in 
 (28 looks / 50 admits — sibling descents down one lineage). → **Weight future budget toward dives**;
 accept that dive growth trades some distinctness for throughput.
 
+> **CORRECTION (2026-07-19, post-audit).** Verdict 3 below attributed julia's churn to
+> *hot-region dup-churn* — the julia hook re-firing into already-saturated neighborhoods. A
+> subsequent audit ([`julia_dup_metric_audit.md`](julia_dup_metric_audit.md)) found the real
+> mechanism is **dup-metric over-kill**: julia distinctness keyed on the z-viewport only, in a
+> cloud shared across every distinct seed c of a base family, so **distinct-c Julias annihilated
+> each other** (12/16 ledger dups collided against a *different* seed c; 191 distinct-c hooks
+> wholly suppressed in breadth). The high `q3_dup` rate is therefore mostly the metric killing
+> genuinely distinct Julia sets, not re-visits of the same place. The **multibrot4 churn is
+> genuine** hot-region dup-churn (c-plane, unaffected by the julia keying bug) — that part of
+> the verdict stands. Fixed in the julia dup-fix package (seed-c-aware key + hook spacing +
+> pre-canonical filter + freshness prior); the recomputed julia overlap numbers supersede §4's.
+
 **3. Julia cost is hot-region dup-churn, NOT low quality (attributed).** Julia's alarming
 checks/admit (julia:mandelbrot 2717, julia:multibrot5 932) decomposes cleanly by harvest-check fate:
 
@@ -62,6 +74,17 @@ vs the library store, library morph_gray recipe). We re-visit coordinate *neighb
 work but almost never reproduce a *look*. → A cheap cross-run coord-space freshness prior (reject
 seeds within the prior cloud's dedup radius) would reclaim ~14% of harvest compute with negligible
 look-diversity loss. A morph-space freshness prior is not yet worth it (1.6%).
+
+> **CORRECTION (post dup-fix).** The 78/568 = 13.7% coord overlap above was measured with the
+> buggy z-only julia keying. Recomputed under the fixed **seed-c-aware** metric (same 14 prior
+> ledgers): prior distinct-q3 places **493 → 507** (distinct-c Julias are now counted as separate
+> prior places, not collapsed) and overall coord overlap **61/568 = 10.7%**. Per partition:
+> julia:mandelbrot 0/4, julia:multibrot3 2/50, julia:multibrot4 5/26, julia:multibrot5 7/18,
+> mandelbrot 21/113, multibrot3 7/163, multibrot4 7/45, multibrot5 12/149. The freshness-prior
+> verdict is unchanged (worth building — now shipped as the coordinate freshness prior). Cross-
+> representation note: prior *production-seeder* julia rows key c on `outcome_cx` while the steered
+> campaign keys c on `julia_c_re`, so the fixed metric treats them as non-collidable (you cannot
+> compare a z-viewport to a c-coordinate) — those pairs no longer contribute spurious overlap.
 
 **5. Coverage — all 8 partitions populated, no zero-admission family.** multibrot4 (the watched one)
 healthy at 45; only julia:mandelbrot low (4, and its breadth leg is the most dup-churned). Combined

@@ -105,6 +105,17 @@ Q3_DENSITY_CAP = 5       # reject a seed if >= this many distinct q3 outcomes li
 MAX_SEED_REDRAWS = 200   # consecutive rejections before declaring global saturation and stopping.
 DEDUP_K = 1.5            # cloud hygiene: near-dup iff plane dist < DEDUP_K * max(A.fw, B.fw)
                          # (one point per distinct q3 place; NOT a cell-saturation cap).
+JULIA_SAME_C_EPS = 1e-6  # same-Julia identity epsilon in the c (parameter) plane. A julia row's
+                         # dup identity ALSO keys on its seed c: two julia views collide only when
+                         # BOTH their z-viewports are near-dup AND their seed c is within this eps.
+                         # Same-parent hooks carry byte-identical c (the parent's outcome coord),
+                         # so any eps in (0, inter-parent spacing) separates same-set from
+                         # distinct-set; 1e-6 clears float round-trip noise while sitting far below
+                         # the c-plane outcome dedup scale. Distinct-c julias are therefore NEVER
+                         # collidable (the campaign-1 over-kill: z-only keying in a shared per-
+                         # base-family cloud annihilated 191 distinct-c hooks), and a julia never
+                         # collides with a base-family c-plane row (one side has no c).
+                         # See docs/findings/julia_dup_metric_audit.md.
 
 # --- production walk config (matches the atlas theta-walk config so the reward stays comparable) ---
 NODE_WIDTH = 384             # foci-finder low-pass; 384 is outcome-value-preserving (efficiency study)
@@ -360,18 +371,52 @@ def make_loc_of(render_family: str, c):
 # =========================================================================== #
 # Distinctness predicates (pure — unit-tested)
 # =========================================================================== #
-def near_dup(a_cx, a_cy, a_fw, b_cx, b_cy, b_fw, k=DEDUP_K) -> bool:
-    """fw-relative dedup: A near-dup of B iff plane distance < k * max(A.fw, B.fw).
+def as_c(c):
+    """Coerce a seed-c spec (a (str|float, str|float) pair, or None for a c-plane row) to a
+    (float, float) tuple or None. Used to normalize candidate c's (carried as decimal-string
+    pairs) at the dup-check call sites."""
+    if c is None:
+        return None
+    return (float(c[0]), float(c[1]))
+
+
+def row_seed_c(row):
+    """The julia seed parameter c of a cloud/ledger row as (float, float), or None for a
+    c-plane row (no julia_c_re key). This is the second half of a julia row's dup identity."""
+    cr = row.get("julia_c_re")
+    if cr is None:
+        return None
+    return (float(cr), float(row["julia_c_im"]))
+
+
+def near_dup(a_cx, a_cy, a_fw, b_cx, b_cy, b_fw, k=DEDUP_K,
+             a_c=None, b_c=None, c_eps=JULIA_SAME_C_EPS) -> bool:
+    """fw-relative viewport dedup, seed-c AWARE. A near-dup of B iff the two z-viewports are
+    near (plane distance < k * max(A.fw, B.fw)) AND they belong to the same Julia set.
+
+    Seed-c gate (`a_c`/`b_c` = the two rows' seed c, None for a c-plane row): if EITHER side
+    carries a seed c, the pair is collidable ONLY when both carry a seed c within `c_eps`.
+    Consequences: a distinct-c julia pair never collides; a julia never collides with a
+    base-family c-plane row (one side is None). c-plane pairs (both None) fall straight
+    through to the original z-only test — byte-identical to the pre-fix behaviour.
     max(fw) => two outcomes at ~same center but different zoom are the SAME place."""
+    if a_c is not None or b_c is not None:
+        if a_c is None or b_c is None:
+            return False                                   # julia vs c-plane: never a dup
+        if float(np.hypot(a_c[0] - b_c[0], a_c[1] - b_c[1])) >= c_eps:
+            return False                                   # distinct-c julias: never a dup
     d = float(np.hypot(a_cx - b_cx, a_cy - b_cy))
     return d < k * max(float(a_fw), float(b_fw))
 
 
-def is_distinct(cx, cy, fw, cloud, k=DEDUP_K):
+def is_distinct(cx, cy, fw, cloud, k=DEDUP_K, c=None):
     """Distinctness vs the q3 outcome cloud. Returns (distinct: bool, dup_of: id|None).
-    `cloud` = iterable of dicts with outcome_cx/outcome_cy/outcome_fw/id."""
+    `cloud` = iterable of dicts with outcome_cx/outcome_cy/outcome_fw/id (+ julia_c_re/im for
+    julia rows). `c=(re,im)` is the CANDIDATE's julia seed parameter (None for c-plane); each
+    cloud row's own seed c is read from its julia_c_re/julia_c_im (see near_dup's seed-c gate)."""
     for h in cloud:
-        if near_dup(cx, cy, fw, h["outcome_cx"], h["outcome_cy"], h["outcome_fw"], k):
+        if near_dup(cx, cy, fw, h["outcome_cx"], h["outcome_cy"], h["outcome_fw"], k,
+                    a_c=c, b_c=row_seed_c(h)):
             return False, h["id"]
     return True, None
 
@@ -478,8 +523,10 @@ def build_cloud(rows: list[dict], family: str) -> list[dict]:
         if r.get("family", "mandelbrot") != family:
             continue
         if r.get("guard_pass", True) and r.get("decoded_class") == 3:
+            # seed-c aware dedup: within a julia partition, distinct-c julias are distinct
+            # PLACES (the over-kill fix — z-only dedup collapsed them into one cloud point).
             distinct, _ = is_distinct(r["outcome_cx"], r["outcome_cy"], r["outcome_fw"],
-                                      cloud, DEDUP_K)
+                                      cloud, DEDUP_K, c=row_seed_c(r))
             if distinct:
                 cloud.append(r)
     return cloud

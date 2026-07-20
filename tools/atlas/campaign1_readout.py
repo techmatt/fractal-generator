@@ -127,7 +127,8 @@ def coord_overlap(adm: list, priors: dict) -> tuple[int, int, dict]:
     for r in adm:
         part = r.get("family", "mandelbrot")
         cloud = priors.get(part, [])
-        distinct, _ = ps.is_distinct(r["outcome_cx"], r["outcome_cy"], r["outcome_fw"], cloud)
+        distinct, _ = ps.is_distinct(r["outcome_cx"], r["outcome_cy"], r["outcome_fw"], cloud,
+                                     c=ps.row_seed_c(r))   # fixed seed-c-aware metric
         tot += 1
         per_fam[part][1] += 1
         if not distinct:

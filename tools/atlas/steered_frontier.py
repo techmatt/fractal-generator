@@ -83,6 +83,14 @@ except Exception:
 BIN = ps.prescreen.BIN
 
 # --- steering knobs ---
+JULIA_HOOK_SPACING = 0.20   # item 3: hard 1-neighbour spacing (in the c/parameter plane) for the
+                            # julia hook — don't hook a parent whose seed c is within this radius of
+                            # an already-hooked parent THIS run. Replaces the old Q3_DENSITY_CAP
+                            # density gate on hooked_c. Radius from the audit's chain-neighbour
+                            # collision scale: genuine near-c dups sat <0.20, distinct-c over-kills
+                            # sat >=1.0, so 0.20 spaces out redundant near-c hooks while leaving
+                            # every genuinely distinct-c hook free to fire. Config knob
+                            # (--julia-hook-spacing). See docs/findings/julia_dup_metric_audit.md.
 B_DEFAULT = 32            # nodes popped + expanded per batch
 T_GUMBEL = 0.08          # priority exploration temperature (Gumbel scale)
 M_CAP = 40               # hard cap on expansions per root_id
@@ -434,6 +442,11 @@ class SteeredFrontier:
             raise SystemExit("--dive requires --dive-source <completed run dir>")
         # single-track dives don't spawn julia roots (no frontier); force the hook off there.
         self.julia_hook = bool(args.julia_hook) and not self.dive
+        self.julia_hook_spacing = float(getattr(args, "julia_hook_spacing", JULIA_HOOK_SPACING))
+        # item 5: cross-run coordinate freshness prior — seed this run's dup/rejection clouds
+        # from prior-library admitted coords at start (ON by default; --no-freshness-prior off).
+        self.freshness_prior = not bool(getattr(args, "no_freshness_prior", False))
+        self.julia_hooks_path = self.run_dir / "julia_hooks.jsonl"   # item 2: durable hook log
         self.dive_source = Path(args.dive_source).resolve() if getattr(args, "dive_source", None) else None
         self.dive_target_depth = int(getattr(args, "dive_target_depth", 23))
         self.dive_min_fw = float(getattr(args, "dive_min_fw", 2e-9))
@@ -484,7 +497,8 @@ class SteeredFrontier:
         self.est_batch_s = 0.0
         self.totals = dict(expanded=0, candidates=0, harvest_checks=0,
                            canonical_q3=0, admitted=0, q3_dup=0, guarded=0,
-                           julia_roots=0, cap_hits=0, dead_nodes=0, novelty_hits=0,
+                           julia_roots=0, julia_hooks_skipped=0, precanon_dup=0,
+                           cap_hits=0, dead_nodes=0, novelty_hits=0,
                            nov_scored=0, sat_hits=0)
         self.rng = np.random.default_rng(self.seed)
         # per-family native seeders (root source) — re-created fresh on resume.
@@ -494,7 +508,12 @@ class SteeredFrontier:
                         for i, f in enumerate(self.families)}
 
         self.ledger = RunLedger(self.run_dir)
-        self.clouds = self.ledger.clouds(self.partitions)   # rebuilt from the durable ledger
+        # cloud = (prior-library admitted coords, if the freshness prior is on) + this run's own
+        # ledger rows. Prior rows live ONLY in the cloud (dedup/rejection/steering) — they never
+        # enter self.ledger.rows and are never counted as this-run admissions. build_cloud dedups
+        # the union, so a resume is idempotent.
+        self.prior_rows = self.load_prior_library_rows() if self.freshness_prior else []
+        self.clouds = self.build_clouds()
         self.hooked_c = defaultdict(list)                   # jpart -> [(c_re,c_im)] already hooked
         self.rebuild_hooked_c()
 
@@ -509,10 +528,42 @@ class SteeredFrontier:
             self.node_embs = self.load_node_embs()
         self.morph = MorphMemory(clip_dev, self.run_dir / "morph_mem.npz", self.recency_k)
 
+    def build_clouds(self) -> dict:
+        """Per-partition q3 cloud from (prior-library rows ⊕ this run's ledger rows). Prior rows
+        first so an earlier prior place wins a dedup cluster (item 5: the freshness prior)."""
+        combined = self.prior_rows + self.ledger.rows
+        return {p: ps.build_cloud(combined, p) for p in self.partitions}
+
+    def load_prior_library_rows(self) -> list:
+        """Item 5: every admitted-coord row in the prior library — all
+        data/**/outcome_ledger.jsonl EXCEPT this run's own ledger. Read for the coordinate
+        freshness prior only (their coords seed the dup/rejection clouds); nothing here enters
+        this run's ledger or records. Matches campaign1_readout's prior-ledger enumeration."""
+        rows = []
+        own = self.ledger.path.resolve()
+        for led in sorted((ROOT / "data").rglob("outcome_ledger.jsonl")):
+            if led.resolve() == own:
+                continue
+            for line in open(led, encoding="utf-8"):
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+        return rows
+
     def rebuild_hooked_c(self):
-        """Reconstruct the set of already-hooked julia parameters from the ledger (the
-        durable record) so root-density rejection survives a resume."""
+        """Reconstruct the set of already-hooked julia parameters so hook spacing survives a
+        resume. Prefers the durable hook log (item 2 — records EVERY accepted hook, incl.
+        zero-admit roots); falls back to the admitted julia ledger rows for pre-hook-log runs."""
         self.hooked_c = defaultdict(list)
+        if self.julia_hooks_path.exists():
+            for line in open(self.julia_hooks_path, encoding="utf-8"):
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                if r.get("hooked"):
+                    self.hooked_c[r["jpart"]].append((float(r["c_re"]), float(r["c_im"])))
+            return
         for r in self.ledger.rows:
             fam = r.get("family", "")
             if fam.startswith("julia:") and r.get("julia_c_re") is not None:
@@ -631,8 +682,16 @@ class SteeredFrontier:
         jpart = ps.julia_partition(partition)
         cr, ci = float(c[0]), float(c[1])
         hooked = self.hooked_c[jpart]
-        if sum(1 for (hr, hi) in hooked if math.hypot(hr - cr, hi - ci) < ps.REJECT_RADIUS) \
-                >= ps.Q3_DENSITY_CAP:
+        # item 3: hard 1-neighbour spacing on the seed c (replaces the Q3_DENSITY_CAP density
+        # gate) — a parent whose c is within JULIA_HOOK_SPACING of an already-hooked c is
+        # redundant (near-identical Julia set) and is skipped.
+        nearest = min((math.hypot(hr - cr, hi - ci) for (hr, hi) in hooked), default=float("inf"))
+        skipped = nearest < self.julia_hook_spacing
+        # item 2: durably log EVERY hook decision (accepted + skipped) at hook time, so a
+        # suppressed / zero-admit hook's seed c is recoverable without re-discovery.
+        self._log_julia_hook(jpart, cr, ci, parent_oid, hooked=not skipped, nearest=nearest)
+        if skipped:
+            self.totals["julia_hooks_skipped"] += 1
             return False
         hooked.append((cr, ci))
         nid = self.new_node_id()
@@ -645,6 +704,18 @@ class SteeredFrontier:
         ))
         self.totals["julia_roots"] += 1
         return True
+
+    def _log_julia_hook(self, jpart, cr, ci, parent_oid, *, hooked: bool, nearest: float):
+        """Item 2: append one hook decision to the durable per-run julia_hooks.jsonl. Records
+        the seed c for EVERY hooked root (incl. zero-admit) and every spacing-skipped one — the
+        gap the audit found unrecoverable (seed c was absent from harvest_log for zero-admit
+        roots). `nearest` = c-distance to the closest already-hooked parent (inf if first)."""
+        with open(self.julia_hooks_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(
+                batch=self.batch_i, jpart=jpart, c_re=cr, c_im=ci, parent_oid=parent_oid,
+                hooked=bool(hooked), nearest_c_dist=(None if nearest == float("inf") else nearest),
+                spacing=self.julia_hook_spacing,
+            )) + "\n")
 
     # ---------------------------------------------------------------- expand
     def pop_batch(self) -> list[dict]:
@@ -748,6 +819,27 @@ class SteeredFrontier:
         if not checks:
             return
         self.totals["harvest_checks"] += len(checks)
+        # item 4: PRE-CANONICAL coord-dup filter. A candidate already inside an admitted q3's
+        # dedup radius (under the FIXED seed-c-aware metric) cannot escape it via reframe (center
+        # nudge <=0.25*fw << the dedup radius), so it can never become a distinct admission —
+        # skip its canonical confirmation render entirely. This pushes the existing pre-reframe
+        # skip one render earlier; under the fixed metric it is correctly aimed at the genuine
+        # churn (multibrot4 + residual same-c julia descent), not distinct-c julias. The cloud is
+        # read as of batch start; the in-loop pre-reframe check below still catches intra-batch
+        # admits. Saved renders are counted (precanon_dup) for the readout.
+        kept = []
+        for c in checks:
+            distinct, dup_of = ps.is_distinct(c["cx"], c["cy"], c["fw"],
+                                              self.clouds.get(c["partition"], []), ps.DEDUP_K,
+                                              c=ps.as_c(c["c"]))
+            if distinct:
+                kept.append(c)
+            else:
+                self.totals["precanon_dup"] += 1
+                self._log_harvest(c, admitted=False, reframe_decoded=None, precanon_dup=dup_of)
+        checks = kept
+        if not checks:
+            return
         # 1. batch the single canonical confirmation renders (640x360 ss2, the reward fidelity).
         cdir = self.scratch / f"harvest_b{self.batch_i:04d}"
         cdir.mkdir(parents=True, exist_ok=True)
@@ -776,7 +868,8 @@ class SteeredFrontier:
             if c["canon_decoded"] == 3:
                 self.totals["canonical_q3"] += 1
                 pre_distinct, _ = ps.is_distinct(c["cx"], c["cy"], c["fw"],
-                                                 self.clouds.get(c["partition"], []), ps.DEDUP_K)
+                                                 self.clouds.get(c["partition"], []), ps.DEDUP_K,
+                                                 c=ps.as_c(c["c"]))
                 if not pre_distinct:
                     self.totals["q3_dup"] += 1
                 else:
@@ -796,7 +889,8 @@ class SteeredFrontier:
         ocx, ocy, ofw = float(res.cx), float(res.cy), float(res.fw)
         distinct, dup_of = (False, None)
         if is_q3:
-            distinct, dup_of = ps.is_distinct(ocx, ocy, ofw, self.clouds[c["partition"]], ps.DEDUP_K)
+            distinct, dup_of = ps.is_distinct(ocx, ocy, ofw, self.clouds[c["partition"]],
+                                              ps.DEDUP_K, c=ps.as_c(c["c"]))
 
         run_ts = self.run_dir.name
         id_tag = {"mandelbrot": "m"}.get(c["partition"], c["partition"].replace(":", "_"))
@@ -842,7 +936,9 @@ class SteeredFrontier:
             self.totals["guarded"] += 1
         return False, decoded
 
-    def _log_harvest(self, c, admitted, reframe_decoded):
+    def _log_harvest(self, c, admitted, reframe_decoded, precanon_dup=None):
+        # precanon_dup (item 4): the dup_of id when this check was skipped BEFORE its canonical
+        # render by the pre-canonical filter (no canon_* fields exist for it); None otherwise.
         with open(self.harvest_log, "a", encoding="utf-8") as f:
             f.write(json.dumps(dict(
                 batch=self.batch_i, partition=c["partition"], depth=c["depth"],
@@ -851,6 +947,7 @@ class SteeredFrontier:
                 canon_nb=c.get("canon_nb"), canon_pgood=c.get("canon_pg"),
                 canon_decoded=c.get("canon_decoded"), reframe_decoded=reframe_decoded,
                 admitted=bool(admitted), tau_h=self.tau_h[c["partition"]],
+                precanon_dup=precanon_dup,
             )) + "\n")
 
     # ---------------------------------------------------------------- push
@@ -934,10 +1031,12 @@ class SteeredFrontier:
         self.frontier = st["frontier"]; self.tau_h = st["tau_h"]
         self.totals.setdefault("novelty_hits", 0)
         self.totals.setdefault("nov_scored", 0); self.totals.setdefault("sat_hits", 0)
+        self.totals.setdefault("precanon_dup", 0); self.totals.setdefault("julia_hooks_skipped", 0)
         self.rng.bit_generator.state = st["rng"]
-        # cloud is rebuilt from the DURABLE ledger (source of truth), not the checkpoint,
-        # so a kill between ledger-append and checkpoint cannot lose/duplicate an admission.
-        self.clouds = self.ledger.clouds(self.partitions)
+        # cloud is rebuilt from the DURABLE ledger (source of truth) ⊕ the freshness prior, not
+        # the checkpoint, so a kill between ledger-append and checkpoint cannot lose/duplicate an
+        # admission. build_clouds folds self.prior_rows (set in __init__ before load_state).
+        self.clouds = self.build_clouds()
         self.rebuild_hooked_c()
         # morph memory (+ frontier-node embeddings) reload from their npz sidecars.
         if self.lambda_m > 0.0:
@@ -1139,6 +1238,10 @@ class SteeredFrontier:
             print(f"[fresh] run {self.run_dir.name}: families={self.families} "
                   f"julia_hook={self.julia_hook} budget={self.budget_s/60:.0f}m B={self.B} "
                   f"lambda_m={self.lambda_m} beta={self.beta} recency_k={self.recency_k}", flush=True)
+            print(f"[dup-fix] julia_hook_spacing={self.julia_hook_spacing} "
+                  f"freshness_prior={self.freshness_prior} "
+                  f"(prior_rows={len(self.prior_rows)}) "
+                  f"seeded_cloud_sizes={ {p: len(v) for p, v in self.clouds.items()} }", flush=True)
             if self.lambda_m > 0.0:
                 mode = f"recency (admitted + last {self.recency_k} batches)" if self.recency_k \
                     else "legacy (all-permanent)"
@@ -1203,7 +1306,9 @@ class SteeredFrontier:
         self.save_state()
         summary = dict(
             run_ts=self.run_dir.name, mode="steered", families=self.families,
-            julia_hook=self.julia_hook, budget_min=self.budget_s / 60.0,
+            julia_hook=self.julia_hook, julia_hook_spacing=self.julia_hook_spacing,
+            freshness_prior=self.freshness_prior, prior_rows=len(self.prior_rows),
+            budget_min=self.budget_s / 60.0,
             lambda_m=self.lambda_m, beta=self.beta, recency_k=self.recency_k,
             morph_mem=len(self.morph), morph_perm=self.morph.n_perm,
             morph_recency=self.morph.n_recency,
@@ -1223,6 +1328,9 @@ class SteeredFrontier:
         print(f"  ADMITTED distinct q3={self.totals['admitted']}  q3_dup={self.totals['q3_dup']} "
               f"guarded={self.totals['guarded']} julia_roots={self.totals['julia_roots']} "
               f"cap_hits={self.totals['cap_hits']}")
+        print(f"  precanon_dup(renders saved)={self.totals['precanon_dup']} "
+              f"julia_hooks_skipped(spacing)={self.totals['julia_hooks_skipped']} "
+              f"freshness_prior={self.freshness_prior} (prior_rows={len(self.prior_rows)})")
         sf = (f"{self.totals['sat_hits']}/{self.totals['nov_scored']}="
               f"{self.totals['sat_hits']/self.totals['nov_scored']:.3f}"
               if self.totals.get("nov_scored") else "n/a")
@@ -1239,6 +1347,12 @@ def main():
     ap.add_argument("--run-dir", required=True, help="fresh run-scoped dir (ledger + state.json)")
     ap.add_argument("--families", default="mandelbrot,multibrot3,multibrot4,multibrot5")
     ap.add_argument("--julia-hook", action="store_true")
+    ap.add_argument("--julia-hook-spacing", type=float, default=JULIA_HOOK_SPACING,
+                    help="c-plane spacing radius for the julia hook: skip a parent whose seed c is "
+                         f"within this of an already-hooked one (default {JULIA_HOOK_SPACING})")
+    ap.add_argument("--no-freshness-prior", action="store_true",
+                    help="disable the cross-run coordinate freshness prior (default: seed this "
+                         "run's dup/rejection clouds from prior-library admitted coords)")
     ap.add_argument("--budget", type=float, default=45.0, help="active-time budget (minutes)")
     ap.add_argument("--batch", type=int, default=0, help="nodes per batch (0 = default 32)")
     ap.add_argument("--seed", type=int, default=0)

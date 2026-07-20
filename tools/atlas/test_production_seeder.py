@@ -49,6 +49,68 @@ def test_is_distinct_against_cloud():
 
 
 # --------------------------------------------------------------------------- #
+# seed-c-aware dup key (the julia over-kill fix). A julia row's dup identity keys on
+# BOTH its z-viewport AND its seed c; see docs/findings/julia_dup_metric_audit.md.
+# --------------------------------------------------------------------------- #
+def test_distinct_c_julias_at_same_view_do_not_collide():
+    # (a) two DISTINCT-c julia views at the IDENTICAL shared root z-viewport are distinct
+    # (the campaign-1 over-kill was exactly this collision under z-only keying).
+    jc_a, jc_b = (0.30, -0.10), (-0.85, 0.20)
+    assert ps.near_dup(0.0, 0.0, 3.0, 0.0, 0.0, 3.0, k=1.5, a_c=jc_a, b_c=jc_b) is False
+    cloud = [{"id": "ja", "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 3.0,
+              "julia_c_re": jc_a[0], "julia_c_im": jc_a[1]}]
+    d, dup = ps.is_distinct(0.0, 0.0, 3.0, cloud, c=jc_b)
+    assert d is True and dup is None
+
+
+def test_same_c_near_identical_views_collide():
+    # (b) same seed c (within eps) + near z-viewport -> genuine dup.
+    jc = (0.30, -0.10)
+    assert ps.near_dup(1.4, 0.0, 1.0, 0.0, 0.0, 1.0, k=1.5, a_c=jc, b_c=jc) is True   # 1.4 < 1.5
+    assert ps.near_dup(1.6, 0.0, 1.0, 0.0, 0.0, 1.0, k=1.5, a_c=jc, b_c=jc) is False  # z too far
+    cloud = [{"id": "ja", "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 1.0,
+              "julia_c_re": jc[0], "julia_c_im": jc[1]}]
+    d, dup = ps.is_distinct(0.5, 0.0, 1.0, cloud, c=(jc[0] + 1e-9, jc[1]))   # c within eps
+    assert d is False and dup == "ja"
+
+
+def test_julia_never_collides_with_cplane_row():
+    # (c) a julia row (has seed c) never collides with a base-family c-plane row (no c),
+    # even at the identical viewport.
+    jc = (0.30, -0.10)
+    assert ps.near_dup(0.0, 0.0, 3.0, 0.0, 0.0, 3.0, k=1.5, a_c=jc, b_c=None) is False
+    assert ps.near_dup(0.0, 0.0, 3.0, 0.0, 0.0, 3.0, k=1.5, a_c=None, b_c=jc) is False
+    cplane_cloud = [{"id": "m", "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 3.0}]
+    d, dup = ps.is_distinct(0.0, 0.0, 3.0, cplane_cloud, c=jc)   # julia candidate vs c-plane cloud
+    assert d is True and dup is None
+
+
+def test_cplane_pair_unchanged_when_no_seed_c():
+    # regression: with no seed c on either side, the metric is byte-identical to the old z-only.
+    assert ps.near_dup(1.4, 0.0, 1.0, 0.0, 0.0, 1.0, k=1.5) is True
+    assert ps.near_dup(1.6, 0.0, 1.0, 0.0, 0.0, 1.0, k=1.5) is False
+
+
+def test_build_cloud_keeps_distinct_c_julias_as_separate_places():
+    # within a julia partition, two distinct-c julias at the same viewport are TWO cloud
+    # places (z-only dedup collapsed them to one — the cloud under-count half of the bug).
+    rows = [
+        {"id": "ja", "family": "julia:multibrot3", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 3.0,
+         "julia_c_re": 0.30, "julia_c_im": -0.10},
+        {"id": "jb", "family": "julia:multibrot3", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.0, "outcome_cy": 0.0, "outcome_fw": 3.0,
+         "julia_c_re": -0.85, "julia_c_im": 0.20},
+        # a genuine same-c revisit of ja collapses.
+        {"id": "ja2", "family": "julia:multibrot3", "guard_pass": True, "decoded_class": 3,
+         "outcome_cx": 0.01, "outcome_cy": 0.0, "outcome_fw": 3.0,
+         "julia_c_re": 0.30, "julia_c_im": -0.10},
+    ]
+    cloud = ps.build_cloud(rows, "julia:multibrot3")
+    assert {m["id"] for m in cloud} == {"ja", "jb"}       # ja2 deduped; ja/jb both kept
+
+
+# --------------------------------------------------------------------------- #
 # q3-density rejection rule (the coverage-control mechanism)
 # --------------------------------------------------------------------------- #
 def _cloud(pts):

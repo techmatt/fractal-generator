@@ -129,6 +129,35 @@ def test_pop_batch_evicts_capped_root_nodes():
     assert obj.expansions_per_root["2"] == 1                   # popped root incremented by 1
 
 
+def test_add_julia_root_hook_spacing_and_durable_log(tmp_path):
+    # item 2 + 3: a hook within JULIA_HOOK_SPACING of an already-hooked c is SKIPPED, and every
+    # hook decision (accepted + skipped) is durably logged with its seed c.
+    import types, json
+    import numpy as np
+    from collections import defaultdict
+    obj = types.SimpleNamespace(
+        julia_hook_spacing=0.20, hooked_c=defaultdict(list), batch_i=1,
+        julia_hooks_path=tmp_path / "julia_hooks.jsonl",
+        totals={"julia_roots": 0, "julia_hooks_skipped": 0},
+        node_ctr=0, frontier=[], rng=np.random.default_rng(0),
+    )
+    obj.new_node_id = types.MethodType(sf.SteeredFrontier.new_node_id, obj)
+    obj._log_julia_hook = types.MethodType(sf.SteeredFrontier._log_julia_hook, obj)
+    add = types.MethodType(sf.SteeredFrontier.add_julia_root, obj)
+
+    assert add("multibrot3", ("0.30", "-0.10"), "p0") is True     # first hook: accepted
+    assert add("multibrot3", ("0.31", "-0.10"), "p1") is False    # within 0.20 of the first: skip
+    assert add("multibrot3", ("0.90", "0.50"), "p2") is True      # distinct-c: accepted
+    assert obj.totals == {"julia_roots": 2, "julia_hooks_skipped": 1}
+    assert len(obj.hooked_c["julia:multibrot3"]) == 2             # only accepted c's tracked
+
+    logged = [json.loads(l) for l in open(obj.julia_hooks_path, encoding="utf-8")]
+    assert len(logged) == 3                                       # all decisions durably logged
+    assert [r["hooked"] for r in logged] == [True, False, True]
+    assert logged[0]["nearest_c_dist"] is None                    # first hook has no neighbour
+    assert logged[1]["hooked"] is False and logged[1]["parent_oid"] == "p1"
+
+
 def test_is_keeper_uses_corn_decode():
     cuts = {"mandelbrot": {"t": 0.5}}
     # p_notbad>=0.5 AND p_good>=0.5 -> keeper; either failing -> not.
