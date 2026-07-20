@@ -1,7 +1,17 @@
 {
   "_doc": "Hand-editable target measure for emission-v1 diversity. Uniform over feasible cells (type × morph_cluster × palette_flavor × render_style) by default. Add per-region multipliers under weight_overrides: each override multiplies the base weight (1.0) of every cell whose axis values all fall in the override's listed sets. attempt_cap evicts a cell from the target support after that many colorize attempts with zero fills. softmax_temp controls how sharply the deficit-max option is preferred (small → argmax, large → uniform); deficits are range-normalized before softmax so this is scale-free.",
+  "_weights_note": "First hand-placed allocation order, post campaign-1 blind read (2026-07-20). Rationale: julia families up-weighted on looks-scarcity (the proven vein, under-produced; per-twin census ordering NOT baked in — bug-survivor rates, re-measured at campaign 2, differentiate then if warranted); mandelbrot slight up (best c-plane family); mb3/mb5 slightly down; mb4 token weight, not zero (worst to humans, but nonzero + attempt caps lets the fixed dup metric prove or disprove a yield change). Only relative size matters. Implied per-type shares IF the projection normalizes types independently of cluster count: each julia twin ~19% (julia total ~77%), mandelbrot ~9%, mb3/mb5 ~6% each, mb4 ~2%. Phoenix deliberately absent: no production discovery path yet.",
   "mode": "uniform",
   "attempt_cap": 6,
   "softmax_temp": 0.35,
-  "weight_overrides": []
+  "weight_overrides": [
+    { "match": { "fractal_type": ["julia:mandelbrot"] }, "weight": 2.5 },
+    { "match": { "fractal_type": ["julia:multibrot3"] }, "weight": 2.5 },
+    { "match": { "fractal_type": ["julia:multibrot4"] }, "weight": 2.5 },
+    { "match": { "fractal_type": ["julia:multibrot5"] }, "weight": 2.5 },
+    { "match": { "fractal_type": ["mandelbrot"] },       "weight": 1.2 },
+    { "match": { "fractal_type": ["multibrot3"] },       "weight": 0.8 },
+    { "match": { "fractal_type": ["multibrot5"] },       "weight": 0.8 },
+    { "match": { "fractal_type": ["multibrot4"] },       "weight": 0.25 }
+  ]
 }
