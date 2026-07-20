@@ -130,14 +130,27 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", required=True, help="steered breadth run dir")
     ap.add_argument("--out", default=None, help="write markdown here (default: stdout only)")
+    # Standing habit (part-2 finding): every readout drops a fate-stratified visual sample of
+    # admissions AND rejects beside the numbers, so a wrong-but-plausible reject is eyeballable.
+    ap.add_argument("--no-visual-sample", action="store_true",
+                    help="skip the reject-autopsy contact sheet (default: render it)")
+    ap.add_argument("--visual-n", type=int, default=10, help="tiles per fate on the sheet")
     args = ap.parse_args()
-    md = build(Path(args.run).resolve())
+    run = Path(args.run).resolve()
+    md = build(run)
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(md, encoding="utf-8")
         print(f"wrote {out}\n")
     print(md)
+    if not args.no_visual_sample:
+        from reject_autopsy import render_autopsy_sheet
+        res = render_autopsy_sheet(run, run / "reject_autopsy.png", n_per_fate=args.visual_n)
+        print(f"\n[visual-sample] {run.name}/reject_autopsy.png  "
+              f"rendered={res['rendered']} counts={res['counts']}"
+              + (f"  ({res['coordless_harvest']} coordless harvest rows skipped)"
+                 if res['coordless_harvest'] else ""))
 
 
 if __name__ == "__main__":

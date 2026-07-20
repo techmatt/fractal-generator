@@ -445,7 +445,7 @@ class SteeredFrontier:
         self.julia_hook_spacing = float(getattr(args, "julia_hook_spacing", JULIA_HOOK_SPACING))
         # item 5: cross-run coordinate freshness prior — seed this run's dup/rejection clouds
         # from prior-library admitted coords at start (ON by default; --no-freshness-prior off).
-        self.freshness_prior = not bool(getattr(args, "no_freshness_prior", False))
+        self.freshness_prior = bool(getattr(args, "freshness_prior", False))
         self.julia_hooks_path = self.run_dir / "julia_hooks.jsonl"   # item 2: durable hook log
         self.dive_source = Path(args.dive_source).resolve() if getattr(args, "dive_source", None) else None
         self.dive_target_depth = int(getattr(args, "dive_target_depth", 23))
@@ -514,6 +514,7 @@ class SteeredFrontier:
         # the union, so a resume is idempotent.
         self.prior_rows = self.load_prior_library_rows() if self.freshness_prior else []
         self.clouds = self.build_clouds()
+        self.run_clouds = self.build_run_clouds()
         self.hooked_c = defaultdict(list)                   # jpart -> [(c_re,c_im)] already hooked
         self.rebuild_hooked_c()
 
@@ -530,9 +531,22 @@ class SteeredFrontier:
 
     def build_clouds(self) -> dict:
         """Per-partition q3 cloud from (prior-library rows ⊕ this run's ledger rows). Prior rows
-        first so an earlier prior place wins a dedup cluster (item 5: the freshness prior)."""
+        first so an earlier prior place wins a dedup cluster (item 5: the freshness prior).
+        Consumers: the DEDUP path (pre-canonical filter, admission near-dup) and the soft steering
+        penalty — everywhere the prior's "don't re-cover a library coord" intent belongs."""
         combined = self.prior_rows + self.ledger.rows
         return {p: ps.build_cloud(combined, p) for p in self.partitions}
+
+    def build_run_clouds(self) -> dict:
+        """Per-partition q3 cloud from THIS RUN's ledger rows ONLY — the freshness prior is
+        deliberately excluded. Sole consumer: the native-seed rejection sampler in draw_roots
+        (count_within(REJECT_RADIUS) >= Q3_DENSITY_CAP). That gate's fixed 0.20 radius + cap-5 was
+        tuned for a cloud that STARTS EMPTY and accrues a handful of places; feeding it the 100s of
+        prior places sterilizes the run — a productive-region seed has a median ~12 prior neighbours
+        within 0.20, so ~98% of seeds reject on arrival and the sampler saturates at 0 roots (part-0
+        finding). Scoping the sampler to the run cloud restores empty-start behaviour while the DEDUP
+        clouds still carry the prior. Prior OFF => identical to self.clouds (prior_rows empty)."""
+        return {p: ps.build_cloud(self.ledger.rows, p) for p in self.partitions}
 
     def load_prior_library_rows(self) -> list:
         """Item 5: every admitted-coord row in the prior library — all
@@ -652,7 +666,9 @@ class SteeredFrontier:
         with a neutral prior priority — exactly the current path's root pipeline."""
         added = 0
         for fam in self.families:
-            cloud = self.clouds[fam]
+            # run-only cloud: the freshness prior must NOT feed this hard rejection gate (part-0
+            # sterilization finding) — only this run's own accruing q3 places spread new seeds.
+            cloud = self.run_clouds[fam]
             props = self.seeders[fam].draw_batch(cloud, self.B)
             if not props:
                 continue
@@ -921,6 +937,7 @@ class SteeredFrontier:
         self.ledger.append(row, feat)
         if is_q3 and distinct:
             self.clouds[c["partition"]].append(row)
+            self.run_clouds[c["partition"]].append(row)   # keep the rejection-sampler cloud current
             self.totals["admitted"] += 1
             # fold the admitted location's look into morph memory (its cheap emb; reframe only
             # nudges the frame <=0.25*fw, so the candidate's cheap look stands in for it).
@@ -939,10 +956,17 @@ class SteeredFrontier:
     def _log_harvest(self, c, admitted, reframe_decoded, precanon_dup=None):
         # precanon_dup (item 4): the dup_of id when this check was skipped BEFORE its canonical
         # render by the pre-canonical filter (no canon_* fields exist for it); None otherwise.
+        # cx/cy/fw (+ julia seed c) make EVERY reject fate renderable from the log alone — the
+        # gap the julia audit hit (precanon_dup / canonical-not-q3 rejects had no coords, so no
+        # human could ever eyeball them). Cheap: 3 floats + an optional c pair per harvest check.
+        jc = c.get("c")
         with open(self.harvest_log, "a", encoding="utf-8") as f:
             f.write(json.dumps(dict(
                 batch=self.batch_i, partition=c["partition"], depth=c["depth"],
                 node_id=c["node_id"], root_id=c["root_id"],
+                cx=c["cx"], cy=c["cy"], fw=c["fw"],
+                julia_c_re=(None if jc is None else str(jc[0])),
+                julia_c_im=(None if jc is None else str(jc[1])),
                 cheap_pgood=c["cheap_pgood"], cheap_eord=c["cheap_eord"],
                 canon_nb=c.get("canon_nb"), canon_pgood=c.get("canon_pg"),
                 canon_decoded=c.get("canon_decoded"), reframe_decoded=reframe_decoded,
@@ -1037,6 +1061,7 @@ class SteeredFrontier:
         # the checkpoint, so a kill between ledger-append and checkpoint cannot lose/duplicate an
         # admission. build_clouds folds self.prior_rows (set in __init__ before load_state).
         self.clouds = self.build_clouds()
+        self.run_clouds = self.build_run_clouds()
         self.rebuild_hooked_c()
         # morph memory (+ frontier-node embeddings) reload from their npz sidecars.
         if self.lambda_m > 0.0:
@@ -1350,9 +1375,11 @@ def main():
     ap.add_argument("--julia-hook-spacing", type=float, default=JULIA_HOOK_SPACING,
                     help="c-plane spacing radius for the julia hook: skip a parent whose seed c is "
                          f"within this of an already-hooked one (default {JULIA_HOOK_SPACING})")
-    ap.add_argument("--no-freshness-prior", action="store_true",
-                    help="disable the cross-run coordinate freshness prior (default: seed this "
-                         "run's dup/rejection clouds from prior-library admitted coords)")
+    ap.add_argument("--freshness-prior", action="store_true",
+                    help="ENABLE the cross-run coordinate freshness prior: seed this run's DEDUP "
+                         "clouds (pre-canonical + admission near-dup + steering) from prior-library "
+                         "admitted coords. DEFAULT OFF — prior-ON sterilized the native-seed "
+                         "rejection sampler (see docs/findings/invariant_audit.md, part 0).")
     ap.add_argument("--budget", type=float, default=45.0, help="active-time budget (minutes)")
     ap.add_argument("--batch", type=int, default=0, help="nodes per batch (0 = default 32)")
     ap.add_argument("--seed", type=int, default=0)

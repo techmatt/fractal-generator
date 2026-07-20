@@ -56,7 +56,9 @@ def render_block(r):
         vfw = float(r["outcome_fw"])
         block = {"cx": cc.hp_str(r["outcome_cx"]), "cy": cc.hp_str(r["outcome_cy"]),
                  "fw": cc.hp_str(vfw)}
-        extra = {}
+        # multibrot3/4/5 MUST persist fractal_type — without it from_render_block defaults to
+        # mandelbrot and the block re-renders/attributes the WRONG family (invariant-audit red).
+        extra = {"fractal_type": fam}
         loc = Location(family=fam, c_re=None, c_im=None,
                        cx=block["cx"], cy=block["cy"], fw=vfw, family_params={})
     else:                                   # julia:multibrotN
