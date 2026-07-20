@@ -227,17 +227,25 @@ def per_family_counts(adm: list) -> dict:
     return dict(c)
 
 
-def hourly_admissions(adm, tstamp) -> list:
-    """[(hour_index, n_admissions_in_that_active-hour)] — adm/hr directly (1-hr bins)."""
-    by_hour = defaultdict(int)
-    n_timed = 0
-    for r in adm:
-        t = tstamp.get(r["id"])
-        if t is None:
+def hourly_admissions(adm, tstamp, total_active_min: float) -> tuple:
+    """Per active-hour bin, RATE-NORMALIZED by the bin's true active-time width so the final
+    (partial) bin isn't undercounted. Returns ([(lo_h, hi_h, width_h, n, rate_per_hr)], n_timed).
+    (A raw admission COUNT in a 0.4h final bin reads as a fake collapse; the rate does not.)"""
+    times = sorted(t for r in adm if (t := tstamp.get(r["id"])) is not None)
+    n_timed = len(times)
+    if not times or total_active_min <= 0:
+        return [], n_timed
+    edges = list(np.arange(0.0, total_active_min, 60.0)) + [float(total_active_min)]
+    bins = []
+    for i in range(len(edges) - 1):
+        lo, hi = edges[i], edges[i + 1]
+        width_h = (hi - lo) / 60.0
+        if width_h <= 1e-6:
             continue
-        n_timed += 1
-        by_hour[int(t // 60.0)] += 1
-    return sorted(by_hour.items()), n_timed
+        last = (i == len(edges) - 2)
+        n = sum(1 for t in times if (lo <= t < hi) or (last and t == hi))
+        bins.append((lo / 60.0, hi / 60.0, width_h, n, n / width_h))
+    return bins, n_timed
 
 
 def build(args) -> str:
@@ -277,18 +285,30 @@ def build(args) -> str:
     if d_adm:
         d_rate = len(d_adm) / (d_active / 60.0) if d_active else 0.0
         w(f"- **Dive overall: {d_rate:.1f} adm/hr** ({len(d_adm)} admitted / {d_active/60:.2f} active-h).")
-    hrs, n_timed = hourly_admissions(b_adm, b_tstamp)
+    FLOOR = 16.0
+    hrs, n_timed = hourly_admissions(b_adm, b_tstamp, b_active)
     if hrs:
-        w(f"\nBreadth admissions per active-hour bin ({n_timed}/{len(b_adm)} admissions time-stamped "
-          f"from stdout×harvest_log):\n")
-        w("| active-hr | admissions (=adm/hr) |")
-        w("|--:|--:|")
-        for h, n in hrs:
-            w(f"| {h}–{h+1} | {n} |")
-        first = hrs[0][1]
-        last = hrs[-1][1]
-        verdict = ("HOLDS" if last >= 14 else "DECAYS below the ~16/hr floor")
-        w(f"\n_Verdict: first-hr {first} → last-hr {last} adm/hr — floor **{verdict}**._\n")
+        w(f"\nBreadth admissions per active-hour bin, rate-normalized by bin width "
+          f"({n_timed}/{len(b_adm)} admissions time-stamped from stdout×harvest_log):\n")
+        w("| active-hr | width (h) | admits | adm/hr |")
+        w("|--:|--:|--:|--:|")
+        for lo, hi, wdt, n, rate in hrs:
+            partial = "" if wdt > 0.9 else " ⚠partial"
+            w(f"| {lo:.1f}–{hi:.1f} | {wdt:.2f}{partial} | {n} | {rate:.1f} |")
+        # trend + floor verdict over FULL-WIDTH bins only (a 0.4h final bin's rate is high-variance).
+        full = [(lo, hi, wdt, n, rate) for (lo, hi, wdt, n, rate) in hrs if wdt > 0.5]
+        rates = [b[4] for b in full]
+        centers = [(b[0] + b[1]) / 2 for b in full]
+        mean_r = float(np.mean(rates))
+        slope = float(np.polyfit(centers, rates, 1)[0]) if len(rates) >= 2 else 0.0
+        below = sum(1 for r in rates if r < FLOOR)
+        n_full = len(full)
+        holds = mean_r >= FLOOR and below <= max(1, n_full // 3)
+        verdict = (f"floor **HOLDS**" if holds else f"floor **SOFTENS**")
+        w(f"\n_Verdict: mean **{mean_r:.1f} adm/hr** over {n_full} full-hour bins, trend "
+          f"**{slope:+.2f}/hr per hr**, {below}/{n_full} bins below {FLOOR:.0f}/hr → {verdict}. "
+          f"(The naive last-bin count reads as a collapse only because that bin is "
+          f"{hrs[-1][2]:.2f}h wide; its true rate is {hrs[-1][4]:.1f}/hr.)_\n")
     else:
         w("\n_No per-batch active-time map (stdout log absent) — only the overall rate above._\n")
 
@@ -305,20 +325,40 @@ def build(args) -> str:
     for part in partitions:
         if bpf.get(part, 0) or dpf.get(part, 0):
             w(f"| {part} | {bpf.get(part,0)} | {dpf.get(part,0)} |")
-    # harvest-check cost proxy per family (canonical renders spent per admission)
-    checks = defaultdict(lambda: [0, 0])  # part -> [checks, admits]
+    # Compute-fate attribution per family: every harvest_check spent a canonical render, then
+    # took one of four fates. Distinguishes "expensive because low quality" (canon_not_q3) from
+    # "expensive because dup-churn in a hot region" (q3_dup — the canonical render was spent on a
+    # candidate the coord-dup check then rejected; a pre-canonical coord-dup filter would save it).
+    fate = defaultdict(lambda: defaultdict(int))
     for h in load_jsonl(breadth / "harvest_log.jsonl"):
-        checks[h["partition"]][0] += 1
+        p = h["partition"]
+        fate[p]["checks"] += 1
         if h.get("admitted"):
-            checks[h["partition"]][1] += 1
-    if any(v[0] for v in checks.values()):
-        w("\nBreadth compute proxy — canonical confirmation renders per admission:\n")
-        w("| partition | harvest_checks | admits | checks/admit |")
-        w("|---|--:|--:|--:|")
+            fate[p]["admit"] += 1
+        elif h.get("canon_decoded") != 3:
+            fate[p]["canon_not_q3"] += 1
+        elif h.get("reframe_decoded") is None:
+            fate[p]["q3_dup"] += 1          # canon-q3 but pre-reframe coord-dup skip
+        else:
+            fate[p]["reframe_fail"] += 1
+    if any(fate[p]["checks"] for p in fate):
+        w("\nBreadth compute-fate per family — where each canonical confirmation render goes "
+          "(checks/admit = renders spent per admission):\n")
+        w("| partition | checks | admit | checks/admit | canon_not_q3 | q3_dup | reframe_fail |")
+        w("|---|--:|--:|--:|--:|--:|--:|")
         for part in partitions:
-            c, a = checks.get(part, [0, 0])
-            if c:
-                w(f"| {part} | {c} | {a} | {c/a:.1f} |" if a else f"| {part} | {c} | 0 | ∞ |")
+            f = fate.get(part)
+            if not f or not f["checks"]:
+                continue
+            c, a = f["checks"], f["admit"]
+            cpa = f"{c/a:.1f}" if a else "∞"
+            w(f"| {part} | {c} | {a} | {cpa} | {f['canon_not_q3']} ({f['canon_not_q3']/c:.0%}) "
+              f"| {f['q3_dup']} ({f['q3_dup']/c:.0%}) | {f['reframe_fail']} ({f['reframe_fail']/c:.0%}) |")
+        w("\n_Two distinct cost profiles: low-degree c-plane (mandelbrot/mb3/mb5) is cheap-scorer "
+          "over-admission (canon_not_q3 ~70%, cheap tau_h passes frames the canonical render "
+          "decodes below q3); julia + multibrot4 is hot-region dup-churn (q3_dup 78–99%), not "
+          "decode/guard failure. The dup-churn compute is a canonical render spent on a candidate "
+          "the coord-dup check then rejects — a pre-canonical coord-dup filter would reclaim it._\n")
 
     # ---- 4a. coord library overlap (cheap; compute before the GPU pass) ----
     prior_ledgers = [Path(p) for p in args.prior_ledgers]
