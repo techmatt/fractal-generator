@@ -60,6 +60,7 @@ from tools.emission import cells as C  # noqa: E402  (pure; no torch)
 DEFAULT_TARGET_PATH = ROOT / "data" / "emission" / "target_measure.json"
 DEFAULT_PRICES_PATH = ROOT / "data" / "atlas" / "scheduler_prices.json"
 INTAKE_ARTIFACT = ROOT / "out" / "emission" / "campaign1" / "intake.json"
+INTAKE_EMB_DIR = ROOT / "out" / "emission" / "campaign1" / "embs"
 
 NEAR_DUP_THRESHOLD = 0.974   # distinct-look cosine knee (== emission/descriptor)
 EMB_DIM = 768                # CLIP vit_base_patch16_clip_224.openai
@@ -127,25 +128,67 @@ def project_type_marginals(target: C.TargetMeasure, observed_type_cluster: list[
     """Project the joint target measure down to per-TYPE marginals over feasible cells,
     normalized over `partitions`.
 
-    marginal(type) = Σ_{feasible cells of that type} weight(cell), normalized.
+    marginal(type) ∝ MEAN cell weight over that type's feasible cells (then normalized).
 
-    palette_flavor / render_style are FREE choices available to every (type, cluster), so
-    they contribute an identical constant factor to every type's marginal and cancel under
-    normalization (an override on flavor/style multiplies the same subset of cells for every
-    type). We therefore project over a single sentinel flavor/style unless real lists are
-    supplied; type- and cluster-level overrides (the ones that actually skew the marginal)
-    are applied faithfully by `target.weight`."""
+    Per-TYPE normalization by design (campaign-2 preflight fix): a type's target share is set
+    by its own multiplier, INDEPENDENT of how many morph clusters it currently occupies. The
+    naive `Σ weight(cell)` sum scales a type's marginal with its cluster COUNT, which is
+    backwards for a discovery ORDER BOOK — current cluster count is *occupancy* and belongs on
+    the deficit's pool side, not the target side (e.g. mandelbrot's 102 observed clusters would
+    otherwise swamp julia:mandelbrot's 4 regardless of the 2.5× vs 1.2× multipliers, inverting
+    the intended julia-heavy order). Dividing the sum by the type's cell count removes the count
+    entirely: for a pure type-level override the mean equals the multiplier exactly; a
+    cluster-level override is honoured as an average over that type's clusters.
+
+    palette_flavor / render_style are FREE choices available to every (type, cluster), so an
+    override on them multiplies the same cell FRACTION for every type and cancels under both the
+    mean and the final normalization; we therefore project over a single sentinel flavor/style
+    unless real lists are supplied."""
     flavors = list(flavors) if flavors else ["_"]
     styles = list(styles) if styles else ["_"]
     feasible = C.build_feasible_cells(observed_type_cluster, flavors, styles)
-    raw = Counter()
+    wsum = Counter()
+    wcnt = Counter()
     for cell in feasible:
-        raw[cell[0]] += target.weight(cell)      # cell[0] == fractal_type == partition
-    weights = {p: float(raw.get(p, 0.0)) for p in partitions}
+        wsum[cell[0]] += target.weight(cell)     # cell[0] == fractal_type == partition
+        wcnt[cell[0]] += 1
+    weights = {p: (wsum[p] / wcnt[p] if wcnt.get(p) else 0.0) for p in partitions}
     tot = sum(weights.values())
     if tot <= 0:                                  # degenerate: fall back to uniform
         return {p: 1.0 / len(partitions) for p in partitions}
     return {p: w / tot for p, w in weights.items()}
+
+
+# ------------------------------------------------------------------------- #
+# Library-look seed: the campaign-1 intake's per-cluster medoid embeddings, grouped by
+# partition (== family). Deficits must measure LIBRARY-WIDE scarcity, not run-local scarcity,
+# so a fresh run's distinct-look tally is pre-loaded with the looks the library already holds
+# (and their embeddings become dedup memory: a new admission near a known library look is not
+# counted as new). Same CLIP recipe (morph_gray -> vit_base_patch16_clip_224.openai, 768-d)
+# emission clusters at cos 0.974, so the seed is metric-consistent with the tally.
+# ------------------------------------------------------------------------- #
+def load_library_seed_embeddings(intake_path: Path | None = None,
+                                 emb_dir: Path | None = None) -> dict[str, np.ndarray]:
+    """partition -> (N, 768) float32 medoid embeddings from the campaign-1 intake. One medoid
+    (cluster founder) per distinct look. Returns {} if the intake artifact is absent (seeding
+    then no-ops, and the run starts at run-local scarcity — logged by the caller)."""
+    ip = Path(intake_path) if intake_path else INTAKE_ARTIFACT
+    ed = Path(emb_dir) if emb_dir else INTAKE_EMB_DIR
+    if not ip.exists():
+        return {}
+    intake = json.loads(ip.read_text(encoding="utf-8"))
+    medoid_id = intake.get("medoid_id", {})          # cluster_tag "<family>#<k>" -> location id
+    by_part: dict[str, list] = defaultdict(list)
+    for tag, loc_id in medoid_id.items():
+        part = tag.rsplit("#", 1)[0]                  # partition == family
+        p = ed / f"{loc_id}.npy"
+        if not p.exists():
+            continue
+        e = np.load(p).astype(np.float32).reshape(-1)
+        if e.shape[0] != EMB_DIM:
+            continue
+        by_part[part].append(e / (np.linalg.norm(e) + 1e-9))
+    return {p: np.stack(v).astype(np.float32) for p, v in by_part.items() if v}
 
 
 # ------------------------------------------------------------------------- #
@@ -408,6 +451,32 @@ class DeficitScheduler:
     def charge(self, partition: str, minutes: float) -> bool:
         """Account a batch's active time to the served partition (attempt-cap accounting)."""
         return self.prices.charge(partition, minutes)
+
+    def seed_from_library(self, embeddings: dict[str, np.ndarray] | None = None) -> dict:
+        """One-time baseline seed of the distinct-look tally from the library's existing looks
+        (campaign-1 intake medoids), so deficits measure LIBRARY-WIDE scarcity rather than
+        run-local scarcity, and the seeded embeddings become dedup memory (a new admission that
+        duplicates a known library look does not count as a new look).
+
+        Resume-safe + idempotent: seeds ONLY when the tally is empty. A resume reloads the
+        persisted npz (total > 0) and this is a no-op — the seed is never double-counted, and
+        after seeding the tally is persisted immediately so the very first kill can't lose it.
+        Restricted to this run's tracked partitions. Returns {partition: seeded_count}."""
+        if self.tally.total() > 0:                    # already populated (resume) — never re-seed
+            return {}
+        if embeddings is None:
+            embeddings = load_library_seed_embeddings()
+        seeded: dict[str, int] = {}
+        for part in self.partitions:                  # only families this run tracks
+            mat = embeddings.get(part)
+            if mat is None:
+                continue
+            for e in mat:
+                if self.tally.add(part, e):           # dedup at the same 0.974 knee as admissions
+                    seeded[part] = seeded.get(part, 0) + 1
+        if seeded:
+            self.tally.save()                         # persist the baseline before any batch runs
+        return seeded
 
     def log_choice(self, batch: int, chosen: str | None, queue_lens: dict):
         eff = self.effective_deficits(queue_lens)

@@ -543,6 +543,11 @@ class SteeredFrontier:
                 self.partitions, self.run_dir,
                 target_path=getattr(args, "scheduler_target", None),
                 prices_path=getattr(args, "scheduler_prices", None))
+            # Seed the distinct-look baseline from the campaign-1 library (per-partition medoid
+            # embeddings) so deficits measure LIBRARY-WIDE scarcity, not run-local scarcity.
+            # No-op on resume (tally reloaded from its npz; total > 0). Resume-safe: seeds and
+            # persists the npz once, before the first batch.
+            self._sched_seeded = self.scheduler.seed_from_library()
 
     def build_clouds(self) -> dict:
         """Per-partition q3 cloud from (prior-library rows ⊕ this run's ledger rows). Prior rows
@@ -1384,6 +1389,12 @@ class SteeredFrontier:
                       f"explore_floor={self.scheduler.explore_floor} "
                       f"julia_route_gain={self.scheduler.julia_route_gain} "
                       f"(observed_cells={len(self.scheduler.observed)})", flush=True)
+                seeded = getattr(self, "_sched_seeded", {}) or {}
+                lf = {p: round(v, 3) for p, v in self.scheduler.look_frac().items()}
+                df = {p: round(v, 3) for p, v in self.scheduler.deficits().items()}
+                print(f"[scheduler] library seed: distinct-look tallies={self.scheduler.tally.counts()} "
+                      f"(total {self.scheduler.tally.total()}, newly seeded {sum(seeded.values())})", flush=True)
+                print(f"[scheduler] launch look_frac={lf}\n[scheduler] launch deficits={df}", flush=True)
             self.draw_roots()
             self.save_state()
 

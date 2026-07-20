@@ -76,15 +76,35 @@ def test_projection_flavor_style_cancel():
         assert abs(mg_real[p] - 0.25) < 1e-9
 
 
-def test_projection_cluster_count_weights_type(tmp_path):
-    # a type with more OBSERVED clusters carries more marginal weight under a uniform base.
+def test_projection_independent_of_cluster_count(tmp_path):
+    # Campaign-2 preflight fix: a type's marginal is set by its MULTIPLIER, INDEPENDENT of how
+    # many observed morph clusters it has (occupancy belongs on the deficit's pool side, not the
+    # target side). Uniform base with 3 mandelbrot clusters vs 1 multibrot5 cluster => still 50/50.
     tm = C.TargetMeasure.from_config({"mode": "uniform"})
     obs = [("mandelbrot", "mandelbrot#0"), ("mandelbrot", "mandelbrot#1"),
            ("mandelbrot", "mandelbrot#2"), ("multibrot5", "multibrot5#0")]
     parts = ["mandelbrot", "multibrot5"]
     mg = D.project_type_marginals(tm, obs, parts)
-    assert abs(mg["mandelbrot"] - 0.75) < 1e-9
-    assert abs(mg["multibrot5"] - 0.25) < 1e-9
+    assert abs(mg["mandelbrot"] - 0.5) < 1e-9
+    assert abs(mg["multibrot5"] - 0.5) < 1e-9
+
+
+def test_projection_multiplier_beats_cluster_count(tmp_path):
+    # The exact campaign-2 inversion the fix targets: a high-multiplier type with FEW clusters
+    # must out-weight a low-multiplier type with MANY clusters. julia:mandelbrot (2.5x, 4 obs
+    # clusters) must exceed mandelbrot (1.2x, 102 obs clusters) — the reverse of the buggy
+    # count-weighted projection, which crushed julia:mandelbrot to <2%.
+    tm = C.TargetMeasure.from_config({"weight_overrides": [
+        {"match": {"fractal_type": ["julia:mandelbrot"]}, "weight": 2.5},
+        {"match": {"fractal_type": ["mandelbrot"]}, "weight": 1.2}]})
+    obs = ([("mandelbrot", f"mandelbrot#{i}") for i in range(102)]
+           + [("julia:mandelbrot", f"julia:mandelbrot#{i}") for i in range(4)])
+    parts = ["mandelbrot", "julia:mandelbrot"]
+    mg = D.project_type_marginals(tm, obs, parts)
+    assert mg["julia:mandelbrot"] > mg["mandelbrot"]
+    # share ∝ multiplier: 2.5/(2.5+1.2) vs 1.2/(2.5+1.2), regardless of the 102-vs-4 counts.
+    assert abs(mg["julia:mandelbrot"] - 2.5 / 3.7) < 1e-9
+    assert abs(mg["mandelbrot"] - 1.2 / 3.7) < 1e-9
 
 
 def test_deficit_from_measure_file(tmp_path):
@@ -247,6 +267,30 @@ def test_root_allocation_sums_and_favors_deficit(tmp_path):
 # --------------------------------------------------------------------------- #
 # 8. Scheduler state round-trip (resume safety).
 # --------------------------------------------------------------------------- #
+def test_seed_from_library_and_resume_safety(tmp_path):
+    # Seeding pre-loads the tally with library looks; deficits then measure library-wide
+    # scarcity. It seeds ONLY when empty (resume-safe / idempotent) and persists immediately.
+    parts = ["mandelbrot", "julia:mandelbrot"]
+    embs = {"mandelbrot": np.stack([_emb(10), _emb(11), _emb(12)]),      # 3 distinct looks
+            "julia:mandelbrot": np.stack([_emb(20)]),                    # 1 distinct look
+            "multibrot5": np.stack([_emb(30)])}                          # untracked -> ignored
+    sch = D.DeficitScheduler(parts, tmp_path,
+                             target_path=tmp_path / "none.json", prices_path=tmp_path / "none.json")
+    seeded = sch.seed_from_library(embs)
+    assert seeded == {"mandelbrot": 3, "julia:mandelbrot": 1}
+    assert sch.tally.counts() == {"mandelbrot": 3, "julia:mandelbrot": 1}
+    assert (tmp_path / "distinct_looks.npz").exists()      # persisted before any batch
+    # library-wide scarcity: an admission duplicating a seeded look is NOT a new distinct look.
+    assert sch.on_admission("mandelbrot", _emb(10)) is False
+    # re-seeding is a no-op (tally non-empty) — never double-counts on resume.
+    assert sch.seed_from_library(embs) == {}
+    # a genuinely fresh scheduler over the SAME dir reloads the seed from npz and still no-ops.
+    sch2 = D.DeficitScheduler(parts, tmp_path,
+                              target_path=tmp_path / "none.json", prices_path=tmp_path / "none.json")
+    assert sch2.tally.total() == 4
+    assert sch2.seed_from_library(embs) == {}
+
+
 def test_scheduler_state_roundtrip(tmp_path):
     sch = D.DeficitScheduler(PARTS, tmp_path,
                              target_path=tmp_path / "none.json", prices_path=tmp_path / "none.json")
