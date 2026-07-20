@@ -1,0 +1,18 @@
+{
+  "_doc": "Deficit-scheduler seed config (tools/atlas/deficit_scheduler.py). `prices` = seed active-minutes per DISTINCT LOOK, per partition (ledger `family`); missing partitions fall to seed_price_min. Seeds are neutral post-fix estimates — the online EMA (price_ema) takes over within a few looks, so the seed only orders the very first batches. `cap_minutes`: a partition burning this many active minutes with zero new distinct looks is capped (demand redistributes; re-opens on resume/config). `explore_floor`: prob. of a uniform draw among partitions with remaining demand, so none starves on a stale price. `julia_route_gain`: weight of a julia twin's deficit folded into its c-plane parent (twins are bought via c-plane work, not popped).",
+  "seed_price_min": 3.0,
+  "price_ema": 0.30,
+  "cap_minutes": 20.0,
+  "explore_floor": 0.10,
+  "julia_route_gain": 1.0,
+  "prices": {
+    "mandelbrot": 3.0,
+    "multibrot3": 3.0,
+    "multibrot4": 3.0,
+    "multibrot5": 3.0,
+    "julia:mandelbrot": 4.0,
+    "julia:multibrot3": 4.0,
+    "julia:multibrot4": 4.0,
+    "julia:multibrot5": 4.0
+  }
+}

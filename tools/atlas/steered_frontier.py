@@ -74,6 +74,7 @@ import guard                            # noqa: E402
 import location as loc_mod              # noqa: E402
 from score_lib import corn_decode       # noqa: E402
 from active_ckpt import ACTIVE_CKPT, auto_maxiter  # noqa: E402
+import deficit_scheduler as dsched       # noqa: E402  (pure; torch-free scheduling logic)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -499,7 +500,7 @@ class SteeredFrontier:
                            canonical_q3=0, admitted=0, q3_dup=0, guarded=0,
                            julia_roots=0, julia_hooks_skipped=0, precanon_dup=0,
                            cap_hits=0, dead_nodes=0, novelty_hits=0,
-                           nov_scored=0, sat_hits=0)
+                           nov_scored=0, sat_hits=0, distinct_looks=0)
         self.rng = np.random.default_rng(self.seed)
         # per-family native seeders (root source) — re-created fresh on resume.
         self.seeders = {f: ps.NativeSeeder(self.seed, self.scratch / f"native_{f}",
@@ -528,6 +529,20 @@ class SteeredFrontier:
             clip_dev = str(next(self.clip_model.parameters()).device)
             self.node_embs = self.load_node_embs()
         self.morph = MorphMemory(clip_dev, self.run_dir / "morph_mem.npz", self.recency_k)
+
+        # --- deficit scheduler (item: cross-partition allocation; default OFF). When off,
+        # every path below short-circuits on `self.scheduler is None` and the run is
+        # byte-identical to the pre-scheduler frontier. When on, the scheduler names which
+        # partition's sub-queue to pop each batch (deficits/prices only — NEVER p_good, NEVER
+        # the preference ranker) and deficit-weights the root family mix. ---
+        self.scheduler = None
+        self._served_partition = None
+        self._sched_mt = None                # lazily-loaded (model, tf) for the canonical embed
+        if getattr(args, "scheduler", False):
+            self.scheduler = dsched.DeficitScheduler(
+                self.partitions, self.run_dir,
+                target_path=getattr(args, "scheduler_target", None),
+                prices_path=getattr(args, "scheduler_prices", None))
 
     def build_clouds(self) -> dict:
         """Per-partition q3 cloud from (prior-library rows ⊕ this run's ledger rows). Prior rows
@@ -665,11 +680,18 @@ class SteeredFrontier:
         depth-2 descendability probe) and enter the survivors as depth-1 frontier nodes
         with a neutral prior priority — exactly the current path's root pipeline."""
         added = 0
+        # item 7: deficit-aware root mix. Scheduler ON => split the B draws across families by
+        # their price-weighted, julia-twin-inclusive deficit; OFF => B per family (unchanged).
+        alloc = (self.scheduler.root_allocation(self.families, self.B, self.rng)
+                 if self.scheduler is not None else None)
         for fam in self.families:
+            nb = alloc[fam] if alloc is not None else self.B
+            if nb <= 0:
+                continue
             # run-only cloud: the freshness prior must NOT feed this hard rejection gate (part-0
             # sterilization finding) — only this run's own accruing q3 places spread new seeds.
             cloud = self.run_clouds[fam]
-            props = self.seeders[fam].draw_batch(cloud, self.B)
+            props = self.seeders[fam].draw_batch(cloud, nb)
             if not props:
                 continue
             pw = self.scratch / f"roots_b{self.batch_i:04d}_{fam}"
@@ -759,6 +781,67 @@ class SteeredFrontier:
             self.expansions_per_root[str(n["root_id"])] = \
                 self.expansions_per_root.get(str(n["root_id"]), 0) + 1
         return batch
+
+    def pop_batch_scheduled(self) -> list[dict]:
+        """Scheduler pop: the cross-partition CHOICE is the scheduler's (deficits/prices only),
+        the within-partition ORDER is the unchanged priority sort over that ONE partition's
+        nodes. Capped-root dead weight is evicted from the whole frontier first (same rationale
+        as pop_batch). Sets self._served_partition (the batch's active-time charge target)."""
+        live = []
+        for n in self.frontier:
+            if self.expansions_per_root.get(str(n["root_id"]), 0) >= M_CAP:
+                self.node_embs.pop(n["node_id"], None)      # evict: capped root -> dead weight
+            else:
+                live.append(n)
+        self.frontier = live
+        self.totals["cap_hits"] = sum(1 for v in self.expansions_per_root.values() if v >= M_CAP)
+        queue_lens = {}
+        for n in self.frontier:
+            queue_lens[n["partition"]] = queue_lens.get(n["partition"], 0) + 1
+        # RANKER SCOPE (item 9): the partition choice uses ONLY per-partition deficits/prices
+        # (dsched.choose_partition). The preference ranker (pref_loc_*) ranks ADMITTED output
+        # for keeper/emission ordering ONLY and MUST NOT enter scheduling — it is absent here.
+        part = self.scheduler.pick_partition(queue_lens, self.rng)
+        self.scheduler.log_choice(self.batch_i, part, queue_lens)
+        self._served_partition = part
+        if part is None:
+            return []
+        pool = [n for n in self.frontier if n["partition"] == part]
+        pool.sort(key=lambda n: -n["priority"])
+        batch = pool[:self.B]
+        taken = {n["node_id"] for n in batch}
+        self.frontier = [n for n in self.frontier if n["node_id"] not in taken]
+        for n in batch:
+            self.expansions_per_root[str(n["root_id"])] = \
+                self.expansions_per_root.get(str(n["root_id"]), 0) + 1
+        return batch
+
+    # ------------------------------------------------------------ scheduler embed
+    def _sched_clip(self):
+        """(model, tf) for the canonical-render embed. Reuses the novelty CLIP if already
+        loaded (same vit_base_patch16_clip_224.openai), else loads once and caches."""
+        if self.clip_model is not None:
+            return self.clip_model, self.clip_tf
+        if self._sched_mt is None:
+            from tools.curation.colored_clip import load_clip   # noqa: E402 (heavy; lazy)
+            self._sched_mt = load_clip()
+        return self._sched_mt
+
+    def scheduler_embed_admitted(self, row) -> np.ndarray:
+        """L2-normalized CLIP embedding of an admitted location's CANONICAL render via the
+        LIBRARY morph recipe (640x360 ss2 smooth field -> robust-z tanh gray -> CLIP) — the
+        exact recipe emission clusters at cos 0.974, so the scheduler's distinct-look tally is
+        consistent with the library's type x morph occupancy. One embed per admission."""
+        from tools.emission import descriptor as D            # noqa: E402
+        from tools.wallpaper import library_annotate as la    # noqa: E402
+        from tools.curation.colored_clip import embed_clip     # noqa: E402
+        loc = D.location_of(row)
+        fcache = self.scratch / "sched_fields"
+        field = la.ensure_field(loc, retain=False, tmp_dir=fcache, cache_root=fcache)
+        gray = la.morph_gray_image(field)
+        model, tf = self._sched_clip()
+        emb = embed_clip(model, tf, [gray])[0].astype(np.float32)
+        return emb / (np.linalg.norm(emb) + 1e-9)
 
     def expand_group(self, key, nodes) -> list[dict]:
         partition, c = key
@@ -943,6 +1026,12 @@ class SteeredFrontier:
             # nudges the frame <=0.25*fw, so the candidate's cheap look stands in for it).
             if self.lambda_m > 0.0 and c.get("emb") is not None:
                 self.morph.add_admitted(c["emb"])
+            # scheduler: DISTINCT-LOOK tally (item 3). Embed the CANONICAL render via the
+            # library morph recipe and count it iff cos_max < 0.974 vs this partition's set.
+            if self.scheduler is not None:
+                emb = self.scheduler_embed_admitted(row)
+                if self.scheduler.on_admission(c["partition"], emb):
+                    self.totals["distinct_looks"] = self.totals.get("distinct_looks", 0) + 1
             # julia hook: fire per qualifying (admitted-q3) c-plane parent.
             if self.julia_hook and c["partition"] in self.families:
                 self.add_julia_root(c["partition"], (ocx, ocy), oid)
@@ -1038,10 +1127,14 @@ class SteeredFrontier:
             expansions_per_root=self.expansions_per_root, totals=self.totals,
             frontier=self.frontier, rng=self.rng.bit_generator.state,
         )
+        if self.scheduler is not None:
+            state["scheduler"] = self.scheduler.state_dict()
         # morph memory + frontier-node embeddings first (state.json references them), then the
         # checkpoint. Both are heuristic (priority only) — a stale copy never loses an admission.
         self.morph.save()
         self.save_node_embs()
+        if self.scheduler is not None:      # distinct-look embedding sets (per-partition npz)
+            self.scheduler.save()
         tmp = self.state_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state), encoding="utf-8")
         os.replace(tmp, self.state_path)
@@ -1056,7 +1149,12 @@ class SteeredFrontier:
         self.totals.setdefault("novelty_hits", 0)
         self.totals.setdefault("nov_scored", 0); self.totals.setdefault("sat_hits", 0)
         self.totals.setdefault("precanon_dup", 0); self.totals.setdefault("julia_hooks_skipped", 0)
+        self.totals.setdefault("distinct_looks", 0)
         self.rng.bit_generator.state = st["rng"]
+        # scheduler prices/caps reload from the checkpoint; caps re-open on resume (item 4). The
+        # distinct-look tally reloaded from its npz in the scheduler's __init__.
+        if self.scheduler is not None and "scheduler" in st:
+            self.scheduler.load_state(st["scheduler"], reopen_caps=True)
         # cloud is rebuilt from the DURABLE ledger (source of truth) ⊕ the freshness prior, not
         # the checkpoint, so a kill between ledger-append and checkpoint cannot lose/duplicate an
         # admission. build_clouds folds self.prior_rows (set in __init__ before load_state).
@@ -1123,6 +1221,12 @@ class SteeredFrontier:
             )
         plan = [entry(r, "top", i) for i, r in enumerate(top)]
         plan += [entry(r, "control", n_top + i) for i, r in enumerate(ctrl)]
+        # item 8: scheduler ON => order dive SOURCES by partition deficit (stable sort keeps the
+        # within-partition p_good rank), so a budget-truncated dive covers deficit families first.
+        # Minimal v1 — ordering only, nothing fancier.
+        if self.scheduler is not None:
+            dfs = self.scheduler.deficits()
+            plan.sort(key=lambda e: -dfs.get(e["partition"], 0.0))
         return plan
 
     def one_dive(self, e) -> dict:
@@ -1274,6 +1378,12 @@ class SteeredFrontier:
                       f"({self.anchor_src}); memory={mode}, sat knee cos>={self.sat_cos:.4f}",
                       flush=True)
             print(f"[tau_h] {self.tau_h}", flush=True)
+            if self.scheduler is not None:
+                tf = {p: round(v, 3) for p, v in self.scheduler.target_frac.items()}
+                print(f"[scheduler] ON — target_frac={tf} "
+                      f"explore_floor={self.scheduler.explore_floor} "
+                      f"julia_route_gain={self.scheduler.julia_route_gain} "
+                      f"(observed_cells={len(self.scheduler.observed)})", flush=True)
             self.draw_roots()
             self.save_state()
 
@@ -1293,8 +1403,14 @@ class SteeredFrontier:
 
             tb = time.time()
             self.batch_i += 1
-            batch = self.pop_batch()
+            batch = self.pop_batch_scheduled() if self.scheduler is not None else self.pop_batch()
             if not batch:
+                # scheduler: an empty pop with a non-empty frontier means every servable
+                # partition is PRICE-capped -> reopen (redistribute demand) and retry.
+                if self.scheduler is not None and self.frontier:
+                    self.scheduler.prices.reopen_caps()
+                    self.batch_i -= 1
+                    continue
                 # everything capped; try fresh roots, else stop.
                 if self.draw_roots() == 0:
                     print("[frontier] all roots capped (M) and no fresh seeds — stopping.", flush=True)
@@ -1314,6 +1430,10 @@ class SteeredFrontier:
             dt = time.time() - tb
             self.active_s += dt
             self.est_batch_s = dt if self.est_batch_s == 0 else 0.5 * self.est_batch_s + 0.5 * dt
+            # scheduler: charge this batch's active time to the served partition (price EMA +
+            # attempt-cap accounting). Cross-partition arithmetic only; no p_good.
+            if self.scheduler is not None and self._served_partition is not None:
+                self.scheduler.charge(self._served_partition, dt / 60.0)
             self.save_state()
             if self.batch_i % 1 == 0:
                 sat = ""
@@ -1345,6 +1465,8 @@ class SteeredFrontier:
             tau_h=self.tau_h, totals=self.totals,
             cloud_sizes={p: len(v) for p, v in self.clouds.items()},
         )
+        if self.scheduler is not None:
+            summary["scheduler"] = self.scheduler.summary()
         (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         print("\n=== STEERED FRONTIER SUMMARY ===")
         print(f"  active {self.active_s/60:.1f}m over {self.batch_i} batches")
@@ -1363,6 +1485,13 @@ class SteeredFrontier:
               f"novelty_hits={self.totals['novelty_hits']} sat_frac={sf} "
               f"morph_mem={len(self.morph)} (perm {self.morph.n_perm} + recency {self.morph.n_recency})")
         print(f"  cloud: {summary['cloud_sizes']}")
+        if self.scheduler is not None:
+            s = summary["scheduler"]
+            print(f"  SCHEDULER: distinct_looks={self.totals.get('distinct_looks',0)} "
+                  f"total_looks={s['total_looks']} looks={s['looks']}")
+            print(f"    target_frac={s['target_frac']}\n    look_frac={s['look_frac']}")
+            print(f"    prices={s['prices']} capped={s['capped']}")
+            print(f"    trace -> {self.scheduler.trace_path}")
         print(f"  ledger -> {self.ledger.path}\n  summary -> {self.run_dir/'summary.json'}")
 
 
@@ -1397,6 +1526,16 @@ def main():
                          "legacy all-permanent, reproduces v1.1)")
     ap.add_argument("--recency-k", type=int, default=8,
                     help="recency window size in batches for --mem-recency (default 8)")
+    # --- deficit scheduler (default OFF; scheduler-off is byte-identical to pre-change) ---
+    ap.add_argument("--scheduler", action="store_true",
+                    help="ENABLE the family-level deficit scheduler: cross-partition allocation "
+                         "by price-weighted DISTINCT-LOOK deficit vs the target measure, instead "
+                         "of a single global p_good queue. DEFAULT OFF (byte-identical).")
+    ap.add_argument("--scheduler-target", type=str, default=None,
+                    help="target measure to project into the per-partition order book "
+                         "(default data/emission/target_measure.json)")
+    ap.add_argument("--scheduler-prices", type=str, default=None,
+                    help="seed price / cap / routing config (default data/atlas/scheduler_prices.json)")
     # --- dive mode ---
     ap.add_argument("--dive", action="store_true",
                     help="single-track descent off a completed run's admissions (uses dive_state.json)")
