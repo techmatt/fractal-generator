@@ -1,7 +1,12 @@
 #!/usr/bin/env python
-"""Location preference ranker v0 — scorer entry point.
+"""Location preference ranker — scorer entry point.
 
-Loads the deployed linear head (`data/ranker/pref_loc_v0/model.npz`) and maps a joined frozen
+Deployed head: **pref_loc_v1** (v7+colored:logi, refit on run2+dive+campaign1 = 379 labels,
+3-batch LOBO meanSp +0.436, certified; see docs/findings/campaign1_blind_read.md). v1 has the
+same feature blocks (v7+colored) and affine shape as v0, so every consumer is unchanged by the
+flip. pref_loc_v0/model.npz remains on disk for rollback.
+
+Loads the deployed linear head (`data/ranker/pref_loc_v1/model.npz`) and maps a joined frozen
 feature record -> a scalar rank score (higher == more likely human-good). The head is a plain
 affine map on standardized features, so scoring is dependency-light (no torch): standardize with
 the stored (mean, scale), dot with W, add b.
@@ -28,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL = ROOT / "data" / "ranker" / "pref_loc_v0" / "model.npz"
+DEFAULT_MODEL = ROOT / "data" / "ranker" / "pref_loc_v1" / "model.npz"
 
 
 class RankerScorer:
@@ -61,14 +66,14 @@ class RankerScorer:
 
 
 def _cli():
-    """Score data/ranker/pref_loc_v0/features.npz and print id, score, human (if labeled)."""
-    feat = ROOT / "data/ranker/pref_loc_v0/features.npz"
+    """Score the deployed head's features.npz and print id, score, human (if labeled)."""
+    feat = ROOT / "data/ranker/pref_loc_v1/features.npz"
     z = np.load(feat, allow_pickle=True)
     s = RankerScorer.load()
     blocks = {b: z[b] for b in s.sets}
     sc = s.score_matrix(blocks)
     order = np.argsort(-sc)
-    print(f"# ranker v0  head={s.head} sets={s.sets} prior={s.use_prior}")
+    print(f"# ranker  head={s.head} sets={s.sets} prior={s.use_prior}")
     for i in order:
         hs = int(z["score"][i])
         print(f"{sc[i]:+.4f}  {z['ids'][i]:44s} {z['family'][i]:16s} "
