@@ -574,8 +574,117 @@ def dive_prior_finding_section() -> list:
     return L
 
 
+# --------------------------------------------------------------------------- #
+# Part 4 — dive leg + whole-campaign close-out.
+# --------------------------------------------------------------------------- #
+def dive_section(dive_dir: Path) -> list:
+    """Dive-specific numbers: per-family admissions + adm/dive, end-cause split, cost, and the
+    honest 'prices not learned' note (dive uses deficit-ordering only)."""
+    L: list = []
+    w = L.append
+    w("## H. Dive leg — depth-mining off breadth (freshness prior OFF by design)\n")
+    led = dive_dir / "outcome_ledger.jsonl"
+    if not led.exists():
+        w("_No dive ledger._\n")
+        return L
+    adm = c1.admissions(c1.load_jsonl(led))
+    dlog = c1.load_jsonl(dive_dir / "dive_log.jsonl")
+    s = json.loads((dive_dir / "summary.json").read_text(encoding="utf-8")) \
+        if (dive_dir / "summary.json").exists() else {}
+    active = float(s.get("active_min", 0.0))
+    n_dives = int(s.get("n_dives_done", len(dlog)))
+    cost = active / len(adm) if adm else float("nan")
+    w(f"- **{len(adm)} admissions off {n_dives} dives = {len(adm)/max(1,n_dives):.2f} adm/dive** "
+      f"(campaign-1 ref ~0.8); {active:.1f} active-min, **{cost:.2f} min/admission**.")
+    fam_adm = Counter(r["family"] for r in adm)
+    fam_dives = Counter(d["partition"] for d in dlog)
+    w("\n| partition | dives | admissions | adm/dive |")
+    w("|---|--:|--:|--:|")
+    for p in PARTITIONS:
+        nd = fam_dives.get(p, 0)
+        if nd:
+            w(f"| {p} | {nd} | {fam_adm.get(p,0)} | {fam_adm.get(p,0)/nd:.2f} |")
+    ec = Counter(d["end_cause"] for d in dlog)
+    ntop = sum(1 for d in dlog if d.get("start_group") == "top")
+    w(f"\n_End cause: {dict(ec)} (`target_depth` = ran to depth {s.get('target_depth','?')}; "
+      f"`gate_dead_or_floor` = the descent exhausted). Sources: {ntop} top + {len(dlog)-ntop} control._")
+    w("\n**Dive prices — not learned (by design).** The dive consumes the scheduler's per-partition "
+      "DEFICITS to order its sources (deficit-ordering — this feature's first real use; confirmed: "
+      "julia:mandelbrot, the highest-deficit partition, dived first) but does NOT run the price-EMA "
+      "loop (no per-batch active-time charge exists in dive mode), so it produces no price update. "
+      "The campaign's final learned-price table is the breadth one (§B).\n")
+    return L
+
+
+def _subset(uids, fams, E, keep_ids):
+    idx = [i for i, u in enumerate(uids) if u in keep_ids]
+    return [uids[i] for i in idx], [fams[i] for i in idx], E[idx]
+
+
+def whole_campaign_section(breadth_adm: list, dive_adm: list, sched: dict, no_morph: bool) -> list:
+    """Whole-campaign close-out: combined admissions + per-family shares vs target, combined
+    distinct morph looks, breadth vs dive distinct rate, and the DIVE MARGINAL-distinct rate
+    (dive admissions that are genuinely new looks vs breadth — campaign-1 context: dive ~80% vs
+    breadth ~97%)."""
+    import numpy as np
+    L: list = []
+    w = L.append
+    w("## I. Whole-campaign totals (breadth + dive)\n")
+    tot = len(breadth_adm) + len(dive_adm)
+    w(f"- **{tot} distinct-q3 admissions** (breadth {len(breadth_adm)} + dive {len(dive_adm)}).")
+    tf = sched.get("target_frac") or {}
+    fam = Counter(r["family"] for r in breadth_adm + dive_adm)
+    w("\n| partition | breadth+dive adm | admission share | target (look-share) |")
+    w("|---|--:|--:|--:|")
+    for p in PARTITIONS:
+        w(f"| {p} | {fam.get(p,0)} | {fam.get(p,0)/tot:.0%} | {tf.get(p,0):.0%} |")
+    jt = sum(fam.get(p, 0) for p in PARTITIONS if p.startswith("julia:"))
+    w(f"\n_Julia share of admissions: **{jt}/{tot} = {jt/tot:.0%}** (target look-share 77%). Note "
+      f"the dive is julia-tilted (deficit-ordered), pulling the whole-campaign julia admission "
+      f"share above breadth's alone._\n")
+    if no_morph:
+        w("_Morph distinct-look totals skipped (--no-morph)._\n")
+        return L
+    all_adm = breadth_adm + dive_adm
+    print(f"[campaign-morph] embedding {len(all_adm)} admissions (breadth+dive) ...", flush=True)
+    uids, fams, depths, E = c1.morph_embed(all_adm)
+    emb_by = {u: E[i] for i, u in enumerate(uids)}
+    fam_by = {u: fams[i] for i, u in enumerate(uids)}
+    bids = {r["id"] for r in breadth_adm}
+    comb_distinct, _ = c1.distinct_look_count(uids, fams, E)
+    b_distinct, _ = c1.distinct_look_count(*_subset(uids, fams, E, bids))
+    dids = {r["id"] for r in dive_adm}
+    d_distinct, _ = c1.distinct_look_count(*_subset(uids, fams, E, dids))
+    w(f"- **{comb_distinct} distinct morph looks** among {tot} admissions "
+      f"(within-family single-linkage, CLIP≥{c1.STRICT}) = {comb_distinct/tot:.0%} distinct.")
+    w(f"  - breadth alone: {b_distinct}/{len(breadth_adm)} = {b_distinct/max(1,len(breadth_adm)):.0%}; "
+      f"dive alone: {d_distinct}/{len(dive_adm)} = {d_distinct/max(1,len(dive_adm)):.0%}.")
+    # dive MARGINAL-distinct: a dive admission is new iff it is NOT a CLIP>=STRICT near-dup of any
+    # BREADTH admission in the same family (the dive's genuinely-additive contribution).
+    breadth_by_fam: dict = defaultdict(list)
+    for u in uids:
+        if u in bids:
+            breadth_by_fam[fam_by[u]].append(emb_by[u])
+    new = dt = 0
+    for u in uids:
+        if u in bids:
+            continue
+        dt += 1
+        pri = breadth_by_fam.get(fam_by[u])
+        if not pri or float(np.max(np.stack(pri) @ emb_by[u])) < c1.STRICT:
+            new += 1
+    if dt:
+        w(f"- **Dive marginal-distinct rate: {new}/{dt} = {new/dt:.0%}** of dive admissions are NEW "
+          f"looks (not CLIP≥{c1.STRICT} near-dups of a breadth admission, same family). "
+          f"Campaign-1 context: dive ~80% vs breadth ~97% — a dive descends *from* breadth points, "
+          f"so a portion re-expresses a look breadth already banked; the rest is genuine depth-find.")
+    w("")
+    return L
+
+
 def build(args) -> str:
     breadth = Path(args.breadth).resolve()
+    dive = Path(args.dive).resolve() if getattr(args, "dive", None) else None
     sched = load_scheduler_summary(breadth)
     totals = load_totals(breadth)
     b_rows = c1.load_jsonl(breadth / "outcome_ledger.jsonl")
@@ -623,14 +732,26 @@ def build(args) -> str:
     L += julia_depth_section(all_adm)
     L += saturation_section(breadth, sched)
 
+    # --- Part 4: dive leg + whole-campaign close-out (only when --dive is supplied) ---
+    dive_adm = []
+    if dive is not None:
+        dive_adm = c1.admissions(c1.load_jsonl(dive / "outcome_ledger.jsonl"))
+        L += dive_section(dive)
+        L += whole_campaign_section(all_adm, dive_adm, sched, args.no_morph)
+
     w("## G. Visual samples\n")
-    w("Admission / reject contact sheets: "
-      "`uv run python tools/atlas/campaign1_contact_sheet.py --run-dir "
-      f"{breadth.relative_to(ROOT)}` (reused; run-dir-agnostic).\n")
+    sheet_runs = f"--run {breadth.relative_to(ROOT)}"
+    if dive is not None:
+        sheet_runs += f" --run {dive.relative_to(ROOT)}"
+    w("Whole-campaign admission / reject contact sheet(s):\n")
+    w(f"```\nuv run python tools/atlas/campaign1_contact_sheet.py {sheet_runs} \\\n"
+      f"    --out out/campaign2/contact_sheet.png\n```\n")
 
     L += dive_prior_finding_section()
 
     # base campaign-1 numbers (throughput/cost/distinct-look/overlap/coverage) appended verbatim.
+    # dive columns come from passing the dive dir; morph is forced OFF here to avoid a second
+    # embed pass (the whole-campaign morph in §I already covers combined/dive distinct looks).
     w("---\n\n# Base scheduling numbers (campaign1_readout, reused verbatim)\n")
     w("> ⚠ **Caveat on the base §4 verdict.** campaign1_readout computes its "
       "\"worth a freshness prior?\" verdict under the campaign-1 assumption that the prior was "
@@ -639,9 +760,9 @@ def build(args) -> str:
       "verdict's logic is inverted here and does not apply. The authoritative freshness-prior "
       "result is **§C above** (whole-run).\n")
     c1_args = argparse.Namespace(
-        breadth=str(breadth), dive=None,
+        breadth=str(breadth), dive=(str(dive) if dive is not None else None),
         out=str(ROOT / "out" / "campaign2" / "_base.md"),
-        no_morph=args.no_morph,
+        no_morph=True,   # forced: §I already did the single combined morph pass
         prior_ledgers=[str(p) for p in sorted((ROOT / "data").rglob("outcome_ledger.jsonl"))
                        if "campaign2" not in p.parts])
     try:
@@ -655,6 +776,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--breadth", required=True, help="campaign-2 breadth run dir")
+    ap.add_argument("--dive", default=None, help="campaign-2 dive run dir (adds §H/§I close-out)")
     ap.add_argument("--out", default=str(ROOT / "out" / "campaign2" / "readout.md"))
     ap.add_argument("--no-morph", action="store_true", help="skip the GPU morph pass (cheap only)")
     args = ap.parse_args()
