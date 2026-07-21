@@ -399,7 +399,10 @@ def prices_section(sched: dict) -> list:
 def freshness_section(run_dir: Path, totals: dict, all_adm: list, active_min: float) -> list:
     L: list = []
     w = L.append
-    w("## C. Freshness-prior effect\n")
+    w("## C. Freshness-prior effect — BREADTH ONLY\n")
+    w("> **Scope.** This verdict covers the **breadth** leg only. The prior was **OFF** in the dive "
+      "leg by design — it is structurally incompatible with dive precanon (see the design finding "
+      "at the end of this readout); the dive's numbers must not be read as a prior result.\n")
     rate = len(all_adm) / (active_min / 60.0) if active_min else 0.0
     w(f"- **Throughput: {rate:.1f} adm/hr** vs campaign-1 context **{C1_ADM_PER_HR} adm/hr** "
       f"({len(all_adm)} admitted / {active_min/60:.2f} active-h). "
@@ -529,6 +532,48 @@ def saturation_section(run_dir: Path, summary: dict) -> list:
     return L
 
 
+# --------------------------------------------------------------------------- #
+# Design finding — dive + freshness-prior precanon incompatibility.
+# --------------------------------------------------------------------------- #
+def dive_prior_finding_section() -> list:
+    """A structural finding surfaced by the campaign-2 dive: the freshness prior and the dive's
+    pre-canonical coord-dup filter are incompatible as built. Recorded here (not just in the
+    ledger) because it changes how campaign-3 dives must be configured."""
+    L: list = []
+    w = L.append
+    w("\n## H. Design finding — dive + freshness-prior precanon are structurally incompatible\n")
+    w("**Symptom.** The first campaign-2 dive attempt ran with the freshness prior ON (per the "
+      "launch spec) and admitted **0/311** — every one of ~1040 harvest checks was rejected as a "
+      "`precanon_dup`, with **zero** candidates reaching a canonical render. Campaign 1's dive "
+      "(which predates the prior) admitted 254 off a comparable 314 sources.\n")
+    w("**Root cause (structural, not a tuning miss).** The two mechanisms serve opposite goals:\n")
+    w("- The **freshness prior** is an *exploration* tool — it seeds the dedup/steering clouds with "
+      "prior-library coords so root draws and frontier steering avoid re-covering known ground.\n")
+    w("- A **dive** is *exploitation* of a known point: it descends the greedy argmax-p_good path "
+      "**from a breadth admission**. That source coord (and its basin) is, by construction, already "
+      "in the prior cloud — so the dive's pre-canonical coord-dup filter rejects the descent against "
+      "the very point it was told to mine. With the full 7926-row library in the cloud the basin is "
+      "densely covered, so **100%** of candidates dup out before any canonical render. Sterilization "
+      "is guaranteed, not incidental.\n")
+    w("**Resolution taken.** The dive leg runs with the prior **OFF** (dedup against its own "
+      "accruing cloud only, exactly as campaign 1's productive dive did). The prior's proven wins "
+      "are a **breadth**-leg result (§C) and are unaffected.\n")
+    w("**No lost-freshness guard needed.** Turning the prior off in the dive means a dive can, in "
+      "principle, re-mint a location some *other-era* library ledger already holds (the dive dedups "
+      "only within-campaign). That is acceptable and needs no extra guard here: **emission intake's "
+      "own dedup pass catches cross-era re-mints downstream** (coord + CLIP-morph), so a re-mint is "
+      "collapsed at library-assembly time rather than silently shipped.\n")
+    w("**Campaign-3 options.**\n")
+    w("1. **Keep the prior off in dives** (the current fix) — simple, proven, and correct given the "
+      "exploration/exploitation split. Recommended default.\n")
+    w("2. **fw-scaled precanon radius semantics** — make the dive's coord-dup radius shrink with the "
+      "candidate's own `fw`, so a genuinely-deeper frame in a covered basin reads as distinct from "
+      "its shallower source/neighbours. This would let a dive keep *some* cross-run freshness. It "
+      "needs design + tests (the radius/`DEDUP_K` semantics are load-bearing across the pipeline) "
+      "and is **deferred**.\n")
+    return L
+
+
 def build(args) -> str:
     breadth = Path(args.breadth).resolve()
     sched = load_scheduler_summary(breadth)
@@ -582,6 +627,8 @@ def build(args) -> str:
     w("Admission / reject contact sheets: "
       "`uv run python tools/atlas/campaign1_contact_sheet.py --run-dir "
       f"{breadth.relative_to(ROOT)}` (reused; run-dir-agnostic).\n")
+
+    L += dive_prior_finding_section()
 
     # base campaign-1 numbers (throughput/cost/distinct-look/overlap/coverage) appended verbatim.
     w("---\n\n# Base scheduling numbers (campaign1_readout, reused verbatim)\n")
