@@ -211,7 +211,9 @@ def test_sidecar_phoenix_p_survives():
                          "p_re": "-0.5", "p_im": "0.0"}}
     loc = loc_mod.from_sidecar(meta)
     assert loc.params == {"p_re": "-0.5", "p_im": "0.0"}
-    assert "p_re" in loc.key() or loc.key().endswith("-0.5|0.0")
+    # p survives into the key (now followed by the empty zm1_* slots, so it is no longer
+    # the key's tail — assert it is present, not that it terminates the key).
+    assert "|-0.5|0.0" in loc.key()
     flags = loc_mod.render_one_flags(loc)
     assert flags[-4:] == ["--p", "-0.5", "0.0"] or ("--p" in flags and "-0.5" in flags)
     # and the key is stable under a re-parse of an equivalent sidecar

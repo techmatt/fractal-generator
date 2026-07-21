@@ -43,6 +43,10 @@ const BAILOUT: f64 = 1e6;
 /// so the cache must apply the identical fallback the labeled crop was rendered at.
 const PHOENIX_C_DEFAULT: (f64, f64) = (0.5667, 0.0);
 const PHOENIX_P_DEFAULT: (f64, f64) = (-0.5, 0.0);
+/// Phoenix slice coordinate `z_{-1}` default — the legacy pinned value. A plan row
+/// predating the axis omits `zm1_re`/`zm1_im`, so its cached tile resolves to this
+/// (byte-identical to the pre-axis render).
+const PHOENIX_ZM1_DEFAULT: (f64, f64) = (0.0, 0.0);
 
 /// Which fractal family a plan row renders. Degree-2 `Mandelbrot`/`Julia` keep the
 /// settled location-profile path (byte-identical to today); the new families
@@ -72,6 +76,8 @@ struct Spec {
     c: Option<(String, String)>,
     /// Phoenix `z_{n-1}` coefficient `p` (decimal strings); optional (defaults).
     p: Option<(String, String)>,
+    /// Phoenix slice coordinate `z_{-1}` (decimal strings); optional (defaults 0).
+    z1: Option<(String, String)>,
 }
 
 fn parse_filter(s: &str) -> Result<DownsampleFilter, String> {
@@ -109,23 +115,27 @@ fn parse_spec(line: &str) -> Result<Spec, String> {
         (Some(re), Some(im)) => Some((re, im)),
         _ => None,
     };
-    let (kind, c, p) = match jsonl::field_str(line, "fractal_type").as_deref() {
-        None | Some("mandelbrot") => (FamilyKind::Mandelbrot, None, None),
-        Some("julia") => (FamilyKind::Julia { degree: 2 }, Some(c()?), None),
-        Some("julia_multibrot3") => (FamilyKind::Julia { degree: 3 }, Some(c()?), None),
-        Some("julia_multibrot4") => (FamilyKind::Julia { degree: 4 }, Some(c()?), None),
-        Some("julia_multibrot5") => (FamilyKind::Julia { degree: 5 }, Some(c()?), None),
-        Some("multibrot3") => (FamilyKind::Multibrot { degree: 3 }, None, None),
-        Some("multibrot4") => (FamilyKind::Multibrot { degree: 4 }, None, None),
-        Some("multibrot5") => (FamilyKind::Multibrot { degree: 5 }, None, None),
-        Some("phoenix") => (FamilyKind::Phoenix, phoenix_c, phoenix_p),
+    let phoenix_z1 = match (jsonl::field_str(line, "zm1_re"), jsonl::field_str(line, "zm1_im")) {
+        (Some(re), Some(im)) => Some((re, im)),
+        _ => None,
+    };
+    let (kind, c, p, z1) = match jsonl::field_str(line, "fractal_type").as_deref() {
+        None | Some("mandelbrot") => (FamilyKind::Mandelbrot, None, None, None),
+        Some("julia") => (FamilyKind::Julia { degree: 2 }, Some(c()?), None, None),
+        Some("julia_multibrot3") => (FamilyKind::Julia { degree: 3 }, Some(c()?), None, None),
+        Some("julia_multibrot4") => (FamilyKind::Julia { degree: 4 }, Some(c()?), None, None),
+        Some("julia_multibrot5") => (FamilyKind::Julia { degree: 5 }, Some(c()?), None, None),
+        Some("multibrot3") => (FamilyKind::Multibrot { degree: 3 }, None, None, None),
+        Some("multibrot4") => (FamilyKind::Multibrot { degree: 4 }, None, None, None),
+        Some("multibrot5") => (FamilyKind::Multibrot { degree: 5 }, None, None, None),
+        Some("phoenix") => (FamilyKind::Phoenix, phoenix_c, phoenix_p, phoenix_z1),
         Some(other) => {
             return Err(format!(
                 "unknown fractal_type '{other}' (mandelbrot|julia|julia_multibrot{{3,4,5}}|multibrot{{3,4,5}}|phoenix)"
             ))
         }
     };
-    Ok(Spec { cx, cy, fw, palette, ss, filter, out, kind, c, p })
+    Ok(Spec { cx, cy, fw, palette, ss, filter, out, kind, c, p, z1 })
 }
 
 pub fn run_v4_render_batch(args: &V4RenderBatchArgs) -> Result<(), String> {
@@ -318,7 +328,11 @@ fn render_one_spec(
                         Some((re, im)) => Complex::new(parse_c(re)?, parse_c(im)?),
                         None => Complex::new(PHOENIX_P_DEFAULT.0, PHOENIX_P_DEFAULT.1),
                     };
-                    Family::Phoenix { c, p }
+                    let z_m1 = match &spec.z1 {
+                        Some((re, im)) => Complex::new(parse_c(re)?, parse_c(im)?),
+                        None => Complex::new(PHOENIX_ZM1_DEFAULT.0, PHOENIX_ZM1_DEFAULT.1),
+                    };
+                    Family::Phoenix { c, p, z_m1 }
                 }
                 FamilyKind::Mandelbrot => unreachable!("degree-2 handled above"),
             };

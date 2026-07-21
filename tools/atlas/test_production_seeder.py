@@ -111,6 +111,89 @@ def test_build_cloud_keeps_distinct_c_julias_as_separate_places():
 
 
 # --------------------------------------------------------------------------- #
+# Phoenix parameter-point identity (the julia seed-c fix lifted to (c, p, z_{-1})). A
+# phoenix row's dup identity keys on its z-viewport AND its full parameter point; absent
+# axes resolve to the legacy Ushiki values. See docs/design/phoenix_seed_sampler_spec.md §3.
+# --------------------------------------------------------------------------- #
+def _ph_row(oid, cx, cy, fw, c=(0.5667, 0.0), p=(-0.5, 0.0), z=(0.0, 0.0)):
+    return {"id": oid, "family": "phoenix", "guard_pass": True, "decoded_class": 3,
+            "outcome_cx": cx, "outcome_cy": cy, "outcome_fw": fw,
+            **ps.phoenix_ident_fields(c, p, z)}
+
+
+def test_distinct_phoenix_params_do_not_collide():
+    # distinct parameter points at the IDENTICAL z-viewport are distinct places (opening
+    # the axes without keying would recreate the julia over-kill with three axes).
+    ka = ps.row_phoenix_key(_ph_row("a", 0, 0, 3.0, p=(-0.5, 0.0), z=(0.0, 0.0)))
+    kb = ps.row_phoenix_key(_ph_row("b", 0, 0, 3.0, p=(-0.4, 0.0), z=(0.0, 0.0)))  # differs in p
+    kz = ps.row_phoenix_key(_ph_row("z", 0, 0, 3.0, p=(-0.5, 0.0), z=(0.1, 0.0)))  # differs in z_{-1}
+    assert ps.near_dup(0, 0, 3.0, 0, 0, 3.0, k=1.5, a_c=ka, b_c=kb) is False
+    assert ps.near_dup(0, 0, 3.0, 0, 0, 3.0, k=1.5, a_c=ka, b_c=kz) is False        # z_{-1} keys too
+    cloud = [_ph_row("pa", 0, 0, 3.0, p=(-0.5, 0.0))]
+    d, dup = ps.is_distinct(0, 0, 3.0, cloud, c=kb)
+    assert d is True and dup is None
+
+
+def test_same_phoenix_params_near_views_collide():
+    # identical parameter point + near z-viewport -> genuine dup (dedups as before).
+    k = ps.row_phoenix_key(_ph_row("a", 0, 0, 1.0))
+    assert ps.near_dup(1.4, 0.0, 1.0, 0.0, 0.0, 1.0, k=1.5, a_c=k, b_c=k) is True   # 1.4 < 1.5
+    assert ps.near_dup(1.6, 0.0, 1.0, 0.0, 0.0, 1.0, k=1.5, a_c=k, b_c=k) is False  # z too far
+    cloud = [_ph_row("pa", 0, 0, 1.0)]
+    d, dup = ps.is_distinct(0.5, 0.0, 1.0, cloud, c=ps.row_phoenix_key(_ph_row("q", 0, 0, 1.0)))
+    assert d is False and dup == "pa"
+
+
+def test_phoenix_never_collides_with_other_family():
+    # a phoenix row (6-D identity) never collides with a c-plane row (None) or a julia row
+    # (2-D identity) at the identical viewport.
+    kp = ps.row_phoenix_key(_ph_row("p", 0, 0, 3.0))
+    assert ps.near_dup(0, 0, 3.0, 0, 0, 3.0, k=1.5, a_c=kp, b_c=None) is False        # vs c-plane
+    assert ps.near_dup(0, 0, 3.0, 0, 0, 3.0, k=1.5, a_c=kp, b_c=(0.3, -0.1)) is False  # vs julia
+
+
+def test_build_cloud_keeps_distinct_phoenix_as_separate_places():
+    rows = [
+        _ph_row("pa", 0.0, 0.0, 3.0, p=(-0.5, 0.0)),
+        _ph_row("pb", 0.0, 0.0, 3.0, p=(-0.4, 0.0)),          # distinct p, same viewport
+        _ph_row("pa2", 0.01, 0.0, 3.0, p=(-0.5, 0.0)),        # same-params revisit of pa -> collapses
+    ]
+    cloud = ps.build_cloud(rows, "phoenix")
+    assert {m["id"] for m in cloud} == {"pa", "pb"}
+
+
+def test_legacy_phoenix_row_resolves_ushiki():
+    """Backward compat against a REAL legacy ledger row: a pre-axis phoenix row carries no
+    phoenix_c/p/zm1 fields, so its identity resolves to the classic Ushiki point byte-for-
+    byte — i.e. it dedups identically to an explicit-Ushiki row and never with a distinct one."""
+    led = ROOT / "data" / "discovery" / "gather" / "phoenix" / "outcome_ledger.jsonl"
+    if not led.exists():
+        import pytest
+        pytest.skip("no legacy phoenix ledger present")
+    import json
+    with open(led, encoding="utf-8") as f:
+        legacy = json.loads(f.readline())
+    assert legacy.get("family") == "phoenix"
+    # the real legacy schema predates the axes.
+    assert "phoenix_c_re" not in legacy and "phoenix_p_re" not in legacy \
+        and "phoenix_zm1_re" not in legacy
+    # its resolved identity IS the Ushiki point (byte-for-byte with an explicit stamp).
+    assert ps.row_phoenix_key(legacy) == ps.row_phoenix_key(ps.phoenix_ident_fields())
+    assert ps.row_phoenix_key(legacy) == (0.5667, 0.0, -0.5, 0.0, 0.0, 0.0)
+    # so a legacy row and an explicit-Ushiki row at the same viewport collide (same place),
+    # while a distinct-param row does not.
+    ushiki = dict(legacy, outcome_cx=legacy["outcome_cx"], outcome_cy=legacy["outcome_cy"],
+                  outcome_fw=legacy["outcome_fw"], **ps.phoenix_ident_fields())
+    other = dict(ushiki, **ps.phoenix_ident_fields(p=(-0.3, 0.0)))
+    assert ps.near_dup(legacy["outcome_cx"], legacy["outcome_cy"], legacy["outcome_fw"],
+                       ushiki["outcome_cx"], ushiki["outcome_cy"], ushiki["outcome_fw"],
+                       a_c=ps.row_phoenix_key(legacy), b_c=ps.row_phoenix_key(ushiki)) is True
+    assert ps.near_dup(legacy["outcome_cx"], legacy["outcome_cy"], legacy["outcome_fw"],
+                       other["outcome_cx"], other["outcome_cy"], other["outcome_fw"],
+                       a_c=ps.row_phoenix_key(legacy), b_c=ps.row_phoenix_key(other)) is False
+
+
+# --------------------------------------------------------------------------- #
 # q3-density rejection rule (the coverage-control mechanism)
 # --------------------------------------------------------------------------- #
 def _cloud(pts):

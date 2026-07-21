@@ -89,8 +89,10 @@ pub enum Family {
     Julia { c: Complex<f64>, degree: u32 },
     /// `z → z^d + c`, `z₀ = 0` (parameter plane), `d ∈ {3,4,5}`.
     Multibrot { degree: u32 },
-    /// `z_{n+1} = z_n² + c + p·z_{n-1}`, `z₀ = pixel`, `z_{-1} = 0` (dynamical).
-    Phoenix { c: Complex<f64>, p: Complex<f64> },
+    /// `z_{n+1} = z_n² + c + p·z_{n-1}`, `z₀ = pixel`, `z_{-1} = z_m1` (dynamical).
+    /// `z_m1` (legacy default `0`) is the slice coordinate; a non-zero value breaks
+    /// the slice symmetry (see `docs/design/phoenix_seed_sampler_spec.md` §3).
+    Phoenix { c: Complex<f64>, p: Complex<f64>, z_m1: Complex<f64> },
 }
 
 impl Family {
@@ -1442,11 +1444,11 @@ pub fn iterate_orbit(
 
     let degree = family.degree();
     let dynamical = family.is_dynamical();
-    // Phoenix's second constant `p` (the z_{n-1} coefficient); zero / unused for the
-    // z^d families.
-    let phoenix_p = match family {
-        Family::Phoenix { p, .. } => p,
-        _ => Complex::new(0.0, 0.0),
+    // Phoenix's second constant `p` (the z_{n-1} coefficient) and slice coordinate
+    // `z_{-1}`; zero / unused for the z^d families.
+    let (phoenix_p, phoenix_z_m1) = match family {
+        Family::Phoenix { p, z_m1, .. } => (p, z_m1),
+        _ => (Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
     };
 
     let mut z = z0;
@@ -1455,10 +1457,11 @@ pub fn iterate_orbit(
     } else {
         Complex::new(0.0, 0.0)
     };
-    // Phoenix two-state: z_{n-1} and dz_{n-1}, both seeded 0 (z_{-1} = 0). Distinct
-    // from the curvature history below (which seeds z0) so the first Phoenix step
-    // couples against z_{-1} = 0, not z_0.
-    let mut ph_zprev = Complex::new(0.0, 0.0);
+    // Phoenix two-state: z_{n-1} seeded to the slice coordinate `z_m1` (legacy 0),
+    // dz_{n-1} seeded 0 (z_{-1} is a pixel-independent constant, so ∂z_{-1}/∂pixel = 0
+    // regardless of the slice value). Distinct from the curvature history below (which
+    // seeds z0) so the first Phoenix step couples against z_{-1}, not z_0.
+    let mut ph_zprev = phoenix_z_m1;
     let mut ph_dzprev = Complex::new(0.0, 0.0);
     // Orbit history for curvature: zprev1 = zₙ₋₁, zprev2 = zₙ₋₂.
     let mut zprev1 = z0;
@@ -2120,7 +2123,9 @@ pub fn smooth_field_f64_supersampled(
         Family::Julia { c, degree } => {
             Fast::Julia(JuliaBackend::new_degree(c, maxiter, bailout, trap, degree))
         }
-        Family::Phoenix { c, p } => Fast::Phoenix(PhoenixBackend::new(c, p, maxiter, bailout, trap)),
+        Family::Phoenix { c, p, z_m1 } => {
+            Fast::Phoenix(PhoenixBackend::new(c, p, z_m1, maxiter, bailout, trap))
+        }
     };
 
     let s = ss.max(1);
@@ -2245,14 +2250,15 @@ fn render_direct_trap(
     // Iterate one orbit and composite the direct-trap accumulator → linear RGB. The
     // second return is the orbit's closest-approach distance (for `stats`).
     let degree = family.degree();
-    let phoenix_p = match family {
-        Family::Phoenix { p, .. } => p,
-        _ => Complex::new(0.0, 0.0),
+    let (phoenix_p, phoenix_z_m1) = match family {
+        Family::Phoenix { p, z_m1, .. } => (p, z_m1),
+        _ => (Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
     };
     let composite = |z0: Complex<f64>, c: Complex<f64>| -> ([f64; 3], f64) {
         let mut z = z0;
-        // Phoenix two-state (z_{n-1}, seeded 0); unused for the z^d families.
-        let mut ph_zprev = Complex::new(0.0, 0.0);
+        // Phoenix two-state (z_{n-1}, seeded to the slice coordinate z_m1, legacy 0);
+        // unused for the z^d families.
+        let mut ph_zprev = phoenix_z_m1;
         // Linear-RGB accumulator initialized to the `start color` background (doc §3).
         // Black (default) is the absorbing background the multiplicative modes darken
         // from; a white start lets `multiply` build dark lace down from light.
@@ -3479,7 +3485,7 @@ mod tests {
                 c,
                 500,
                 &p,
-                Family::Phoenix { c, p: Complex::new(0.0, 0.0) },
+                Family::Phoenix { c, p: Complex::new(0.0, 0.0), z_m1: Complex::new(0.0, 0.0) },
             );
             let ju = iterate_orbit(pixel, c, 500, &p, Family::Julia { c, degree: 2 });
             assert_eq!(ph.escaped, ju.escaped);
@@ -3491,6 +3497,63 @@ mod tests {
         }
     }
 
+    /// Phoenix `z_{-1}` symmetry guard + load-bearing check (spec §7). The guard that
+    /// stops anyone silently re-pinning `z_{-1}`.
+    ///
+    /// CORRECTION to the spec's framing: the spec §7 asserts a 180° point symmetry
+    /// (z0 -> -z0) at `z_{-1}=0`. That does NOT hold in this engine's convention
+    /// (`z0 = pixel`, `z_{-1}` the two-state seed): the second iterate `z_2 = z_1² + c
+    /// + p·z_0` carries the *odd* `p·z_0` term, so `escape(z0) != escape(-z0)`
+    /// (measured: ~4.3% of a 401² grid disagree). The symmetry our convention actually
+    /// has is the **real-axis reflection** `Im -> -Im`, exact whenever `c, p, z_{-1}`
+    /// are all real (the recurrence has real coefficients, so `orbit(conj z0) =
+    /// conj(orbit z0)` bit-for-bit). This test guards THAT, plus the load-bearing
+    /// property the spec actually wants: `z_{-1}` is not a no-op.
+    /// See `docs/findings/phoenix_z_m1_symmetry.md`.
+    #[test]
+    fn phoenix_z_m1_symmetry_guard() {
+        let cp = ColoringParams::beautiful(Field::Smooth);
+        let c = Complex::new(0.5667, 0.0);
+        let p = Complex::new(-0.5, 0.0);
+        let grid = |zr: f64, zi: f64| Complex::new(zr, zi);
+        let n = 120i32;
+        let samp = |fam: Family, zr: f64, zi: f64| iterate_orbit(grid(zr, zi), c, 400, &cp, fam);
+
+        // (1) z_{-1}=0, real (c,p): real-axis reflection is EXACT (bit-for-bit).
+        let sym = Family::Phoenix { c, p, z_m1: Complex::new(0.0, 0.0) };
+        for iy in 0..=n {
+            for ix in -n..=n {
+                let (zr, zi) = (1.8 * ix as f64 / n as f64, 1.8 * iy as f64 / n as f64);
+                let a = samp(sym, zr, zi);
+                let r = samp(sym, zr, -zi);
+                assert_eq!(a.escaped, r.escaped, "reflection escaped ({zr},{zi})");
+                assert_eq!(a.smooth.to_bits(), r.smooth.to_bits(), "reflection smooth ({zr},{zi})");
+            }
+        }
+
+        // (2) z_{-1} with a non-zero IMAGINARY part breaks the real-axis reflection.
+        let asym = Family::Phoenix { c, p, z_m1: Complex::new(0.0, 0.15) };
+        let mut refl_broken = 0;
+        // (3) z_{-1} real but non-zero is still LOAD-BEARING: it changes the render
+        //     (even though it preserves real-axis reflection). This is the actual
+        //     anti-re-pinning guard — ANY non-zero z_{-1} moves pixels.
+        let realnz = Family::Phoenix { c, p, z_m1: Complex::new(0.2, 0.0) };
+        let mut load_bearing = 0;
+        for iy in -n..=n {
+            for ix in -n..=n {
+                let (zr, zi) = (1.8 * ix as f64 / n as f64, 1.8 * iy as f64 / n as f64);
+                if samp(asym, zr, zi).escaped != samp(asym, zr, -zi).escaped {
+                    refl_broken += 1;
+                }
+                if samp(sym, zr, zi).escaped != samp(realnz, zr, zi).escaped {
+                    load_bearing += 1;
+                }
+            }
+        }
+        assert!(refl_broken > 0, "imaginary z_-1 must break real-axis reflection");
+        assert!(load_bearing > 0, "real non-zero z_-1 must change the render (not a no-op)");
+    }
+
     /// Family metadata: degree threads the exponent; dynamical families seed the
     /// z-plane (`z₀ = pixel`), parameter-plane families seed `z₀ = 0`.
     #[test]
@@ -3498,7 +3561,7 @@ mod tests {
         let pixel = Complex::new(0.37, -0.11);
         assert_eq!(Family::Mandelbrot.degree(), 2);
         assert_eq!(Family::Multibrot { degree: 4 }.degree(), 4);
-        assert_eq!(Family::Phoenix { c: pixel, p: pixel }.degree(), 2);
+        assert_eq!(Family::Phoenix { c: pixel, p: pixel, z_m1: pixel }.degree(), 2);
         // Parameter plane: z0 = 0, c = pixel.
         assert_eq!(Family::Mandelbrot.seed(pixel), (Complex::new(0.0, 0.0), pixel));
         assert_eq!(
@@ -3513,10 +3576,11 @@ mod tests {
         assert_eq!(Family::Julia { c: k, degree: 4 }.seed(pixel), (pixel, k));
         assert!(Family::Julia { c: k, degree: 3 }.is_dynamical());
         assert_eq!(
-            Family::Phoenix { c: k, p: Complex::new(-0.5, 0.0) }.seed(pixel),
+            Family::Phoenix { c: k, p: Complex::new(-0.5, 0.0), z_m1: Complex::new(0.0, 0.0) }
+                .seed(pixel),
             (pixel, k)
         );
         assert!(!Family::Mandelbrot.is_dynamical());
-        assert!(Family::Phoenix { c: k, p: k }.is_dynamical());
+        assert!(Family::Phoenix { c: k, p: k, z_m1: k }.is_dynamical());
     }
 }

@@ -42,7 +42,11 @@ from typing import Optional
 # Values are the canonical field order the key/sidecar/flags all follow.
 # ---------------------------------------------------------------------------
 FAMILY_PARAM_KEYS = {
-    "phoenix": ("p_re", "p_im"),
+    # Phoenix's extra constants: the z_{n-1} coefficient `p` AND the slice coordinate
+    # `z_{-1}` (`zm1_*`, opened as a first-class axis in the seed-sampler work). Absent
+    # `zm1_*` append empty parts, so a phoenix location that predates the axis keys as
+    # before-plus-two-empty-slots; a sampler location carries explicit `zm1_re/zm1_im`.
+    "phoenix": ("p_re", "p_im", "zm1_re", "zm1_im"),
 }
 
 # Parameter-plane z^d families whose flag is just `--family <name>`.
@@ -177,8 +181,10 @@ def field_mode_token(mode) -> str:
 #   julia        -> --family mandelbrot --julia --c <c_re> <c_im>   (unchanged mechanism)
 #   multibrot3/4/5 -> --family multibrotN
 #   phoenix      -> --family phoenix --c <c_re> <c_im> --p <p_re> <p_im>
+#                     [--phoenix-z1 <zm1_re> <zm1_im>]
 # Phoenix's constants are emitted only when present, so the acceptance harness's
-# "test the Rust default" entries (no --c/--p) also route through here unchanged.
+# "test the Rust default" entries (no --c/--p/--phoenix-z1) also route through here
+# unchanged; a sampler location carries explicit zm1_re/zm1_im in family_params.
 # ---------------------------------------------------------------------------
 def render_one_flags(loc) -> list:
     fam = family_of(loc)
@@ -203,6 +209,8 @@ def render_one_flags(loc) -> list:
             flags += ["--c", str(loc.c_re), str(loc.c_im)]
         if p.get("p_re") is not None and p.get("p_im") is not None:
             flags += ["--p", str(p["p_re"]), str(p["p_im"])]
+        if p.get("zm1_re") is not None and p.get("zm1_im") is not None:
+            flags += ["--phoenix-z1", str(p["zm1_re"]), str(p["zm1_im"])]
         return flags
     raise ValueError(f"unknown family {fam!r}")
 

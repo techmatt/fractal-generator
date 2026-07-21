@@ -117,6 +117,59 @@ JULIA_SAME_C_EPS = 1e-6  # same-Julia identity epsilon in the c (parameter) plan
                          # collides with a base-family c-plane row (one side has no c).
                          # See docs/findings/julia_dup_metric_audit.md.
 
+# --- Phoenix parameter-point identity (the julia seed-c fix, lifted to three axes) ---
+# A phoenix location's dup identity keys on the FULL parameter point (c, p, z_{-1})
+# alongside its z-viewport. Two phoenix outcomes collide only when BOTH their z-viewports
+# are near-dup AND their (c, p, z_{-1}) points coincide within PHOENIX_SAME_EPS — opening
+# c/p/z_{-1} without keying them would recreate the julia over-kill with three axes. Legacy
+# phoenix rows predate these axes (the fixed Ushiki plane, z_{-1}=0), so ABSENT fields
+# resolve to the classic values below => old rows keep their identity byte-for-byte.
+# See docs/design/phoenix_seed_sampler_spec.md §3 and prompts/phoenix_phase_a.md.
+PHOENIX_C_DEFAULT = (0.5667, 0.0)     # classic Ushiki additive constant c
+PHOENIX_P_DEFAULT = (-0.5, 0.0)       # classic Ushiki z_{n-1} coefficient p
+PHOENIX_ZM1_DEFAULT = (0.0, 0.0)      # legacy pinned slice coordinate z_{-1}
+PHOENIX_SAME_EPS = JULIA_SAME_C_EPS   # same identity floor (round-trip-noise scale)
+
+
+def phoenix_ident_fields(c=PHOENIX_C_DEFAULT, p=PHOENIX_P_DEFAULT,
+                         z_m1=PHOENIX_ZM1_DEFAULT) -> dict:
+    """The ledger identity stamp for a phoenix row: the full parameter point as flat
+    floats. The phoenix analogue of the `julia_c_re/im` stamp, extended to (c, p, z_{-1})."""
+    return {
+        "phoenix_c_re": float(c[0]), "phoenix_c_im": float(c[1]),
+        "phoenix_p_re": float(p[0]), "phoenix_p_im": float(p[1]),
+        "phoenix_zm1_re": float(z_m1[0]), "phoenix_zm1_im": float(z_m1[1]),
+    }
+
+
+def row_phoenix_key(row):
+    """The `(c_re,c_im,p_re,p_im,zm1_re,zm1_im)` identity of a phoenix row as a 6-tuple of
+    floats, resolving each absent axis to its legacy Ushiki value — so a pre-axis ledger row
+    (the fixed classic phoenix, no stamped params) keys byte-for-byte as an explicit-Ushiki
+    row. The phoenix analogue of `row_seed_c`."""
+    def pair(kre, kim, default):
+        vre = row.get(kre)
+        vim = row.get(kim)
+        return (float(vre) if vre is not None else default[0],
+                float(vim) if vim is not None else default[1])
+    c = pair("phoenix_c_re", "phoenix_c_im", PHOENIX_C_DEFAULT)
+    p = pair("phoenix_p_re", "phoenix_p_im", PHOENIX_P_DEFAULT)
+    z = pair("phoenix_zm1_re", "phoenix_zm1_im", PHOENIX_ZM1_DEFAULT)
+    return (c[0], c[1], p[0], p[1], z[0], z[1])
+
+
+def row_ident(row):
+    """Generic parameter-space identity of a cloud/ledger row for seed-aware dedup:
+      * phoenix row (`family == 'phoenix'`) -> the (c,p,z_{-1}) 6-vector (Ushiki-resolved),
+      * julia row (has `julia_c_re`)        -> the seed-c 2-vector,
+      * c-plane row                          -> None.
+    Within a single partition every row is the same family, so all idents share length and
+    `near_dup` compares them by Euclidean distance. Subsumes `row_seed_c` on the cloud path
+    (a julia/c-plane row keys identically to before)."""
+    if row.get("family") == "phoenix":
+        return row_phoenix_key(row)
+    return row_seed_c(row)
+
 # --- production walk config (matches the atlas theta-walk config so the reward stays comparable) ---
 NODE_WIDTH = 384             # foci-finder low-pass; 384 is outcome-value-preserving (efficiency study)
 SIGMA_BAND = "8,10,12,14,16" # x0.5 (dilation=sigma, isolation=2sigma)
@@ -394,29 +447,36 @@ def near_dup(a_cx, a_cy, a_fw, b_cx, b_cy, b_fw, k=DEDUP_K,
     """fw-relative viewport dedup, seed-c AWARE. A near-dup of B iff the two z-viewports are
     near (plane distance < k * max(A.fw, B.fw)) AND they belong to the same Julia set.
 
-    Seed-c gate (`a_c`/`b_c` = the two rows' seed c, None for a c-plane row): if EITHER side
-    carries a seed c, the pair is collidable ONLY when both carry a seed c within `c_eps`.
-    Consequences: a distinct-c julia pair never collides; a julia never collides with a
-    base-family c-plane row (one side is None). c-plane pairs (both None) fall straight
-    through to the original z-only test — byte-identical to the pre-fix behaviour.
+    Identity gate (`a_c`/`b_c` = the two rows' parameter-space identity vector, None for a
+    c-plane row): if EITHER side carries an identity, the pair is collidable ONLY when both
+    carry an identity of the same length within Euclidean distance `c_eps`. The vector is the
+    julia seed c (2-D) or the phoenix (c,p,z_{-1}) point (6-D); a 2-D vector reduces to the
+    original `hypot` so julia stays byte-identical. Consequences: a distinct-identity pair
+    never collides; a keyed row never collides with a base-family c-plane row (one side is
+    None); differently-keyed families (2-D vs 6-D, which never co-occur in one partition)
+    never collide. c-plane pairs (both None) fall straight through to the original z-only
+    test — byte-identical to the pre-fix behaviour.
     max(fw) => two outcomes at ~same center but different zoom are the SAME place."""
     if a_c is not None or b_c is not None:
         if a_c is None or b_c is None:
-            return False                                   # julia vs c-plane: never a dup
-        if float(np.hypot(a_c[0] - b_c[0], a_c[1] - b_c[1])) >= c_eps:
-            return False                                   # distinct-c julias: never a dup
+            return False                                   # keyed vs c-plane: never a dup
+        if len(a_c) != len(b_c):
+            return False                                   # different keyed families: never a dup
+        if float(np.linalg.norm(np.asarray(a_c, float) - np.asarray(b_c, float))) >= c_eps:
+            return False                                   # distinct identities: never a dup
     d = float(np.hypot(a_cx - b_cx, a_cy - b_cy))
     return d < k * max(float(a_fw), float(b_fw))
 
 
 def is_distinct(cx, cy, fw, cloud, k=DEDUP_K, c=None):
     """Distinctness vs the q3 outcome cloud. Returns (distinct: bool, dup_of: id|None).
-    `cloud` = iterable of dicts with outcome_cx/outcome_cy/outcome_fw/id (+ julia_c_re/im for
-    julia rows). `c=(re,im)` is the CANDIDATE's julia seed parameter (None for c-plane); each
-    cloud row's own seed c is read from its julia_c_re/julia_c_im (see near_dup's seed-c gate)."""
+    `cloud` = iterable of dicts with outcome_cx/outcome_cy/outcome_fw/id (+ the family's
+    identity fields: julia_c_re/im, or phoenix_c/p/zm1_*). `c` is the CANDIDATE's identity
+    vector (the julia seed c 2-vector, the phoenix (c,p,z_{-1}) 6-vector, or None for
+    c-plane); each cloud row's own identity is read via `row_ident` (see near_dup's gate)."""
     for h in cloud:
         if near_dup(cx, cy, fw, h["outcome_cx"], h["outcome_cy"], h["outcome_fw"], k,
-                    a_c=c, b_c=row_seed_c(h)):
+                    a_c=c, b_c=row_ident(h)):
             return False, h["id"]
     return True, None
 
@@ -523,10 +583,11 @@ def build_cloud(rows: list[dict], family: str) -> list[dict]:
         if r.get("family", "mandelbrot") != family:
             continue
         if r.get("guard_pass", True) and r.get("decoded_class") == 3:
-            # seed-c aware dedup: within a julia partition, distinct-c julias are distinct
-            # PLACES (the over-kill fix — z-only dedup collapsed them into one cloud point).
+            # identity-aware dedup: within a julia/phoenix partition, distinct-parameter
+            # outcomes are distinct PLACES (the over-kill fix — z-only dedup collapsed them
+            # into one cloud point). Julia keys on seed c; phoenix on (c,p,z_{-1}).
             distinct, _ = is_distinct(r["outcome_cx"], r["outcome_cy"], r["outcome_fw"],
-                                      cloud, DEDUP_K, c=row_seed_c(r))
+                                      cloud, DEDUP_K, c=row_ident(r))
             if distinct:
                 cloud.append(r)
     return cloud
@@ -1746,6 +1807,8 @@ def _gather_phoenix(args):
                 "p_notbad": rew["p_notbad"], "p_good": rew["p_good"], "t_good": t_good,
                 "guard_verdict": verdict, "guard_pass": verdict == "pass",
                 "interior_frac": gstats.interior_frac, "field_std": gstats.field_std,
+                # Parameter-point identity (fixed Ushiki plane -> the legacy defaults).
+                **phoenix_ident_fields(),
             }
             ledger.append(row)
             persist_walk(walks_fh, family="phoenix", batch=rnd, walk=wid, outcome_id=oid,
@@ -1878,6 +1941,9 @@ def _run_phoenix(args):
                 # build_fresh_discovery's key-dedup + family-balanced round-robin.
                 "distinct": is_q3, "dup_of": None,
                 "guard_pass": guard_pass, "guard_fail": None if guard_pass else "sentinel",
+                # Parameter-point identity (fixed Ushiki plane -> the legacy defaults). Stamped
+                # so these rows key correctly against sampler-produced phoenix rows.
+                **phoenix_ident_fields(),
             }
             ledgers.append_outcome(row, None)   # stamps scorer_version=SCORER_VERSION; no feature store
             totals["walked"] += 1

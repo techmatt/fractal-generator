@@ -77,6 +77,9 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
     if args.phoenix_p.is_some() && args.family != FamilyChoice::Phoenix {
         return Err("--p is the Phoenix z_{n-1} coefficient; valid only with --family phoenix".into());
     }
+    if args.phoenix_z1.is_some() && args.family != FamilyChoice::Phoenix {
+        return Err("--phoenix-z1 is the Phoenix z_{-1} slice coordinate; valid only with --family phoenix".into());
+    }
 
     // Center at full precision (parsed exactly as render/aa-filter do, so the
     // f64 projection matches bit-for-bit).
@@ -98,8 +101,9 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
 
     // Resolve the render family + its fixed constants. `c_strings`/`p_strings` carry
     // the original decimal strings for the dump-field sidecar (dynamical families).
-    let (family, c_strings, p_strings): (
+    let (family, c_strings, p_strings, z1_strings): (
         Family,
+        Option<(String, String)>,
         Option<(String, String)>,
         Option<(String, String)>,
     ) = match args.family {
@@ -113,6 +117,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                     Family::Julia { c: parse_const(c, "c")?, degree: 2 },
                     Some((c[0].clone(), c[1].clone())),
                     None,
+                    None,
                 )
             } else {
                 if args.julia_c.is_some() {
@@ -120,7 +125,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                                 Mandelbrot render (did you mean --julia?)"
                         .into());
                 }
-                (Family::Mandelbrot, None, None)
+                (Family::Mandelbrot, None, None, None)
             }
         }
         FamilyChoice::Multibrot3 | FamilyChoice::Multibrot4 | FamilyChoice::Multibrot5 => {
@@ -139,6 +144,7 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                     Family::Julia { c: parse_const(c, "c")?, degree },
                     Some((c[0].clone(), c[1].clone())),
                     None,
+                    None,
                 )
             } else {
                 if args.julia_c.is_some() {
@@ -146,12 +152,13 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                                 dynamical z^d+c plane, or drop --c for the parameter-plane multibrot"
                         .into());
                 }
-                (Family::Multibrot { degree }, None, None)
+                (Family::Multibrot { degree }, None, None, None)
             }
         }
         FamilyChoice::Phoenix => {
-            // Ushiki Phoenix: `--c` (additive const) and `--p` (z_{n-1} coeff) both
-            // optional, defaulting to the classic real-valued spot c≈0.5667, p≈-0.5.
+            // Ushiki Phoenix: `--c` (additive const), `--p` (z_{n-1} coeff), and
+            // `--phoenix-z1` (z_{-1} slice coordinate) all optional, defaulting to the
+            // classic real-valued spot c≈0.5667, p≈-0.5, z_{-1}=0.
             let cs = args
                 .julia_c
                 .clone()
@@ -160,12 +167,18 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
                 .phoenix_p
                 .clone()
                 .unwrap_or_else(|| vec!["-0.5".into(), "0".into()]);
+            let zs = args
+                .phoenix_z1
+                .clone()
+                .unwrap_or_else(|| vec!["0".into(), "0".into()]);
             let c = parse_const(&cs, "c")?;
             let p = parse_const(&ps, "p")?;
+            let z_m1 = parse_const(&zs, "phoenix-z1")?;
             (
-                Family::Phoenix { c, p },
+                Family::Phoenix { c, p, z_m1 },
                 Some((cs[0].clone(), cs[1].clone())),
                 Some((ps[0].clone(), ps[1].clone())),
+                Some((zs[0].clone(), zs[1].clone())),
             )
         }
     };
@@ -313,6 +326,9 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         if let Some((re, im)) = &p_strings {
             c_fields.push_str(&format!(",\"p_re\":\"{re}\",\"p_im\":\"{im}\""));
         }
+        if let Some((re, im)) = &z1_strings {
+            c_fields.push_str(&format!(",\"zm1_re\":\"{re}\",\"zm1_im\":\"{im}\""));
+        }
         let sidecar = format!(
             "{{\"width\":{sub_w},\"height\":{sub_h},\"supersample\":{ss},\
              \"field\":\"{field_name}\",\"dtype\":\"f32\",\"layout\":\"row_major\",\
@@ -365,8 +381,11 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
             format!("julia-multibrot d={degree} c=({:.9}, {:.9})", c.re, c.im)
         }
         Family::Multibrot { degree } => format!("multibrot d={degree}"),
-        Family::Phoenix { c, p } => {
-            format!("phoenix c=({:.4}, {:.4}) p=({:.4}, {:.4})", c.re, c.im, p.re, p.im)
+        Family::Phoenix { c, p, z_m1 } => {
+            format!(
+                "phoenix c=({:.4}, {:.4}) p=({:.4}, {:.4}) z_-1=({:.4}, {:.4})",
+                c.re, c.im, p.re, p.im, z_m1.re, z_m1.im
+            )
         }
     };
     let coloring_label = match &coloring_params {
@@ -653,6 +672,18 @@ pub struct RenderOneArgs {
         allow_hyphen_values = true
     )]
     pub phoenix_p: Option<Vec<String>>,
+
+    /// Phoenix slice coordinate `z_{-1}` as two decimal strings `--phoenix-z1 <re> <im>`.
+    /// Valid only with `--family phoenix`; defaults to the legacy `0 0`. A non-zero
+    /// value breaks the slice symmetry and yields a different set from the same
+    /// `(c, p)` (see `docs/design/phoenix_seed_sampler_spec.md` §3).
+    #[arg(
+        long = "phoenix-z1",
+        num_args = 2,
+        value_names = ["RE", "IM"],
+        allow_hyphen_values = true
+    )]
+    pub phoenix_z1: Option<Vec<String>>,
 
     /// Palette name, looked up in `--colormaps` (loaded through the selective-mirror
     /// path, so cyclic and sequential maps both render seam-free).

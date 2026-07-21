@@ -649,6 +649,10 @@ pub struct PhoenixBackend {
     param_c: Complex<f64>,
     /// `z_{n-1}` coefficient `p` (Ushiki's `q`).
     param_p: Complex<f64>,
+    /// Slice coordinate `z_{-1}` (the two-state history seed). Legacy default `0`;
+    /// a non-zero value breaks the slice symmetry and is a first-class proposal axis
+    /// (see `docs/design/phoenix_seed_sampler_spec.md` §3).
+    param_z_m1: Complex<f64>,
     maxiter: u32,
     bailout2: f64,
     trap: Trap,
@@ -658,6 +662,7 @@ impl PhoenixBackend {
     pub fn new(
         param_c: Complex<f64>,
         param_p: Complex<f64>,
+        param_z_m1: Complex<f64>,
         maxiter: u32,
         bailout: f64,
         trap: Trap,
@@ -665,6 +670,7 @@ impl PhoenixBackend {
         PhoenixBackend {
             param_c,
             param_p,
+            param_z_m1,
             maxiter,
             bailout2: bailout * bailout,
             trap,
@@ -675,11 +681,11 @@ impl PhoenixBackend {
 impl FractalBackend for PhoenixBackend {
     #[inline]
     fn sample(&self, c: Complex<f64>, _dc: Complex<f64>) -> PixelSample {
-        // z₀ = pixel, z_{-1} = 0. Constants fixed.
+        // z₀ = pixel, z_{-1} = param_z_m1 (legacy default 0). Constants fixed.
         let mut zr = c.re;
         let mut zi = c.im;
-        let mut zpr = 0.0f64; // z_{n-1}
-        let mut zpi = 0.0f64;
+        let mut zpr = self.param_z_m1.re; // z_{n-1}
+        let mut zpi = self.param_z_m1.im;
         let cr = self.param_c.re;
         let ci = self.param_c.im;
         let pr = self.param_p.re;
@@ -1123,6 +1129,7 @@ mod tests {
         let bk = PhoenixBackend::new(
             Complex::new(0.5667, 0.0),
             Complex::new(-0.5, 0.0),
+            Complex::new(0.0, 0.0),
             500,
             1e6,
             trap,

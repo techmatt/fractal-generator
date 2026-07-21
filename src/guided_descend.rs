@@ -317,7 +317,7 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
 
     // Phoenix mode: `--c` = additive constant (default 0.5667,0), `--p` = z_{n-1}
     // coefficient (default -0.5,0), both classic Ushiki.
-    let phoenix_cp: Option<(Complex<f64>, Complex<f64>)> = if args.phoenix {
+    let phoenix_cp: Option<(Complex<f64>, Complex<f64>, Complex<f64>)> = if args.phoenix {
         if degree != 2 {
             return Err(
                 "--phoenix is the degree-2 two-state plane; incompatible with --family multibrot*"
@@ -326,10 +326,14 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         }
         let cs = args.julia_c.clone().unwrap_or_else(|| vec!["0.5667".into(), "0".into()]);
         let ps = args.phoenix_p.clone().unwrap_or_else(|| vec!["-0.5".into(), "0".into()]);
-        Some((parse_c2(&cs, "c")?, parse_c2(&ps, "p")?))
+        let zs = args.phoenix_z1.clone().unwrap_or_else(|| vec!["0".into(), "0".into()]);
+        Some((parse_c2(&cs, "c")?, parse_c2(&ps, "p")?, parse_c2(&zs, "phoenix-z1")?))
     } else {
         if args.phoenix_p.is_some() {
             return Err("--p is the Phoenix z_{n-1} coefficient; valid only with --phoenix".into());
+        }
+        if args.phoenix_z1.is_some() {
+            return Err("--phoenix-z1 is the Phoenix z_{-1} slice coordinate; valid only with --phoenix".into());
         }
         None
     };
@@ -452,10 +456,10 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
         out_width: node_w,
         out_height: node_h,
     };
-    let root_desc = if let Some((pc, pp)) = phoenix_cp {
+    let root_desc = if let Some((pc, pp, pz)) = phoenix_cp {
         format!(
-            "PHOENIX z-plane descent: c=({:.4},{:.4}) p=({:.4},{:.4}), root base-scale fw {} @ center 0",
-            pc.re, pc.im, pp.re, pp.im, args.julia_root_fw
+            "PHOENIX z-plane descent: c=({:.4},{:.4}) p=({:.4},{:.4}) z_-1=({:.4},{:.4}), root base-scale fw {} @ center 0",
+            pc.re, pc.im, pp.re, pp.im, pz.re, pz.im, args.julia_root_fw
         )
     } else {
         match julia_c {
@@ -511,9 +515,9 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
     }
 
     let render_node = |frame: &Frame| -> render::SampleBuffer {
-        if let Some((pc, pp)) = phoenix_cp {
+        if let Some((pc, pp, pz)) = phoenix_cp {
             // Phoenix: two-state dynamical, frame addresses the z-plane (z₀ = pixel).
-            let backend = PhoenixBackend::new(pc, pp, args.maxiter, args.bailout, trap);
+            let backend = PhoenixBackend::new(pc, pp, pz, args.maxiter, args.bailout, trap);
             render::iterate_samples(&backend, frame, 1)
         } else if let Some(c) = julia_c {
             // Julia / Julia-multibrot: fixed parameter, z-plane (z₀ = pixel), degree
@@ -907,8 +911,8 @@ pub fn run_guided_descend(args: &GuidedDescendArgs) -> Result<(), String> {
                 out_width: prev_w,
                 out_height: prev_h,
             };
-            let (samples, spacing) = if let Some((pc, pp)) = phoenix_cp {
-                let backend = PhoenixBackend::new(pc, pp, args.maxiter, args.bailout, trap);
+            let (samples, spacing) = if let Some((pc, pp, pz)) = phoenix_cp {
+                let backend = PhoenixBackend::new(pc, pp, pz, args.maxiter, args.bailout, trap);
                 let buf = render::iterate_samples(&backend, &frame, 1);
                 (buf.samples, frame.pixel_size())
             } else if let Some(jc) = julia_c {
@@ -1153,13 +1157,14 @@ fn run_expand(args: &GuidedDescendArgs) -> Result<(), String> {
         return Err("--julia and --phoenix are mutually exclusive dynamical modes".into());
     }
     let degree = args.family.degree();
-    let phoenix_cp: Option<(Complex<f64>, Complex<f64>)> = if args.phoenix {
+    let phoenix_cp: Option<(Complex<f64>, Complex<f64>, Complex<f64>)> = if args.phoenix {
         if degree != 2 {
             return Err("--phoenix is degree-2; incompatible with --family multibrot*".into());
         }
         let cs = args.julia_c.clone().unwrap_or_else(|| vec!["0.5667".into(), "0".into()]);
         let ps = args.phoenix_p.clone().unwrap_or_else(|| vec!["-0.5".into(), "0".into()]);
-        Some((parse_c2(&cs, "c")?, parse_c2(&ps, "p")?))
+        let zs = args.phoenix_z1.clone().unwrap_or_else(|| vec!["0".into(), "0".into()]);
+        Some((parse_c2(&cs, "c")?, parse_c2(&ps, "p")?, parse_c2(&zs, "phoenix-z1")?))
     } else {
         None
     };
@@ -1208,8 +1213,8 @@ fn run_expand(args: &GuidedDescendArgs) -> Result<(), String> {
     // Kernel render at an explicit maxiter (gate renders use args.maxiter; the cheap
     // presentation uses auto_maxiter(fw) to match the fidelity study).
     let render_kernel = |frame: &Frame, maxiter: u32| -> render::SampleBuffer {
-        if let Some((pc, pp)) = phoenix_cp {
-            let backend = PhoenixBackend::new(pc, pp, maxiter, args.bailout, trap);
+        if let Some((pc, pp, pz)) = phoenix_cp {
+            let backend = PhoenixBackend::new(pc, pp, pz, maxiter, args.bailout, trap);
             render::iterate_samples(&backend, frame, 1)
         } else if let Some(c) = julia_c {
             let backend = JuliaBackend::new_degree(c, maxiter, args.bailout, trap, degree);
@@ -3022,6 +3027,13 @@ pub struct GuidedDescendArgs {
     /// classic `-0.5 0`.
     #[arg(long = "p", num_args = 2, value_names = ["RE", "IM"], allow_hyphen_values = true)]
     pub phoenix_p: Option<Vec<String>>,
+
+    /// Phoenix slice coordinate `z_{-1}` as two decimal strings `--phoenix-z1 <re> <im>`.
+    /// Valid only with `--phoenix`; defaults to the legacy `0 0`. A non-zero value
+    /// breaks the slice symmetry and yields a different set from the same `(c, p)`
+    /// (see `docs/design/phoenix_seed_sampler_spec.md` §3).
+    #[arg(long = "phoenix-z1", num_args = 2, value_names = ["RE", "IM"], allow_hyphen_values = true)]
+    pub phoenix_z1: Option<Vec<String>>,
 
     /// Julia/Phoenix z-plane root frame width (the depth-1 base-scale view, centered
     /// at 0). Descent then leaves this center.
