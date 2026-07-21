@@ -79,6 +79,15 @@ PROVENANCE_KEYS = (
     # (multibrot{3,4,5} | julia:multibrot{3,4,5}). This block is stratified ON the
     # score, so it is `biased→train`: analysis/validation only, NEVER a retrain feed.
     "p_good", "p_notbad", "t_good", "stratum", "scorer_version", "ledger_id",
+    # phoenix_grid Phase-B batch (2026-07-21): the phoenix seed-grid variance-decomposition
+    # run's label batch (docs/design/phoenix_seed_sampler_spec.md §5.1). The FULL parameter
+    # identity (fractal_type + c/p/z_-1) lives in the RENDER block (version-invariant); these
+    # provenance keys record the sampler axes for the fertility/bias analysis only. `theta` =
+    # the skeleton boundary phase, `offset` = the outward-normal displacement past the
+    # skeleton, `z_class` ∈ {zero,real,nonreal} = the z_-1 symmetry class. `branch`/`family`/
+    # `stratum`/`seed_index` reused from above (branch ∈ {cardioid,period2,root}; stratum =
+    # the "p<band>|<branch>|z_<class>" draw cell). Bias loop / analysis only — never training.
+    "theta", "offset", "z_class",
 )
 
 
