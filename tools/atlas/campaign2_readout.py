@@ -54,6 +54,228 @@ SMOKE_SKIP_FRAC = 0.25         # julia-hook smoke skip fraction (4/16) — watch
 PARTITIONS = list(c1.C_FAMILIES) + [dsched.julia_partition(f) for f in c1.C_FAMILIES]
 
 
+# --------------------------------------------------------------------------- #
+# Regime segmentation at the julia-hook-spacing resume boundary(ies).
+#
+# The run was resumed mid-flight with a lower --julia-hook-spacing (0.20 -> 0.10) as a FLAG
+# change only (frozen tree). Every hook decision in julia_hooks.jsonl durably stamps the
+# `spacing` in force, so regimes are SELF-LABELING there; for the trace/harvest artifacts
+# (which carry `batch` but not spacing) we map batch -> regime via the first batch each new
+# spacing appears. Generalizes to N resumes. Freshness-prior metrics are NOT segmented (that
+# knob did not change — reported whole-run in section C).
+# --------------------------------------------------------------------------- #
+def regime_intervals(hooks: list) -> list:
+    """[(start_batch, spacing)] ascending by start_batch — one entry per distinct spacing, at the
+    first batch it was observed. Empty if no hooks logged."""
+    first_batch: dict = {}
+    for r in hooks:
+        sp = float(r["spacing"])
+        b = int(r["batch"])
+        first_batch[sp] = min(first_batch.get(sp, b), b)
+    return sorted(((b, sp) for sp, b in first_batch.items()), key=lambda t: t[0])
+
+
+def regime_of_batch(batch: int, intervals: list) -> float | None:
+    """The spacing in force at `batch` (largest start_batch <= batch); first regime's spacing for
+    anything before the first hook; None if no intervals."""
+    if not intervals:
+        return None
+    sp = intervals[0][1]
+    for start, s in intervals:
+        if batch >= start:
+            sp = s
+        else:
+            break
+    return sp
+
+
+def _fmt_sp(sp) -> str:
+    return "—" if sp is None else f"{sp:g}"
+
+
+def regime_comparison_section(run_dir: Path, sched: dict) -> list:
+    """Both spacing regimes side by side (requirement 1): skip fraction, hook-fire conversion into
+    julia roots/admissions, julia distinct-look share trajectory, per-partition allocation shares,
+    and price drift. All from durable artifacts; freshness metrics deliberately excluded."""
+    L: list = []
+    w = L.append
+    hooks = c1.load_jsonl(run_dir / "julia_hooks.jsonl")
+    trace = c1.load_jsonl(run_dir / "scheduler_trace.jsonl")
+    harvest = c1.load_jsonl(run_dir / "harvest_log.jsonl")
+    ivals = regime_intervals(hooks)
+    regimes = [sp for _b, sp in ivals]
+    w("## Regime comparison — julia-hook-spacing 0.20 → 0.10 (resume boundary)\n")
+    if len(regimes) < 2:
+        only = _fmt_sp(regimes[0]) if regimes else "n/a"
+        w(f"_Single spacing regime so far (spacing={only}); the 0.10 regime has produced no hook "
+          f"decision yet, so there is nothing to segment. This section populates once the resumed "
+          f"(0.10) leg fires its first hook._\n")
+        return L
+    bounds = {sp: b for b, sp in ivals}
+    w(f"Regimes (spacing → first batch): "
+      + ", ".join(f"**{_fmt_sp(sp)}**@b{bounds[sp]}" for _b, sp in ivals) + ".\n")
+
+    # ---- 1. skip fraction + nearest-c diagnostic (does the radius even bind?) ----
+    w("\n### 1. Hook skip fraction (over-thinning check)\n")
+    w("| spacing | decisions | fired | skipped | skip frac |")
+    w("|--:|--:|--:|--:|--:|")
+    hook_by_sp: dict = defaultdict(lambda: [0, 0])   # spacing -> [fired, skipped]
+    for r in hooks:
+        hook_by_sp[float(r["spacing"])][0 if r.get("hooked") else 1] += 1
+    sp_lo = min(regimes)                              # the reduced-spacing regime
+    for _b, sp in ivals:
+        fired, skip = hook_by_sp[sp]
+        tot = fired + skip
+        w(f"| {_fmt_sp(sp)} | {tot} | {fired} | {skip} | {skip/tot:.2f} |" if tot else
+          f"| {_fmt_sp(sp)} | 0 | 0 | 0 | — |")
+    # nearest-c of the SKIPPED hooks per regime: how many are genuine near-dups (< the reduced
+    # spacing) vs "recoverable" (in [reduced, original) — parents the smaller radius would clear).
+    # This is the evidence for whether the radius is the binding constraint at all.
+    def _skip_nc(sp):
+        return [float(r["nearest_c_dist"]) for r in hooks
+                if float(r["spacing"]) == sp and not r.get("hooked")
+                and r.get("nearest_c_dist") is not None]
+    diag_rows = []
+    for _b, sp in ivals:
+        nc = _skip_nc(sp)
+        if not nc:
+            diag_rows.append((sp, 0, None, 0, 0)); continue
+        a = np.asarray(nc)
+        genuine = int((a < sp_lo).sum())             # closer than even the reduced radius
+        recov = int(((a >= sp_lo) & (a < max(regimes))).sum())
+        diag_rows.append((sp, len(nc), float(np.median(a)), genuine, recov))
+    w("\nNearest-c of the **skipped** hooks (is the spacing radius even the binding constraint?):\n")
+    w(f"| spacing | skipped | median nearest-c | genuine near-dup (< {sp_lo:g}) | recoverable [{sp_lo:g}, {max(regimes):g}) |")
+    w("|--:|--:|--:|--:|--:|")
+    for sp, n, med, gen, rec in diag_rows:
+        meds = f"{med:.3f}" if med is not None else "—"
+        w(f"| {_fmt_sp(sp)} | {n} | {meds} | {gen} | {rec} |")
+    # data-driven verdict (no static direction assumption).
+    fr = {sp: (hook_by_sp[sp][1] / max(1, sum(hook_by_sp[sp]))) for _b, sp in ivals}
+    hi_sp, lo_sp = max(regimes), min(regimes)
+    moved = "fell" if fr[lo_sp] < fr[hi_sp] else "rose" if fr[lo_sp] > fr[hi_sp] else "held"
+    recov_lo = next((rec for sp, n, med, gen, rec in diag_rows if sp == lo_sp), 0)
+    w(f"\n_Smoke reference skip frac {SMOKE_SKIP_FRAC:.2f}. Reducing spacing {hi_sp:g}→{lo_sp:g}: "
+      f"skip frac **{moved}** ({fr[hi_sp]:.2f}→{fr[lo_sp]:.2f}). The nearest-c table is the reason — "
+      f"if virtually all skips sit BELOW {lo_sp:g} (genuine near-dups) and few/none are in the "
+      f"recoverable band ({recov_lo} at {lo_sp:g}), the radius was never the binding constraint: the "
+      f"skipped parents are true near-duplicate Julia sets, so the smaller radius cannot recover them. "
+      f"Skip fraction is then driven by hooked-c DENSITY (accumulating over the run), not the radius._\n")
+
+    # ---- 2. hook-fire conversion into julia roots / admissions ----
+    # fired hook == one julia root created (add_julia_root only fires on a non-skip); julia
+    # admissions attributed to the regime of the admitting harvest-check batch.
+    w("\n### 2. Conversion: hook fires → julia roots → julia admissions\n")
+    jadm_by_sp: dict = defaultdict(int)
+    for h in harvest:
+        if h.get("admitted") and str(h.get("partition", "")).startswith("julia:"):
+            sp = regime_of_batch(int(h["batch"]), ivals)
+            if sp is not None:
+                jadm_by_sp[sp] += 1
+    w("| spacing | hooks fired (=julia roots) | julia admissions | adm / root |")
+    w("|--:|--:|--:|--:|")
+    for _b, sp in ivals:
+        fired = hook_by_sp[sp][0]
+        jadm = jadm_by_sp.get(sp, 0)
+        apr = f"{jadm/fired:.2f}" if fired else "—"
+        w(f"| {_fmt_sp(sp)} | {fired} | {jadm} | {apr} |")
+    w("\n_Roots-per-regime is the direct lever: fewer spacing-skips → more julia roots seeded → "
+      "more julia descents to admit. (Prospective only — spacing-skipped parents from the 0.20 "
+      "regime are NOT re-hooked; their seed c stays recoverable in julia_hooks.jsonl.)_\n")
+
+    # ---- 3. julia distinct-look share trajectory (incremental per regime) ----
+    # trace `looks` = cumulative tally INCL. the 523 library seed. Regime-incremental julia share =
+    # Δ(julia looks) / Δ(total looks) across the regime's trace rows — the honest per-regime signal
+    # (the cumulative share is dominated by the library seed and the earlier regime).
+    w("\n### 3. Julia distinct-look share — per-regime incremental\n")
+    def looks_at(row):
+        lk = row.get("looks", {})
+        jl = sum(int(lk.get(p, 0)) for p in PARTITIONS if p.startswith("julia:"))
+        tl = sum(int(lk.get(p, 0)) for p in PARTITIONS)
+        return jl, tl
+    # bucket trace rows by regime, keep first/last row per regime
+    rows_by_sp: dict = defaultdict(list)
+    for t in trace:
+        sp = regime_of_batch(int(t["batch"]), ivals)
+        if sp is not None:
+            rows_by_sp[sp].append(t)
+    tf = sched.get("target_frac") or {}
+    jtarget = sum(tf.get(p, 0.0) for p in PARTITIONS if p.startswith("julia:"))
+    w(f"Julia target share (order book): **{jtarget:.0%}**. Incremental = new julia looks / new "
+      "total looks produced *within* each regime (library seed + prior regime excluded):\n")
+    w("| spacing | batch span | Δ total looks | Δ julia looks | incremental julia share |")
+    w("|--:|--:|--:|--:|--:|")
+    for _b, sp in ivals:
+        rr = rows_by_sp.get(sp, [])
+        if not rr:
+            w(f"| {_fmt_sp(sp)} | — | 0 | 0 | — |")
+            continue
+        j0, t0 = looks_at(rr[0]); j1, t1 = looks_at(rr[-1])
+        dj, dt = max(0, j1 - j0), max(0, t1 - t0)
+        share = f"{dj/dt:.0%}" if dt else "—"
+        w(f"| {_fmt_sp(sp)} | b{rr[0]['batch']}–b{rr[-1]['batch']} | {dt} | {dj} | {share} |")
+    # scope disambiguation (two DIFFERENT, complementary julia shares — not a contradiction):
+    #  * run-incremental (this table, ~38% pooled over both regimes) = julia fraction of the looks
+    #    THIS RUN accepted, ignoring the library seed.
+    #  * library-wide (§A last row, ~22%) = julia fraction of the tally INCLUDING the 523-look seed
+    #    — the scope the DEFICIT actually measures against (tallies were library-seeded), so it is
+    #    the number that governs the 77% order-book target.
+    lastlk = trace[-1].get("looks", {})
+    jl = sum(int(lastlk.get(p, 0)) for p in PARTITIONS if p.startswith("julia:"))
+    tl = sum(int(lastlk.get(p, 0)) for p in PARTITIONS)
+    j_run = sum(max(0, looks_at(rr[-1])[0] - looks_at(rr[0])[0])
+                for rr in rows_by_sp.values() if rr)
+    t_run = sum(max(0, looks_at(rr[-1])[1] - looks_at(rr[0])[1])
+                for rr in rows_by_sp.values() if rr)
+    w(f"\n_**Two julia-share scopes, complementary not contradictory:** run-incremental "
+      f"**{(j_run/t_run if t_run else 0):.0%}** (julia share of the {t_run} looks this run added, "
+      f"seed excluded) vs library-wide **{(jl/tl if tl else 0):.0%}** (julia share of the full "
+      f"{tl}-look tally incl. the 523 library seed — the scope the deficit/target act on). The run "
+      f"is producing julia well above its library share yet still below the 77% target because the "
+      f"seed-heavy denominator moves slowly._\n")
+
+    # ---- 4. per-partition allocation shares per regime (served histogram) ----
+    w("\n### 4. Per-partition allocation share (batches served)\n")
+    served_by_sp: dict = defaultdict(Counter)
+    for t in trace:
+        if not t.get("chosen"):
+            continue
+        sp = regime_of_batch(int(t["batch"]), ivals)
+        if sp is not None:
+            served_by_sp[sp][t["chosen"]] += 1
+    hdr = "| partition | target | " + " | ".join(f"{_fmt_sp(sp)}" for _b, sp in ivals) + " |"
+    w(hdr)
+    w("|---|--:|" + "|".join(["--:"] * len(ivals)) + "|")
+    for p in PARTITIONS:
+        cells = []
+        for _b, sp in ivals:
+            c = served_by_sp[sp]
+            n = sum(c.values())
+            cells.append(f"{c.get(p,0)/n:.0%}" if n else "—")
+        tfs = f"{tf.get(p,0):.0%}" if tf else "—"
+        w(f"| {p} | {tfs} | " + " | ".join(cells) + " |")
+    w("")
+
+    # ---- 5. price drift per regime ----
+    w("\n### 5. Learned-price drift (active-min per distinct look)\n")
+    w("Per-partition price at each regime's first vs last traced batch (online EMA):\n")
+    w("| partition | " + " | ".join(f"{_fmt_sp(sp)} start→end" for _b, sp in ivals) + " |")
+    w("|---|" + "|".join(["--:"] * len(ivals)) + "|")
+    for p in PARTITIONS:
+        cells = []
+        for _b, sp in ivals:
+            rr = rows_by_sp.get(sp, [])
+            if not rr:
+                cells.append("—"); continue
+            p0 = rr[0].get("prices", {}).get(p)
+            p1 = rr[-1].get("prices", {}).get(p)
+            cells.append(f"{p0:.2f}→{p1:.2f}" if p0 is not None and p1 is not None else "—")
+        w(f"| {p} | " + " | ".join(cells) + " |")
+    w("\n_Julia prices are the campaign-3 seed; watch whether the cheaper 0.10 regime pushes the "
+      "julia price further down (more looks per active-min as hook throughput rises)._\n")
+    return L
+
+
 def load_scheduler_summary(run_dir: Path) -> dict:
     """The scheduler block from summary.json (finished) or state.json (mid-run)."""
     for name in ("summary.json", "state.json"):
@@ -182,6 +404,10 @@ def freshness_section(run_dir: Path, totals: dict, all_adm: list, active_min: fl
     w(f"- **Throughput: {rate:.1f} adm/hr** vs campaign-1 context **{C1_ADM_PER_HR} adm/hr** "
       f"({len(all_adm)} admitted / {active_min/60:.2f} active-h). "
       f"Δ **{rate - C1_ADM_PER_HR:+.1f} adm/hr**.")
+    w(f"  - _This Δ is the **JOINT** scheduler+prior effect vs campaign 1 — both knobs changed this "
+      f"campaign, so it is not attributable to the prior alone. The prior's **isolated** wins are "
+      f"the 0/{len(all_adm)} coord overlap and the {totals.get('precanon_dup',0)} renders it saved "
+      f"(both below)._")
     # precanon/dup savings attributable to the prior (prior seeds the dedup clouds -> more early
     # rejects, fewer wasted canonical renders). Counters are cumulative in totals.
     pc = totals.get("precanon_dup", 0)
@@ -221,8 +447,27 @@ def hook_section(run_dir: Path) -> list:
     frac = skipped / tot if tot else 0.0
     w(f"- Hook decisions: **{tot}** ({fired} fired, {skipped} skipped-by-spacing). "
       f"**Skip fraction {frac:.2f}** vs smoke {SMOKE_SKIP_FRAC:.2f}.")
-    verdict = ("over-thinning (skip fraction well above the smoke's 0.25 — spacing may be too wide)"
-               if frac > 0.40 else "consistent with the smoke — not over-thinning")
+    # A high skip fraction is only "over-thinning" if the skipped parents are genuinely distinct-c
+    # ones the radius wrongly kills. Judge on the nearest-c of skips, not the fraction alone: if
+    # almost all skips sit below the SMALLEST spacing used, they are true near-duplicate Julia sets
+    # and the skip is correct (the bottleneck is c-space clustering of admitted parents, not the
+    # radius). This is what the campaign-2 0.20→0.10 flip demonstrated.
+    nc = np.asarray([float(h["nearest_c_dist"]) for h in hooks
+                     if not h.get("hooked") and h.get("nearest_c_dist") is not None])
+    min_sp = min((float(h["spacing"]) for h in hooks), default=0.10)
+    if len(nc):
+        genuine_frac = float((nc < min_sp).mean())
+        if genuine_frac >= 0.8:
+            verdict = (f"NOT over-thinning — {genuine_frac:.0%} of skips are genuine near-dups "
+                       f"(nearest-c < {min_sp:g}, median {np.median(nc):.3f}); the skips are correct "
+                       f"and the julia-yield ceiling is c-space clustering of admitted parents, not spacing")
+        elif frac > 0.40:
+            verdict = (f"possible over-thinning — only {genuine_frac:.0%} of skips are genuine "
+                       f"near-dups, so some skipped distinct-c parents may be recoverable at a smaller radius")
+        else:
+            verdict = "consistent with the smoke — not over-thinning"
+    else:
+        verdict = "no skip nearest-c data"
     w(f"  - Verdict: **{verdict}**.")
     per = defaultdict(lambda: [0, 0])
     for h in hooks:
@@ -298,6 +543,34 @@ def build(args) -> str:
     w(f"_Run `{breadth.name}`, active **{active_min:.1f} min** ({active_min/60:.2f} h), "
       f"{len(all_adm)} distinct-q3 admissions. Scheduler + freshness prior both ON._\n")
 
+    # Budget planned-vs-actual (a documented decision, not silent drift). Planned = the fresh
+    # launch's budget from the run log; effective = the state/summary budget_s the run actually
+    # stopped against.
+    planned = None
+    rl = breadth / "run.log"
+    if rl.exists():
+        import re
+        m = re.search(r"\[fresh\].*budget=(\d+(?:\.\d+)?)m", rl.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            planned = float(m.group(1))
+    eff_budget = None
+    for name in ("summary.json", "state.json"):
+        p = breadth / name
+        if p.exists():
+            d = json.loads(p.read_text(encoding="utf-8"))
+            eff_budget = (d.get("budget_s", 0) / 60.0) or d.get("budget_min")
+            if eff_budget:
+                break
+    if planned:
+        w(f"> **Budget — planned vs actual.** Launched at **{planned:.0f}** accumulated-active-min; "
+          f"stopped cleanly at **{active_min:.1f}** against an effective **{eff_budget:.0f}-min** "
+          f"budget (Δ **{active_min - planned:+.0f} min** vs plan). The budget was lowered "
+          f"{planned:.0f}→{eff_budget:.0f} at the *deadline* resume (a \"finish by 11pm\" trim), "
+          f"NOT the later spacing-change resume, which preserved {eff_budget:.0f}. Shortfall "
+          f"**deliberately accepted** — breadth is not topped up; the dive leg carries the campaign "
+          f"forward._\n")
+
+    L += regime_comparison_section(breadth, sched)
     L += scheduler_section(breadth, sched)
     L += prices_section(sched)
     L += freshness_section(breadth, totals, all_adm, active_min)
@@ -312,6 +585,12 @@ def build(args) -> str:
 
     # base campaign-1 numbers (throughput/cost/distinct-look/overlap/coverage) appended verbatim.
     w("---\n\n# Base scheduling numbers (campaign1_readout, reused verbatim)\n")
+    w("> ⚠ **Caveat on the base §4 verdict.** campaign1_readout computes its "
+      "\"worth a freshness prior?\" verdict under the campaign-1 assumption that the prior was "
+      "*OFF* (high coord overlap → build one). In campaign 2 the prior is **ON**, so a **0.0% "
+      "coord overlap is the prior working as intended**, not evidence against it — the base "
+      "verdict's logic is inverted here and does not apply. The authoritative freshness-prior "
+      "result is **§C above** (whole-run).\n")
     c1_args = argparse.Namespace(
         breadth=str(breadth), dive=None,
         out=str(ROOT / "out" / "campaign2" / "_base.md"),
