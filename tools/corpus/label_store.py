@@ -44,6 +44,11 @@ SIDECAR_LABELS = {
     # consumer (corpus_reader trainer view, query_sampler pool, atlas guard) at once.
     "2026-07-11_jm3_band_v1": "jm3_band_v1.json",
     "2026-07-12_jm45_band_v1": "jm45_band_v1.json",
+    # Phoenix Phase-B seed-grid batch (500 items, labeled 2026-07-21; empty scores.json,
+    # never merged in-row). Stratified FROM grid output (biased) -> train-side only for any
+    # future CORN manifest; the varied-phoenix v7 calibration read lives in its own
+    # stratification. See docs/findings/phoenix_grid_labels.md.
+    "2026-07-21_phoenix_grid": "phoenix_grid.json",
 }
 
 

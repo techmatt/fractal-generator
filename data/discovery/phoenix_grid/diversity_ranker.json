@@ -1,0 +1,726 @@
+{
+  "diversity": {
+    "n_good": 77,
+    "n_good_embedded": 77,
+    "n_distinct_good_looks": 57,
+    "n_good_seeds": 18,
+    "n_good_branches": [
+      "cardioid",
+      "period2"
+    ],
+    "theme_cuts_coarse": {
+      "cos0.90": 9,
+      "cos0.85": 2,
+      "cos0.80": 1,
+      "cos0.70": 1
+    },
+    "looks_multi_seed": 1,
+    "largest_look_size": 5,
+    "medoids": [
+      {
+        "look": 14,
+        "medoid_id": "phg_0063_2_002",
+        "size": 5,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          63
+        ]
+      },
+      {
+        "look": 15,
+        "medoid_id": "phg_0067_1_004",
+        "size": 4,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          67
+        ]
+      },
+      {
+        "look": 23,
+        "medoid_id": "phg_0074_2_003",
+        "size": 4,
+        "n_seeds": 2,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          74,
+          81
+        ]
+      },
+      {
+        "look": 0,
+        "medoid_id": "phg_0006_2_001",
+        "size": 3,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          6
+        ]
+      },
+      {
+        "look": 22,
+        "medoid_id": "phg_0073_0_001",
+        "size": 3,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          73
+        ]
+      },
+      {
+        "look": 7,
+        "medoid_id": "phg_0063_0_000",
+        "size": 2,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          63
+        ]
+      },
+      {
+        "look": 12,
+        "medoid_id": "phg_0030_2_004",
+        "size": 2,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          30
+        ]
+      },
+      {
+        "look": 16,
+        "medoid_id": "phg_0073_1_002",
+        "size": 2,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          73
+        ]
+      },
+      {
+        "look": 30,
+        "medoid_id": "phg_0074_1_002",
+        "size": 2,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          74
+        ]
+      },
+      {
+        "look": 36,
+        "medoid_id": "phg_0078_0_002",
+        "size": 2,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          78
+        ]
+      },
+      {
+        "look": 46,
+        "medoid_id": "phg_0074_3_003",
+        "size": 2,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          74
+        ]
+      },
+      {
+        "look": 1,
+        "medoid_id": "phg_0008_3_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 2,
+        "medoid_id": "phg_0012_2_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          12
+        ]
+      },
+      {
+        "look": 3,
+        "medoid_id": "phg_0020_0_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          20
+        ]
+      },
+      {
+        "look": 4,
+        "medoid_id": "phg_0030_1_001",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          30
+        ]
+      },
+      {
+        "look": 5,
+        "medoid_id": "phg_0044_1_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          44
+        ]
+      },
+      {
+        "look": 6,
+        "medoid_id": "phg_0061_3_000",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          61
+        ]
+      },
+      {
+        "look": 8,
+        "medoid_id": "phg_0073_3_001",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          73
+        ]
+      },
+      {
+        "look": 9,
+        "medoid_id": "phg_0080_1_000",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          80
+        ]
+      },
+      {
+        "look": 10,
+        "medoid_id": "phg_0081_1_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          81
+        ]
+      },
+      {
+        "look": 11,
+        "medoid_id": "phg_0008_3_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 13,
+        "medoid_id": "phg_0044_0_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          44
+        ]
+      },
+      {
+        "look": 17,
+        "medoid_id": "phg_0074_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          74
+        ]
+      },
+      {
+        "look": 18,
+        "medoid_id": "phg_0078_1_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          78
+        ]
+      },
+      {
+        "look": 19,
+        "medoid_id": "phg_0080_1_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          80
+        ]
+      },
+      {
+        "look": 20,
+        "medoid_id": "phg_0008_2_001",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 21,
+        "medoid_id": "phg_0066_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          66
+        ]
+      },
+      {
+        "look": 24,
+        "medoid_id": "phg_0008_3_001",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 25,
+        "medoid_id": "phg_0063_2_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          63
+        ]
+      },
+      {
+        "look": 26,
+        "medoid_id": "phg_0080_3_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          80
+        ]
+      },
+      {
+        "look": 27,
+        "medoid_id": "phg_0008_3_000",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 28,
+        "medoid_id": "phg_0020_3_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          20
+        ]
+      },
+      {
+        "look": 29,
+        "medoid_id": "phg_0054_0_000",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          54
+        ]
+      },
+      {
+        "look": 31,
+        "medoid_id": "phg_0008_1_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 32,
+        "medoid_id": "phg_0020_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          20
+        ]
+      },
+      {
+        "look": 33,
+        "medoid_id": "phg_0025_0_001",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          25
+        ]
+      },
+      {
+        "look": 34,
+        "medoid_id": "phg_0073_1_000",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          73
+        ]
+      },
+      {
+        "look": 35,
+        "medoid_id": "phg_0075_1_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          75
+        ]
+      },
+      {
+        "look": 37,
+        "medoid_id": "phg_0008_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 38,
+        "medoid_id": "phg_0020_3_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          20
+        ]
+      },
+      {
+        "look": 39,
+        "medoid_id": "phg_0025_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          25
+        ]
+      },
+      {
+        "look": 40,
+        "medoid_id": "phg_0054_2_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          54
+        ]
+      },
+      {
+        "look": 41,
+        "medoid_id": "phg_0073_0_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          73
+        ]
+      },
+      {
+        "look": 42,
+        "medoid_id": "phg_0075_0_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          75
+        ]
+      },
+      {
+        "look": 43,
+        "medoid_id": "phg_0080_3_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          80
+        ]
+      },
+      {
+        "look": 44,
+        "medoid_id": "phg_0081_3_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          81
+        ]
+      },
+      {
+        "look": 45,
+        "medoid_id": "phg_0008_1_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 47,
+        "medoid_id": "phg_0075_2_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          75
+        ]
+      },
+      {
+        "look": 48,
+        "medoid_id": "phg_0080_3_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          80
+        ]
+      },
+      {
+        "look": 49,
+        "medoid_id": "phg_0030_1_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          30
+        ]
+      },
+      {
+        "look": 50,
+        "medoid_id": "phg_0054_2_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          54
+        ]
+      },
+      {
+        "look": 51,
+        "medoid_id": "phg_0075_0_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          75
+        ]
+      },
+      {
+        "look": 52,
+        "medoid_id": "phg_0078_2_001",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          78
+        ]
+      },
+      {
+        "look": 53,
+        "medoid_id": "phg_0080_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          80
+        ]
+      },
+      {
+        "look": 54,
+        "medoid_id": "phg_0008_2_003",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "period2"
+        ],
+        "seeds": [
+          8
+        ]
+      },
+      {
+        "look": 55,
+        "medoid_id": "phg_0067_0_004",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          67
+        ]
+      },
+      {
+        "look": 56,
+        "medoid_id": "phg_0067_3_002",
+        "size": 1,
+        "n_seeds": 1,
+        "branches": [
+          "cardioid"
+        ],
+        "seeds": [
+          67
+        ]
+      }
+    ]
+  },
+  "ranker": {
+    "n_scored": 396,
+    "sets": [
+      "v7",
+      "colored"
+    ],
+    "head": "logi",
+    "spearman_rank_vs_human": {
+      "rho": 0.5402368306249109,
+      "p": 2.201313706847686e-31
+    },
+    "spearman_pgood_vs_human": {
+      "rho": 0.6313272654506991,
+      "p": 1.9993970273385846e-45
+    },
+    "auc_rank_good_vs_rest": 0.7630175467166063,
+    "note": "held-out by construction: pref_loc_v1 trained on run2+dive+campaign1, zero phoenix."
+  },
+  "sheet": "out\\phoenix_grid\\good_look_medoids.png"
+}
