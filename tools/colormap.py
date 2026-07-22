@@ -203,11 +203,23 @@ def _bake_lut(stops, reverse=False, mirror=False):
     pos = np.array([p for p, _ in norm], dtype=np.float64)
     labs = np.array([srgb_to_oklab(rgb / 255.0) for _, rgb in norm], dtype=np.float64)
 
-    lut = np.empty((LUT_SIZE, 3), dtype=np.float64)
-    for i in range(LUT_SIZE):
-        t = i / LUT_SIZE
-        lab = _interp_oklab_cyclic(pos, labs, t)
-        lut[i] = oklab_to_linear_srgb(lab)
+    # Vectorized cyclic OKLab interpolation over the whole LUT grid — byte-identical to
+    # the scalar `_interp_oklab_cyclic` per-entry loop it replaces (this was the pref-pick's
+    # 96%-of-cost hot spot: a Python 4096-iteration loop, cold per distinct palette). Append
+    # the wrap stop (pos[0]+1, lab[0]) so the last cyclic segment [pos[-1], pos[0]+1) is a
+    # plain interval; t below pos[0] shifts by +1 into it (the scalar wrap branch). Each
+    # t=i/LUT_SIZE then lerps in OKLab within its segment [epos[k], epos[k+1]).
+    n = len(pos)
+    t = np.arange(LUT_SIZE, dtype=np.float64) / LUT_SIZE
+    epos = np.concatenate([pos, [pos[0] + 1.0]])          # (n+1,)
+    elab = np.concatenate([labs, labs[:1]], axis=0)       # (n+1,3)
+    tt = np.where(t < pos[0], t + 1.0, t)
+    k = np.searchsorted(epos, tt, side="right") - 1       # segment index
+    k = np.clip(k, 0, n - 1)
+    a, b = epos[k], epos[k + 1]
+    f = ((tt - a) / (b - a))[:, None]
+    lab = elab[k] + (elab[k + 1] - elab[k]) * f
+    lut = oklab_to_linear_srgb(lab)
 
     if reverse:
         # new[i] = old[(N - i) mod N] (seam fixed point at i=0).
@@ -864,6 +876,64 @@ def render_candidate_coarse(coarse, config, library, profile=None):
     ic = np.asarray(config.interior_color, dtype=np.float64)
     vf = coarse.vfrac[..., None]                        # interior-boundary blend
     linear = linear * vf + ic[None, None, :] * (1.0 - vf)
+    return _encode_srgb8(linear)
+
+
+def render_candidates_coarse(coarse, configs, library, profiles=None):
+    """Batched SCORING-ONLY analogue of `render_candidate_coarse`: color one CoarseField
+    under K CandidateConfigs in a single numpy op. Returns a (K,h,w,3) uint8 array whose
+    k-th slice is byte-identical to `render_candidate_coarse(coarse, configs[k], library,
+    profiles[k])`. This is the vectorized pref-pick recolor — the ≤32 candidate colormaps of
+    a location's cached coarse field are gathered through their stacked LUTs at once instead
+    of a Python per-candidate loop. Same fence as `render_candidate_coarse`: SCORING-ONLY,
+    never a stored crop. `profiles` (list aligned with `configs`, or None) supplies the
+    per-config GradientTransferProfile required by any `transfer='grad'` config."""
+    K = len(configs)
+    if profiles is None:
+        profiles = [None] * K
+    h, w = coarse.xmean.shape
+    luts = np.empty((K, LUT_SIZE, 3), dtype=np.float64)
+    ts = np.empty((K, h, w), dtype=np.float64)
+    ics = np.empty((K, 3), dtype=np.float64)
+    for k, cfg in enumerate(configs):
+        validate_config(cfg, library)
+        xin = coarse.xmean
+        if cfg.transfer == "grad":
+            if profiles[k] is None:
+                raise ValueError("render_candidates_coarse needs a GradientTransferProfile for transfer='grad'")
+            xin = _apply_transfer(coarse.xmean, profiles[k], cfg.transfer_gamma)
+        gray = apply_transform(xin, cfg.log_premap, cfg.gamma)
+        t = np.mod(gray * cfg.n_cycles, 1.0)
+        ts[k] = np.mod(t + cfg.phase, 1.0)
+        luts[k] = library.lut(cfg.palette, reverse=cfg.reverse)
+        ics[k] = np.asarray(cfg.interior_color, dtype=np.float64)
+
+    # Batched cyclic LUT gather — `lookup_linear` over K stacked LUTs (same index+lerp
+    # math). When every candidate shares one t-plane (the canonical pref-pick case: configs
+    # differ only in palette), the index math is done ONCE on (h,w) and all K LUTs are
+    # gathered by a single basic slice `luts[:, i0]` — ~2x over per-candidate advanced
+    # indexing on a (K,h,w) index. Byte-identical to the general path either way.
+    if np.array_equal(ts, np.broadcast_to(ts[0], ts.shape)):
+        tm = np.mod(ts[0], 1.0)
+        x = tm * LUT_SIZE
+        i0 = np.floor(x).astype(np.int64)
+        f = (x - i0)[..., None]
+        i0 = i0 % LUT_SIZE
+        i1 = (i0 + 1) % LUT_SIZE
+        linear = luts[:, i0] * (1.0 - f) + luts[:, i1] * f     # (K,h,w,3)
+    else:
+        tm = np.mod(ts, 1.0)
+        x = tm * LUT_SIZE
+        i0 = np.floor(x).astype(np.int64)
+        f = (x - i0)[..., None]
+        i0 = i0 % LUT_SIZE
+        i1 = (i0 + 1) % LUT_SIZE
+        kidx = np.arange(K)[:, None, None]
+        linear = luts[kidx, i0] * (1.0 - f) + luts[kidx, i1] * f    # (K,h,w,3)
+
+    # Interior-boundary blend (per-config interior_color, shared vfrac).
+    vf = coarse.vfrac[None, ..., None]                          # (1,h,w,1)
+    linear = linear * vf + ics[:, None, None, :] * (1.0 - vf)
     return _encode_srgb8(linear)
 
 

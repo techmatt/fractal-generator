@@ -246,8 +246,8 @@ class PaletteRanker:
         field = cm.load_field(field_bin, field_json)
         prep = cm.stretch_field(field)
         cfield = cm.coarse_field(prep)
-        imgs = [cm.render_candidate_coarse(cfield, self.canonical_config(field, pn), self.lib)
-                for pn in members]
+        cfgs = [self.canonical_config(field, pn) for pn in members]
+        imgs = cm.render_candidates_coarse(cfield, cfgs, self.lib)   # batched (K,h,w,3)
         scores = [float(s) for s in self.pref.score(imgs)]
         self.cache[key] = (members, scores)
         return members, scores
