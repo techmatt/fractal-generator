@@ -84,11 +84,13 @@ OCC_FLOOR, BLACK_CAP = ps.OCC_FLOOR, ps.BLACK_CAP
 WORKERS = ps.WORKERS
 SCORER_PATH, SCORER_VERSION = ps.SCORER_PATH, ps.SCORER_VERSION
 
-# Provisional phoenix q3 operating point. t_good_for("phoenix")==0.50 (v7 baseline) is above the
-# measured phoenix p_good ceiling (~0.365, docs/findings phoenix t_good yield study) so it admits
-# ~nothing; 0.18 is the shipped --run-phoenix provisional. Raw p_good is stored per outcome, so any
-# t_good re-decodes for free once the human labels re-derive it. The verdict stays PROVISIONAL.
-T_GOOD_DEFAULT = 0.18
+# Phoenix q3 operating point. Source it from the production table so the grid always runs at
+# whatever the seeder is currently calibrated to (label-derived, now 0.45 — see production_seeder
+# T_GOOD_OVERRIDES / docs/findings/phoenix_grid_labels.md §2). The original grid ran at a hardcoded
+# 0.18 that was NEVER a production value — a stale copy of the retired v6-era provisional that
+# nobody ordered; it admitted ~everything (in-batch precision 0.19). Raw p_good is stored per
+# outcome, so any t_good re-decodes for free (tools/phoenix/redecode_grid.py). --t-good overrides.
+T_GOOD_DEFAULT = ps.t_good_for("phoenix")
 
 NEAR_DUP_THRESHOLD = 0.974   # morph-embed distinct-look cosine (matches the library / scheduler)
 DEDUP_K = ps.DEDUP_K         # cloud viewport dedup (identity-aware via near_dup)

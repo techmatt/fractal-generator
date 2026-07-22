@@ -296,13 +296,19 @@ def julia_partition(fam: str) -> str:
 # 0.51 admits 0/16 of those human-rejected tiles. Family-specific tightening (precedent:
 # phoenix 0.18->0.50); the julia families keep their F2 cuts (blind slices too small to move).
 #
-# NOT listed, deliberately (both -> baseline 0.50, see findings doc):
-#   phoenix                    — 3 eval locations / 0 positive: UNDECIDABLE under v7. The
-#                                v6 table's provisional 0.18 was fit on v6's p_good scale
-#                                and is meaningless here; no v7 phoenix eval exists to
-#                                re-derive it, so phoenix falls to baseline until one does.
+# NOT listed, deliberately (-> baseline 0.50, see findings doc):
 #   native multibrot3/4/5      — uncalibrated, 0 eval positives in either direction; no
 #                                invented value.
+#
+# phoenix — 0.45, the v7 F2-argmax derived from the 500-label Phase-B grid batch
+# (docs/findings/phoenix_grid_labels.md §2, tools/phoenix/phoenix_label_analysis.py:
+# t*=0.45, F2_in 0.724 / F2_oof 0.689, n_pos=77 >= 15 sufficiency floor). This SUPERSEDES
+# the earlier "undecidable -> baseline" call: the grid batch closed the zero-coverage gap
+# (v7 ranks varied phoenix AUC 0.86). t*=0.45 is on an F2 plateau (0.724 vs baseline-0.50's
+# 0.707, within noise); we adopt the derived optimum rather than the baseline so the grid
+# re-decode + classic supply mint at the label-certified operating point. The old v6-era
+# provisional 0.18 (never a v7 override; it lived only in the grid harness default) admitted
+# ~everything (in-batch precision 0.19) and is retired.
 # =========================================================================== #
 T_GOOD_BASELINE = 0.50    # conservative default for every unswept / undecidable partition
 T_GOOD_OVERRIDES = {
@@ -311,6 +317,7 @@ T_GOOD_OVERRIDES = {
     "julia:multibrot3": 0.25,  # v7 F2 sweep, census-144 slice (n=54, pos=21)
     "julia:multibrot4": 0.17,  # v7 F2 sweep, census-144 slice (n=51, pos=24)
     "julia:multibrot5": 0.10,  # v7 F2 sweep, census-144 slice (n=39, pos=22)
+    "phoenix": 0.45,           # v7 F2-argmax on the 500-label Phase-B grid (docs/findings/phoenix_grid_labels.md §2)
 }
 
 

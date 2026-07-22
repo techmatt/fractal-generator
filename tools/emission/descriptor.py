@@ -51,9 +51,19 @@ def auto_maxiter(fw: float) -> int:
 # --------------------------------------------------------------------------- #
 # Partition (ledger `family`) → render family (mirror steered_frontier.render_family_of).
 # --------------------------------------------------------------------------- #
+# Phoenix identity resolves ABSENT axes to the classic Ushiki plane (z_{-1}=0), so a legacy
+# pre-axis phoenix row keys byte-for-byte as explicit-Ushiki — mirrors
+# production_seeder.PHOENIX_*_DEFAULT / row_phoenix_key.
+_PHOENIX_C_DEFAULT = (0.5667, 0.0)
+_PHOENIX_P_DEFAULT = (-0.5, 0.0)
+_PHOENIX_ZM1_DEFAULT = (0.0, 0.0)
+
+
 def render_family_of(partition: str) -> str:
     if partition == "mandelbrot" or partition in ("multibrot3", "multibrot4", "multibrot5"):
         return partition
+    if partition == "phoenix":
+        return "phoenix"
     if partition == "julia:mandelbrot":
         return "julia"
     if partition.startswith("julia:multibrot"):
@@ -61,14 +71,32 @@ def render_family_of(partition: str) -> str:
     raise ValueError(f"unknown partition {partition!r}")
 
 
+def _phoenix_family_params(row: dict) -> dict:
+    """(p, z_{-1}) family_params for a phoenix row, absent axes → Ushiki defaults."""
+    def g(kre, kim, default):
+        vre, vim = row.get(kre), row.get(kim)
+        return (float(vre) if vre is not None else default[0],
+                float(vim) if vim is not None else default[1])
+    p = g("phoenix_p_re", "phoenix_p_im", _PHOENIX_P_DEFAULT)
+    z = g("phoenix_zm1_re", "phoenix_zm1_im", _PHOENIX_ZM1_DEFAULT)
+    return {"p_re": repr(p[0]), "p_im": repr(p[1]),
+            "zm1_re": repr(z[0]), "zm1_im": repr(z[1])}
+
+
 def location_of(row: dict) -> loc_mod.Location:
     """Ledger row → canonical Location. Coords are the reframed OUTCOME viewport; julia
-    twins carry the parameter c from the row (`julia_c_re/im`)."""
+    twins carry the parameter c from the row (`julia_c_re/im`); phoenix rows carry the full
+    (c, p, z_{-1}) parameter point (absent axes → Ushiki defaults)."""
     fam = render_family_of(row["family"])
     fw = float(row["outcome_fw"])
     kw = dict(family=fam, cx=str(row["outcome_cx"]), cy=str(row["outcome_cy"]),
               fw=str(fw), maxiter=auto_maxiter(fw))
-    if row.get("julia_c_re") is not None:
+    if row["family"] == "phoenix":
+        cre, cim = row.get("phoenix_c_re"), row.get("phoenix_c_im")
+        kw["c_re"] = repr(float(cre)) if cre is not None else repr(_PHOENIX_C_DEFAULT[0])
+        kw["c_im"] = repr(float(cim)) if cim is not None else repr(_PHOENIX_C_DEFAULT[1])
+        kw["family_params"] = _phoenix_family_params(row)
+    elif row.get("julia_c_re") is not None:
         kw["c_re"] = str(row["julia_c_re"])
         kw["c_im"] = str(row["julia_c_im"])
     return loc_mod.Location(**kw)

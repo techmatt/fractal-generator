@@ -86,7 +86,7 @@ FAMILIES = ["mandelbrot", "multibrot3", "multibrot4", "multibrot5"]
 CAP_HOURS = 6.0
 PER_FAMILY_MIN = 7.0        # discovery budget per family per cycle
 PHOENIX_PER_CYCLE_MIN = 10.0  # ELEVATED per-cycle phoenix z-descent budget (> PER_FAMILY_MIN):
-                              # phoenix is a low-yield garnish (~7 descents/keeper at t_good=0.18),
+                              # phoenix is a low-yield garnish (~7 descents/keeper at t_good=0.45),
                               # so it earns more time per keeper than a c-plane family. Bounded so
                               # it stays a modest stream (0 disables the phoenix phase entirely).
 POOL_COUNT = 40             # build_fresh_discovery --count (family-balanced pool cap/cycle)
