@@ -1,0 +1,39 @@
+{
+  "t_good": 0.45,
+  "scorer_version": "v7",
+  "near_dup_threshold": 0.974,
+  "legacy_sources": {
+    "gather_phoenix": {
+      "q3": 206,
+      "new": 105
+    },
+    "prospect_run1": {
+      "q3": 79,
+      "new": 79
+    },
+    "overnight_0713": {
+      "q3": 28,
+      "new": 0
+    }
+  },
+  "coords_unique": 184,
+  "rescored": 184,
+  "admissions_q3": 58,
+  "distinct_looks": 41,
+  "topup_added": 0,
+  "min_distinct_target": 15,
+  "classic_identity": {
+    "c": [
+      0.5667,
+      0.0
+    ],
+    "p": [
+      -0.5,
+      0.0
+    ],
+    "z_m1": [
+      0.0,
+      0.0
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "run_dir": "data\\discovery\\phoenix_grid\\grid",
+  "source_ledger": "outcome_ledger.jsonl",
+  "rows_in": 656,
+  "t_good_old": 0.18,
+  "t_good_new": 0.45,
+  "admissions_q3": 337,
+  "distinct_looks": 196,
+  "dropped_below_t": 319,
+  "active_minutes": 233.48,
+  "min_per_look_new": 1.191,
+  "min_per_look_old": 0.66,
+  "distinct_looks_old": 354,
+  "out_ledger": "outcome_ledger_v7_t45.jsonl",
+  "out_feats": "outcome_feats_v7_t45.npz",
+  "n_feats": 337
+}

@@ -1,0 +1,121 @@
+{
+  "run_ts": "breadth",
+  "mode": "steered",
+  "families": [
+    "mandelbrot",
+    "multibrot3",
+    "multibrot4",
+    "multibrot5"
+  ],
+  "julia_hook": true,
+  "julia_hook_spacing": 0.1,
+  "freshness_prior": true,
+  "prior_rows": 7926,
+  "budget_min": 700.0,
+  "lambda_m": 0.5,
+  "beta": 0.02,
+  "recency_k": 8,
+  "morph_mem": 494,
+  "morph_perm": 311,
+  "morph_recency": 183,
+  "morph_lo": 0.8775,
+  "morph_hi": 0.939,
+  "anchor_src": "morph_anchors.json",
+  "sat_cos": 0.9328,
+  "sat_frac": 0.7434,
+  "active_min": 699.68,
+  "batches": 2540,
+  "tau_h": {
+    "mandelbrot": 0.20102782547473907,
+    "multibrot3": 0.20102782547473907,
+    "multibrot4": 0.7739711046218872,
+    "multibrot5": 0.20102782547473907,
+    "julia:mandelbrot": 0.18439058661460875,
+    "julia:multibrot3": 0.31058982014656067,
+    "julia:multibrot4": 0.20721471309661865,
+    "julia:multibrot5": 0.18631197065114974
+  },
+  "totals": {
+    "expanded": 71785,
+    "candidates": 250998,
+    "harvest_checks": 13425,
+    "canonical_q3": 571,
+    "admitted": 311,
+    "q3_dup": 260,
+    "guarded": 0,
+    "julia_roots": 65,
+    "julia_hooks_skipped": 123,
+    "precanon_dup": 10993,
+    "cap_hits": 1399,
+    "dead_nodes": 623,
+    "novelty_hits": 248955,
+    "nov_scored": 250998,
+    "sat_hits": 186586,
+    "distinct_looks": 287
+  },
+  "cloud_sizes": {
+    "mandelbrot": 249,
+    "multibrot3": 182,
+    "multibrot4": 115,
+    "multibrot5": 180,
+    "julia:mandelbrot": 138,
+    "julia:multibrot3": 106,
+    "julia:multibrot4": 67,
+    "julia:multibrot5": 75
+  },
+  "scheduler": {
+    "target_frac": {
+      "mandelbrot": 0.092,
+      "multibrot3": 0.0613,
+      "multibrot4": 0.0192,
+      "multibrot5": 0.0613,
+      "julia:mandelbrot": 0.1916,
+      "julia:multibrot3": 0.1916,
+      "julia:multibrot4": 0.1916,
+      "julia:multibrot5": 0.1916
+    },
+    "look_frac": {
+      "mandelbrot": 0.1975,
+      "multibrot3": 0.2333,
+      "multibrot4": 0.1012,
+      "multibrot5": 0.2395,
+      "julia:mandelbrot": 0.0469,
+      "julia:multibrot3": 0.0716,
+      "julia:multibrot4": 0.0568,
+      "julia:multibrot5": 0.0531
+    },
+    "looks": {
+      "mandelbrot": 160,
+      "multibrot3": 189,
+      "multibrot4": 82,
+      "multibrot5": 194,
+      "julia:mandelbrot": 38,
+      "julia:multibrot3": 58,
+      "julia:multibrot4": 46,
+      "julia:multibrot5": 43
+    },
+    "total_looks": 810,
+    "prices": {
+      "mandelbrot": 8.502,
+      "multibrot3": 1.279,
+      "multibrot4": 5.325,
+      "multibrot5": 1.13,
+      "julia:mandelbrot": 0.403,
+      "julia:multibrot3": 0.497,
+      "julia:multibrot4": 0.365,
+      "julia:multibrot5": 0.421
+    },
+    "min_spent": {
+      "mandelbrot": 248.94,
+      "multibrot3": 48.58,
+      "multibrot4": 291.38,
+      "multibrot5": 72.58,
+      "julia:mandelbrot": 12.41,
+      "julia:multibrot3": 6.39,
+      "julia:multibrot4": 8.93,
+      "julia:multibrot5": 10.46
+    },
+    "capped": [],
+    "n_observed_cells": 523
+  }
+}
