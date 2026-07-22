@@ -109,12 +109,40 @@ def _entry(id, type, cluster, flavor, style, score, emb):
             "style": style, "score": score, "emb": emb}
 
 
-def test_kernel_zero_across_cells_cosine_within():
+def test_kernel_continuous_cos_across_cells():
+    # continuous morph cos, NO categorical gate: a near-identical look is discounted even
+    # across cells (this is the coverage-engages fix — the old kernel returned 0 for c).
     a = _entry("a", "mandelbrot", "m#0", "k16:1", "smooth", 0.9, [1.0, 0.0])
     b = _entry("b", "mandelbrot", "m#0", "k16:1", "smooth", 0.8, [1.0, 0.0])   # same cell, cos 1
-    c = _entry("c", "mandelbrot", "m#0", "k16:2", "smooth", 0.8, [1.0, 0.0])   # diff flavor
+    c = _entry("c", "mandelbrot", "m#0", "k16:2", "smooth", 0.8, [1.0, 0.0])   # diff flavor, cos 1
+    d = _entry("d", "mandelbrot", "m#0", "k16:2", "smooth", 0.8, [0.0, 1.0])   # diff flavor, cos 0
     assert SEL.kernel(a, b) == pytest.approx(1.0)
-    assert SEL.kernel(a, c) == 0.0
+    assert SEL.kernel(a, c) == pytest.approx(1.0)   # was 0.0 under the categorical gate
+    assert SEL.kernel(a, d) == pytest.approx(0.0)
+
+
+def test_kernel_style_weight_floors_same_mode():
+    # morph-distinct (orthogonal) tiles of the SAME render style are floored at style_weight;
+    # a different style stays at the (here 0) cosine — how the strange pass spreads modes.
+    a = _entry("a", "mandelbrot", "m#0", "k16:1", "tia", 0.6, [1.0, 0.0])
+    b = _entry("b", "mandelbrot", "m#1", "k16:2", "tia", 0.6, [0.0, 1.0])       # same style, cos 0
+    c = _entry("c", "mandelbrot", "m#2", "k16:3", "stripe", 0.6, [0.0, 1.0])    # diff style, cos 0
+    assert SEL.kernel(a, b) == pytest.approx(0.0)                # no floor → 0
+    assert SEL.kernel(a, b, style_weight=0.5) == pytest.approx(0.5)
+    assert SEL.kernel(a, c, style_weight=0.5) == pytest.approx(0.0)
+
+
+def test_greedy_style_weight_spreads_modes():
+    # 3 tia + 1 stripe, all morph-distinct, N=2; the style floor makes the 2nd pick switch
+    # modes to stripe rather than take a 2nd (lower-score) tia.
+    e = [_entry("t0", "mandelbrot", "m#0", "k16:1", "tia", 0.90, [1.0, 0.0, 0.0, 0.0]),
+         _entry("t1", "mandelbrot", "m#1", "k16:1", "tia", 0.80, [0.0, 1.0, 0.0, 0.0]),
+         _entry("t2", "mandelbrot", "m#2", "k16:1", "tia", 0.70, [0.0, 0.0, 1.0, 0.0]),
+         _entry("s0", "mandelbrot", "m#3", "k16:1", "stripe", 0.60, [0.0, 0.0, 0.0, 1.0])]
+    sel, _log = SEL.greedy_select(e, 2, style_weight=0.5)
+    styles = {x["style"] for x in sel}
+    assert styles == {"tia", "stripe"}         # spread, not two tia
+    assert sel[0]["id"] == "t0"                # best tia first
 
 
 def test_greedy_prefers_distinct_cells():
@@ -269,6 +297,7 @@ def _args(tmp_path, **over):
         target_gated=0, floor=B.DEFAULT_FLOOR, mining_floor=B.DEFAULT_MINING_FLOOR,
         release_floor=B.DEFAULT_RELEASE_FLOOR, mining_release_floor=B.DEFAULT_MINING_RELEASE_FLOOR,
         intake_floor=None, target_measure=str(B.DEFAULT_TARGET_MEASURE),
+        strange_frac=B.DEFAULT_STRANGE_FRAC,
         max_attempts=240, time_budget_min=45.0, seed=0)
     for k, v in over.items():
         setattr(a, k, v)
@@ -298,7 +327,10 @@ def test_release_floors_exclude_subfloor_and_short_fill(tmp_path):
     selected, _log = eng.select_release()
     sel_ids = {e["_rec"]["id"] for e in selected}
     assert sel_ids == {"em_0", "em_2"}                    # never dips below the floor to fill N=5
-    assert eng.release_short_fill == {"requested": 5, "eligible": 2, "selected": 2, "short_by": 3}
+    sf = eng.release_short_fill
+    assert (sf["requested"], sf["eligible"], sf["selected"], sf["short_by"]) == (5, 2, 2, 3)
+    # head-split: one smooth (wallpaper) + one strange (mining), never compared in one step
+    assert eng.release_split["smooth_selected"] == 1 and eng.release_split["strange_selected"] == 1
 
 
 def test_release_floor_per_head_boundary(tmp_path):

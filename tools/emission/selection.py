@@ -16,29 +16,31 @@ pool entry with the largest marginal gain, where
   facility-location marginal: an item adds coverage in proportion to how UNlike the
   nearest already-selected item it is. K is the similarity kernel below.
 
-* K(a, b) = [∏ over categorical axes 1{a_axis == b_axis}] × max(0, cos(emb_a, emb_b)).
-  Product of exact-match categorical kernels × cosine on the morph-CLIP embedding, so
-  two entries are "similar" only when they share the SAME descriptor cell AND look
-  alike; entries in different cells are orthogonal (K = 0) and never suppress each
-  other. This makes the first pick from each occupied cell maximally valuable and only
-  down-weights a second, visually-near-duplicate pick from the same cell.
+* K(a, b) = max(0, cos(emb_a, emb_b)), optionally floored at `style_weight` when a and
+  b share a render style. Continuous morph-CLIP cosine across ALL cells — there is NO
+  categorical exact-match gate. A second, visually-near-identical look is therefore
+  discounted regardless of whether it lands in a different (type, flavor, style) cell:
+  two spirals that look alike suppress each other even across cells. (The old kernel
+  multiplied cos by a product of exact-match categorical indicators, so any axis
+  mismatch zeroed K — every pick in a fresh cell then read as maximally novel and the
+  coverage term never fired.) The optional `style_weight` floor makes a WITHIN-HEAD pass
+  spread across the promoted render modes: a second tile of the same style is discounted
+  by at least `style_weight` even between morph-distinct locations, so greedy interleaves
+  modes before doubling up on one.
 
 Ties in marginal gain (ubiquitous when most niches are singletons, all at quality
 percentile 1.0 and coverage 1.0) are broken by absolute head score, so a genuinely
 strong singleton beats a weak one. Every pick logs the niche it filled and its nearest
 already-selected neighbour (the "displacement" it caused).
 
-CAVEAT — cross-head score incommensurability. `score` is compared directly only in the
-tie-break, and the niche-percentile normalisation only bites when a niche holds >1 entry.
-With one colorize per location (the norm at library scale) EVERY niche is a singleton, so
-niche_pct ≡ 1.0 and coverage ≡ 1.0 for the first pick of each cell — greedy_select then
-degenerates to top-N-by-absolute-`score`. When the pool mixes entries scored by DIFFERENT
-heads (e.g. the wallpaper head's `p_ge3` for smooth vs the mining head's for strange
-styles), those absolute scores are on incommensurable scales, and the smaller-scaled head
-can be shut out entirely (this is exactly how 82 release-eligible strange tiles lost every
-slot to smooth). If you need guaranteed cross-head representation, pre-partition by head and
-select a quota from each, or pass a within-head-normalised `score` — this selector treats
-`score` as a single comparable quality axis and does NOT reconcile heads itself.
+CROSS-HEAD USE — never mix heads in one call. `score` is compared directly in the
+tie-break and is on each head's own scale; the wallpaper head's `p_ge3` and the mining
+head's are incommensurable. Passing both to ONE greedy_select shuts the smaller-scaled
+head out entirely (this is exactly how 82 release-eligible strange tiles lost every slot
+to smooth in the v1 release). Call greedy_select ONCE PER HEAD over that head's entries
+and allocate the slot budget outside — the driver's `select_release` does exactly this
+(disjoint smooth/strange passes). This selector treats `score` as a single within-head
+quality axis and does NOT reconcile heads itself.
 
 Pure Python + math; embeddings arrive as plain float lists so this is unit-testable.
 """
@@ -62,12 +64,18 @@ def _cos(a, b) -> float:
     return dot / (na * nb)
 
 
-def kernel(a: dict, b: dict) -> float:
-    """Similarity kernel between two pool entries (see module docstring)."""
-    for ax in CATEGORICAL_AXES:
-        if a[ax] != b[ax]:
-            return 0.0
-    return max(0.0, _cos(a.get("emb"), b.get("emb")))
+def kernel(a: dict, b: dict, style_weight: float = 0.0) -> float:
+    """Coverage-similarity between two pool entries (see module docstring).
+
+    Continuous morph-CLIP cosine across ALL cells — no categorical exact-match gate, so a
+    near-identical look is discounted regardless of type/flavor/style. `style_weight` (>0)
+    additionally floors the similarity when the two entries share a render style, so a
+    within-head pass spreads across the promoted modes even between morph-distinct
+    locations."""
+    sim = max(0.0, _cos(a.get("emb"), b.get("emb")))
+    if style_weight > 0.0 and a.get("style") is not None and a.get("style") == b.get("style"):
+        sim = max(sim, style_weight)
+    return sim
 
 
 def niche_percentiles(entries: list) -> dict:
@@ -85,11 +93,14 @@ def niche_percentiles(entries: list) -> dict:
     return pct
 
 
-def greedy_select(entries: list, n: int) -> tuple:
+def greedy_select(entries: list, n: int, style_weight: float = 0.0) -> tuple:
     """Greedy max-marginal-gain selection of ≤ n entries.
 
     `entries`: list of dicts with keys id, type, cluster, flavor, style, score
     (head p_ge3 or ordinal score — any within-niche-comparable quality), emb (list|None).
+    `style_weight` (>0) floors the coverage kernel for same-render-style pairs so this pass
+    spreads across modes (see `kernel`); pass it only when the entries are a single head's
+    (never mix heads in one call — see module docstring).
     Returns (selected, log) where selected is the ordered list of chosen entries and log
     is a per-pick list of {id, niche, niche_pct, coverage_gain, marginal_gain, score,
     nearest_selected, nearest_sim}."""
@@ -102,7 +113,7 @@ def greedy_select(entries: list, n: int) -> tuple:
         best_key = None
         for c in remaining:
             if selected:
-                sims = [(kernel(c, s), s) for s in selected]
+                sims = [(kernel(c, s, style_weight), s) for s in selected]
                 nn_sim, nn = max(sims, key=lambda t: t[0])
             else:
                 nn_sim, nn = 0.0, None

@@ -70,6 +70,10 @@ DEFAULT_MINING_FLOOR = 0.25   # mining-head POOL floor (permissive; below the 0.
 DEFAULT_RELEASE_FLOOR = 0.90          # smooth → wallpaper head production gate
 DEFAULT_MINING_RELEASE_FLOOR = 0.50   # strange → mining head production gate
 DEFAULT_TARGET_MEASURE = ROOT / "data" / "emission" / "target_measure.json"
+DEFAULT_STRANGE_FRAC = 0.5    # target strange share of the release (render-mode split)
+# Within the strange (mining-head) pass, floor the coverage kernel for same-render-style
+# pairs at this value so greedy spreads across the promoted modes before doubling up on one.
+STRANGE_STYLE_WEIGHT = 0.5
 
 
 # --------------------------------------------------------------------------- #
@@ -305,6 +309,13 @@ class EmissionDiversity:
         self.mining_release_floor = float(args.mining_release_floor)  # mining-head RELEASE floor
         self.intake_floor = None if args.intake_floor is None else float(args.intake_floor)
         self.release_n = int(args.release_n)
+        self.strange_frac = float(args.strange_frac)   # target strange share of the release
+        # release render geometry — default = wallpaper canon (REL_W/H/SS/FILT); overridable
+        # for a fast judge pass (e.g. 1024×576 ss2). Defaults keep batch reproducibility.
+        self.rel_w = int(getattr(args, "release_w", None) or REL_W)
+        self.rel_h = int(getattr(args, "release_h", None) or REL_H)
+        self.rel_ss = int(getattr(args, "release_ss", None) or REL_SS)
+        self.rel_filt = getattr(args, "release_filt", None) or REL_FILT
         # target counts RELEASE-ELIGIBLE pool rows (above the per-head release floor), so the
         # colorize builds a 3×N surplus of genuinely release-grade candidates, not merely
         # pool-admitted ones (§4 "3× post-floor surplus").
@@ -654,40 +665,77 @@ class EmissionDiversity:
         }
 
     # ---- release selection ---------------------------------------------- #
-    def select_release(self):
-        """Select ≤ N release candidates from the RELEASE-ELIGIBLE subset of the gated pool
-        (per-head floor). Pool-admitted-but-sub-floor wallpapers stay inventory and are never
-        selected. If fewer than N clear the floors, ship fewer — never dip below the floor to
-        fill the count (short-fill is reported honestly).
-
-        NB cross-head mixing: `score` here is each row's `p_ge3` from ITS OWN head (wallpaper
-        for smooth, mining for strange). Under singleton niches (one colorize/location)
-        `greedy_select` tie-breaks on absolute score, which compares those two heads on
-        incommensurable scales and can shut out the smaller-scaled head — see the caveat in
-        `selection.py`. Partition by head + quota if guaranteed strange representation is
-        needed."""
-        eligible = self.release_eligible()
+    def _release_entries(self, rows: list) -> list:
+        """Pool rows → greedy_select entries, with the location's morph-CLIP embedding
+        attached as a plain list (the coverage kernel's continuous-cos input)."""
         entries = [{
             "id": r["id"], "type": r["type"], "cluster": r["morph_cluster"],
             "flavor": r["palette_flavor"], "style": r["render_style"],
             "score": r["p_ge3"], "emb": self.embs.get(r["location_id"], None),
             "_rec": r,
-        } for r in eligible]
+        } for r in rows]
         for e in entries:
             emb = e["emb"]
             e["emb"] = emb.tolist() if emb is not None else None
-        selected, log = SEL.greedy_select(entries, self.release_n)
+        return entries
+
+    def select_release(self):
+        """Head-split release selection — the two heads are NEVER compared in one step.
+
+        Smooth slots are filled from the wallpaper head (rel ≥ release_floor), strange slots
+        from the mining head (rel ≥ mining_release_floor), by two DISJOINT within-head greedy
+        passes. Slot budget: strange_slots = round(N·strange_frac), smooth = N − strange.
+        Each pass draws ONLY above ITS head's release floor and tie-breaks on its own
+        (within-head, commensurable) `p_ge3`; the previous single cross-head greedy compared
+        the wallpaper and mining heads' absolute scores on incommensurable scales and shut
+        strange out entirely (82 eligible → 0 slots).
+
+        The strange pass runs with a `style_weight` coverage floor so it spreads across the
+        promoted modes rather than filling with one. Coverage in both passes is continuous
+        morph-CLIP cos (no categorical gate), so a second near-identical look is discounted
+        across cells.
+
+        Honest short-fill: if a head can't fill its quota above its floor, ship fewer of that
+        head — never dip below a floor, never pad, never backfill from the other head. The
+        realized split is reported."""
+        eligible = self.release_eligible()
+        smooth = [r for r in eligible if head_for_style(r["render_style"]) == "wallpaper"]
+        strange = [r for r in eligible if head_for_style(r["render_style"]) == "mining"]
+        strange_slots = int(round(self.release_n * self.strange_frac))
+        smooth_slots = self.release_n - strange_slots
+
+        # disjoint within-head passes — heads never enter the same greedy comparison.
+        sm_sel, sm_log = SEL.greedy_select(self._release_entries(smooth), smooth_slots)
+        st_sel, st_log = SEL.greedy_select(self._release_entries(strange), strange_slots,
+                                           style_weight=STRANGE_STYLE_WEIGHT)
+        selected = sm_sel + st_sel
+        log = sm_log + st_log
+
+        self.release_split = {
+            "strange_frac_target": self.strange_frac,
+            "smooth_slots": smooth_slots, "strange_slots": strange_slots,
+            "smooth_eligible": len(smooth), "strange_eligible": len(strange),
+            "smooth_selected": len(sm_sel), "strange_selected": len(st_sel),
+            "strange_frac_realized": (len(st_sel) / len(selected)) if selected else 0.0,
+            "strange_modes": dict(Counter(e["_rec"]["render_style"] for e in st_sel)),
+            "style_weight": STRANGE_STYLE_WEIGHT,
+        }
         self.release_short_fill = {
-            "requested": self.release_n,
-            "eligible": len(eligible),
-            "selected": len(selected),
+            "requested": self.release_n, "eligible": len(eligible), "selected": len(selected),
             "short_by": max(0, self.release_n - len(selected)),
+            "smooth_short_by": max(0, smooth_slots - len(sm_sel)),
+            "strange_short_by": max(0, strange_slots - len(st_sel)),
         }
         if len(selected) < self.release_n:
-            print(f"[select] SHORT-FILL: {len(selected)}/{self.release_n} — only "
-                  f"{len(eligible)} pool rows clear their head's release floor "
-                  f"(wallpaper {self.release_floor}, mining {self.mining_release_floor}). "
-                  f"Shipping fewer rather than dipping below the floor.", flush=True)
+            print(f"[select] SHORT-FILL {len(selected)}/{self.release_n}: smooth "
+                  f"{len(sm_sel)}/{smooth_slots} (elig {len(smooth)}, ≥{self.release_floor}) + "
+                  f"strange {len(st_sel)}/{strange_slots} (elig {len(strange)}, "
+                  f"≥{self.mining_release_floor}). Shipping fewer rather than dipping below a "
+                  f"floor (no cross-head backfill).", flush=True)
+        print(f"[select] head-split: smooth {len(sm_sel)} (wallpaper head) + strange "
+              f"{len(st_sel)} (mining head) = {len(selected)}; realized strange frac "
+              f"{self.release_split['strange_frac_realized']:.2f} (target {self.strange_frac}); "
+              f"strange modes {self.release_split['strange_modes']}", flush=True)
         return selected, log
 
     def render_release(self, selected, skip_render=False):
@@ -718,7 +766,7 @@ class EmissionDiversity:
                     png.unlink(missing_ok=True)
             try:
                 render_wallpaper(dt, cm, loc, r["render_style"], r["palette"], png,
-                                 REL_W, REL_H, REL_SS, REL_FILT)
+                                 self.rel_w, self.rel_h, self.rel_ss, self.rel_filt)
                 out_paths.append((r["id"], png))
             except Exception as ex:                  # noqa: BLE001
                 print(f"[release] {r['id']} full-res render failed: {ex!r}", flush=True)
@@ -738,6 +786,10 @@ def main():
     ap.add_argument("--report", default=None,
                     help="report .md path (default out/emission_v1_report.md)")
     ap.add_argument("--release-n", type=int, default=12)
+    ap.add_argument("--strange-frac", type=float, default=DEFAULT_STRANGE_FRAC,
+                    help="target strange share of the release; strange_slots = round(N·frac), "
+                         "smooth = N − strange. Heads are selected by DISJOINT within-head "
+                         "greedy passes (never compared in one step).")
     ap.add_argument("--target-gated", type=int, default=0,
                     help="0 → 3×release-n RELEASE-ELIGIBLE rows (post-floor surplus)")
     ap.add_argument("--cover-all", action="store_true",
@@ -755,6 +807,14 @@ def main():
                     help="OPTIONAL ranker percentile [0,1]; drop admitted locations below it "
                          "from the colorize queue. Default OFF (deliberate — the ranker ORDERS "
                          "the queue, it does not filter diversity supply; this is a later knob).")
+    ap.add_argument("--release-w", type=int, default=None,
+                    help=f"release render width (default wallpaper canon {REL_W})")
+    ap.add_argument("--release-h", type=int, default=None,
+                    help=f"release render height (default wallpaper canon {REL_H})")
+    ap.add_argument("--release-ss", type=int, default=None,
+                    help=f"release supersample (default wallpaper canon {REL_SS})")
+    ap.add_argument("--release-filt", default=None,
+                    help=f"release downsample filter (default {REL_FILT})")
     ap.add_argument("--target-measure", default=str(DEFAULT_TARGET_MEASURE))
     ap.add_argument("--max-attempts", type=int, default=240, help="hard-kill backstop")
     ap.add_argument("--time-budget-min", type=float, default=45.0, help="hard-kill backstop")

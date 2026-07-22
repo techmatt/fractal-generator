@@ -274,11 +274,23 @@ def write_report(eng, selected: list, sel_log: list, rel_paths: list):
                      f"{short['eligible']} pool rows clear the release floors; shipping fewer "
                      f"rather than dipping below the floor")
     L.append(f"## Release selection — {len(selected)} picks (greedy max-marginal-gain){fill_note}\n")
-    L.append("Selection draws ONLY from the release-eligible subset (per-head floor). Marginal "
-             "gain = niche-relative quality (within-niche p_ge3 percentile) × coverage gain "
-             "(1 − max similarity to already-selected under the per-axis kernel). `rk%` = the "
-             "location's pref_loc_v0 percentile among admitted; `nearest` = the closest "
-             "already-selected wallpaper (displacement).\n")
+    split = getattr(eng, "release_split", {})
+    if split:
+        L.append(f"**Render-mode split (heads never compared in one step).** Smooth slots are "
+                 f"filled from the wallpaper head, strange from the mining head, by two DISJOINT "
+                 f"within-head greedy passes. Target strange frac **{split['strange_frac_target']}** "
+                 f"→ slots smooth **{split['smooth_slots']}** / strange **{split['strange_slots']}**. "
+                 f"Eligible: smooth **{split['smooth_eligible']}** / strange **{split['strange_eligible']}**. "
+                 f"Realized: smooth **{split['smooth_selected']}** / strange **{split['strange_selected']}** "
+                 f"(strange frac **{split['strange_frac_realized']:.2f}**). Strange modes: "
+                 + ", ".join(f"{s}×{c}" for s, c in sorted(split['strange_modes'].items(),
+                                                           key=lambda kv: -kv[1])) + ".\n")
+    L.append("Each head's pass draws ONLY from its release-eligible subset and tie-breaks on its "
+             "OWN `p_ge3`. Marginal gain = niche-relative quality (within-niche p_ge3 percentile) "
+             "× coverage gain (1 − max morph-CLIP cos to already-selected; the strange pass adds a "
+             f"same-mode floor of {split.get('style_weight', '—')}). `rk%` = the location's "
+             "pref_loc_v0 percentile among admitted; `nearest` = the closest already-selected "
+             "wallpaper (displacement).\n")
     L.append("| # | id | type/cluster | flavor/style | p_ge3 | niche% | rk% | cov.gain | nearest (sim) |")
     L.append("|--:|---|---|---|--:|--:|--:|--:|---|")
     for i, (e, l) in enumerate(zip(selected, sel_log), 1):
@@ -334,6 +346,7 @@ def write_report(eng, selected: list, sel_log: list, rel_paths: list):
         "pool_floor": eng.floor, "mining_pool_floor": eng.mining_floor,
         "release_floor": eng.release_floor, "mining_release_floor": eng.mining_release_floor,
         "loc_ranker": eng.ranker_mode, "ranker_reach": reach, "short_fill": short,
+        "release_split": getattr(eng, "release_split", {}),
         "palette_ranker": selected[0]["_rec"]["ranker"] if selected else None,
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
