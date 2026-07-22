@@ -187,13 +187,20 @@ class PaletteRanker:
     the pref stack cannot load, falls back to a deterministic representative (first pool
     palette in the flavor) so the pipeline still runs — the head floor still gates quality."""
 
-    def __init__(self, dt, cell_to_names: dict, lib):
+    def __init__(self, dt, cell_to_names: dict, lib, pick_mode: str = "pref",
+                 deficit_lambda: float = 1.5):
         self.dt = dt
         self.lib = lib
         self.cell_to_names = cell_to_names
-        self.cache: dict = {}
+        self.cache: dict = {}                        # (loc,flavor) -> (members, scores|None)
         self.pref = None
         self.canonical_config = None
+        self.pick_mode = pick_mode                   # "pref" (argmax) | "deficit" (spread)
+        self.lam = float(deficit_lambda)
+        self.sigs: dict | None = None                # intrinsic palette signatures (deficit)
+        if pick_mode == "deficit":
+            from tools.emission import palette_deficit as pdf
+            self.sigs = pdf.signatures_from_lib(lib)
         try:
             from tools.studies import conditioned_colorize as cond
             self.pref = cond.Scorer()
@@ -202,6 +209,8 @@ class PaletteRanker:
         except Exception as e:                       # noqa: BLE001
             print(f"[ranker] pref scorer unavailable ({e!r}); deterministic fallback", flush=True)
             self.mode = "deterministic"
+        if pick_mode == "deficit":
+            self.mode += f"+deficit(λ={self.lam})"
 
     # cap the per-flavor candidate set so one colorize's pref pass stays cheap (a flavor
     # holds up to ~90 pool palettes; 32 is ample to pick a good one and bounds cost).
@@ -211,7 +220,9 @@ class PaletteRanker:
         members = [p for p in self.cell_to_names.get(flavor, []) if p in self.lib.colormaps]
         return members[:self.MAX_PALETTES]
 
-    def best(self, loc_id: str, flavor: str, field_bin: str, field_json: str):
+    def _members_scores(self, loc_id, flavor, field_bin, field_json):
+        """(members, v3-gvo scores) for a (loc,flavor), scoring cached (the expensive part).
+        scores is None when the pref scorer is unavailable (deterministic fallback)."""
         key = (loc_id, flavor)
         if key in self.cache:
             return self.cache[key]
@@ -220,20 +231,31 @@ class PaletteRanker:
             self.cache[key] = (None, None)
             return None, None
         if self.pref is None:
-            res = (members[0], None)
-            self.cache[key] = res
-            return res
+            self.cache[key] = (members, None)
+            return members, None
         from tools import colormap as cm
         field = cm.load_field(field_bin, field_json)
         prep = cm.stretch_field(field)
         cfield = cm.coarse_field(prep)
         imgs = [cm.render_candidate_coarse(cfield, self.canonical_config(field, pn), self.lib)
                 for pn in members]
-        scores = self.pref.score(imgs)
-        i = int(np.argmax(scores))
-        res = (members[i], float(scores[i]))
-        self.cache[key] = res
-        return res
+        scores = [float(s) for s in self.pref.score(imgs)]
+        self.cache[key] = (members, scores)
+        return members, scores
+
+    def best(self, loc_id: str, flavor: str, field_bin: str, field_json: str, tracker=None):
+        """Pick one palette in `flavor` for the location. `pref` mode = v3-gvo argmax (the
+        baseline). `deficit` mode = the running realized chroma×hue deficit fills the pick
+        with v3-gvo as the within-deficit tiebreaker (palette_deficit.pick)."""
+        members, scores = self._members_scores(loc_id, flavor, field_bin, field_json)
+        if members is None:
+            return None, None
+        if self.pick_mode == "deficit" and tracker is not None and self.sigs is not None:
+            from tools.emission import palette_deficit as pdf
+            i = pdf.pick(members, scores, self.sigs, tracker, lam=self.lam)
+        else:
+            i = 0 if scores is None else int(np.argmax(scores))
+        return members[i], (None if scores is None else scores[i])
 
 
 # --------------------------------------------------------------------------- #
@@ -326,6 +348,11 @@ class EmissionDiversity:
         # one-pass semantics — bypasses the surplus-building target/attempt/time cutoffs
         # (which invite the round-robin double-dip when hand-encoded as huge --target-gated).
         self.cover_all = bool(getattr(args, "cover_all", False))
+        # within-flavor palette pick: "pref" = v3-gvo argmax (baseline, batch-stable default);
+        # "deficit" = serve the running realized chroma×hue deficit, v3-gvo tiebreaker.
+        self.palette_pick = getattr(args, "palette_pick", "pref")
+        self.deficit_lambda = float(getattr(args, "deficit_lambda", 1.5))
+        self.deficit_green_boost = float(getattr(args, "deficit_green_boost", 1.6))
         self.seed = int(args.seed)
         for d in (self.out, self.renders):
             d.mkdir(parents=True, exist_ok=True)
@@ -514,7 +541,7 @@ class EmissionDiversity:
         return [r for r in self.pool.gated()
                 if (r["p_ge3"] or 0.0) >= self.release_floor_for(r["render_style"])]
 
-    def colorize(self, dt, cm, ranker, heads, row) -> dict | None:
+    def colorize(self, dt, cm, ranker, heads, row, tracker=None) -> dict | None:
         loc_id = row["id"]
         ftype = row["family"]
         cluster = self.cluster_tags[loc_id]
@@ -523,7 +550,7 @@ class EmissionDiversity:
             return None                              # all cells for this (type,cluster) capped
         flavor, style, deficit, n_opts, _probs = choice
         fbin, fjson = self.fields[loc_id]
-        palette, pref_fit = ranker.best(loc_id, flavor, fbin, fjson)
+        palette, pref_fit = ranker.best(loc_id, flavor, fbin, fjson, tracker=tracker)
         if palette is None:
             return None
         emid = self.pool.next_id()
@@ -538,6 +565,8 @@ class EmissionDiversity:
             render_wallpaper(dt, cm, loc, style, palette, jpg, POOL_W, POOL_H, POOL_SS, POOL_FILT)
             head = heads.score(style, jpg)
             stats = realized_palette_stats(jpg)
+            if tracker is not None:
+                tracker.ingest(stats)                # running deficit reflects TRUE output
         except Exception as e:                       # noqa: BLE001
             err = repr(e)[:300]
         passed = bool(head and head["p_ge3"] >= floor)
@@ -556,7 +585,7 @@ class EmissionDiversity:
             "realized_palette": stats,
             "render": {"w": POOL_W, "h": POOL_H, "ss": POOL_SS},
             "jpg": str(jpg.relative_to(ROOT)) if jpg.exists() else None,
-            "pref_fit": pref_fit, "ranker": ranker.mode,
+            "pref_fit": pref_fit, "ranker": ranker.mode, "palette_pick": ranker.pick_mode,
             "provenance": {
                 "source_ledger": row.get("_source_ledger", str(self.ledger.relative_to(ROOT))),
                 "ranker_score": self.ranker_score.get(loc_id),
@@ -586,7 +615,19 @@ class EmissionDiversity:
         _, cell_to_names = cond.load_cell_map()
         lib = dt.lib()
         self.build_axes(dt, cell_to_names, lib)
-        ranker = PaletteRanker(dt, cell_to_names, lib)
+        ranker = PaletteRanker(dt, cell_to_names, lib, pick_mode=self.palette_pick,
+                               deficit_lambda=self.deficit_lambda)
+        # deficit tracker: rebuilt by replaying the durable pool log's realized stats, so a
+        # resume continues the exact running deficit (order-independent — it is a sum).
+        tracker = None
+        if self.palette_pick == "deficit":
+            from tools.emission.palette_deficit import DeficitTracker
+            tracker = DeficitTracker(green_boost=self.deficit_green_boost)
+            for r in self.pool.rows:
+                tracker.ingest(r.get("realized_palette"))
+            print(f"[colorize] palette-pick=deficit (λ={self.deficit_lambda} "
+                  f"green_boost={self.deficit_green_boost}); tracker resumed from "
+                  f"{tracker.n} logged renders", flush=True)
         heads = Heads()
         print(f"[colorize] pool-floors: wallpaper={self.floor} mining={self.mining_floor} · "
               f"release-floors: wallpaper={self.release_floor} (gate {heads.wp_gate}) "
@@ -623,7 +664,7 @@ class EmissionDiversity:
                 print(f"[colorize] --cover-all: every location colorized once — stopping "
                       f"before a 2nd pass (release-eligible={n_rel})", flush=True)
                 break
-            rec = self.colorize(dt, cm, ranker, heads, row)
+            rec = self.colorize(dt, cm, ranker, heads, row, tracker=tracker)
             if rec is None:
                 exhausted.add(row["id"])
                 continue
@@ -818,6 +859,14 @@ def main():
     ap.add_argument("--target-measure", default=str(DEFAULT_TARGET_MEASURE))
     ap.add_argument("--max-attempts", type=int, default=240, help="hard-kill backstop")
     ap.add_argument("--time-budget-min", type=float, default=45.0, help="hard-kill backstop")
+    ap.add_argument("--palette-pick", choices=["pref", "deficit"], default="pref",
+                    help="within-flavor palette pick: 'pref' = v3-gvo argmax (batch-stable "
+                         "default); 'deficit' = serve the running realized chroma×hue deficit "
+                         "(restores green/high-chroma/spectral), v3-gvo as within-deficit tiebreaker")
+    ap.add_argument("--deficit-lambda", type=float, default=1.5,
+                    help="deficit-pick: weight of z(deficit-gain) vs z(v3-gvo) (higher = more spread)")
+    ap.add_argument("--deficit-green-boost", type=float, default=1.6,
+                    help="deficit-pick: standing over-weight on the green hue bins in the target")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", action="store_true", help="continue (pool log is durable)")
     ap.add_argument("--select-only", action="store_true", help="skip colorize; select from pool")
