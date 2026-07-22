@@ -1,6 +1,7 @@
 {
   "_doc": "Hand-editable target measure for emission-v1 diversity. Uniform over feasible cells (type × morph_cluster × palette_flavor × render_style) by default. SCHEMA (as the loader emission.cells.TargetMeasure actually parses it — verified campaign-2 preflight): each weight_overrides entry is {\"match\": {axis: [values...]}, \"weight\": M} and multiplies the base weight (1.0) of every cell whose value on each named axis is in that axis's listed set. A flat {\"fractal_type\": [...], \"multiplier\": M} form is SILENTLY IGNORED (weight() reads ov['match'] / ov['weight']), degenerating the measure to uniform. attempt_cap evicts a cell from the target support after that many colorize attempts with zero fills. softmax_temp controls how sharply the deficit-max option is preferred (small → argmax, large → uniform); deficits are range-normalized before softmax so this is scale-free.",
-  "_weights_note": "First hand-placed allocation order, post campaign-1 blind read (2026-07-20). Rationale: julia families up-weighted on looks-scarcity (the proven vein, under-produced; per-twin census ordering NOT baked in — bug-survivor rates, re-measured at campaign 2, differentiate then if warranted); mandelbrot slight up (best c-plane family); mb3/mb5 slightly down; mb4 token weight, not zero (worst to humans, but nonzero + attempt caps lets the fixed dup metric prove or disprove a yield change). Only relative size matters. Implied per-type shares IF the projection normalizes types independently of cluster count: each julia twin ~19% (julia total ~77%), mandelbrot ~9%, mb3/mb5 ~6% each, mb4 ~2%. Phoenix deliberately absent: no production discovery path yet.",
+  "_weights_note": "First hand-placed allocation order, post campaign-1 blind read (2026-07-20). Rationale: julia families up-weighted on looks-scarcity (the proven vein, under-produced; per-twin census ordering NOT baked in — bug-survivor rates, re-measured at campaign 2, differentiate then if warranted); mandelbrot slight up (best c-plane family); mb3/mb5 slightly down; mb4 token weight, not zero (worst to humans, but nonzero + attempt caps lets the fixed dup metric prove or disprove a yield change). Only relative size matters. Implied per-type shares IF the projection normalizes types independently of cluster count: each julia twin ~19% (julia total ~77%), mandelbrot ~9%, mb3/mb5 ~6% each, mb4 ~2%.",
+  "_phoenix_note": "Phoenix entered the library at library_intake_2 (2026-07-21, t_good 0.45): 196 varied (grid) + 41 classic (Ushiki) distinct clusters. Classic phoenix separates CLEANLY in morph space (its 41 clusters phoenix#196..236 share zero members with the varied grid clusters), so a morph_cluster override addresses it precisely — the ONLY way to shape classic vs varied within one fractal_type. The classic override below (weight 0.35) yields a ~1.5% classic-phoenix share of the JOINT measure (near the ~2% target; the joint share depends on all weights + live cluster counts, re-tune at emission). CAVEAT: varied phoenix carries NO type-weight, so at 196 clusters it sits at ~20% of the joint measure — likely too high for a narrow log-spiral motif (docs/findings/phoenix_grid_labels.md); a separate fractal_type:['phoenix'] down-weight is the knob for that, deliberately NOT added here (this edit is scoped to the classic-share stanza only). The morph_cluster ids are unstable across re-intake (incremental-medoid order), so re-derive them if the library is re-clustered.",
   "mode": "uniform",
   "attempt_cap": 6,
   "softmax_temp": 0.35,
@@ -12,6 +13,17 @@
     { "match": { "fractal_type": ["mandelbrot"] },       "weight": 1.2 },
     { "match": { "fractal_type": ["multibrot3"] },       "weight": 0.8 },
     { "match": { "fractal_type": ["multibrot5"] },       "weight": 0.8 },
-    { "match": { "fractal_type": ["multibrot4"] },       "weight": 0.25 }
+    { "match": { "fractal_type": ["multibrot4"] },       "weight": 0.25 },
+    { "match": { "morph_cluster": [
+        "phoenix#196", "phoenix#197", "phoenix#198", "phoenix#199", "phoenix#200",
+        "phoenix#201", "phoenix#202", "phoenix#203", "phoenix#204", "phoenix#205",
+        "phoenix#206", "phoenix#207", "phoenix#208", "phoenix#209", "phoenix#210",
+        "phoenix#211", "phoenix#212", "phoenix#213", "phoenix#214", "phoenix#215",
+        "phoenix#216", "phoenix#217", "phoenix#218", "phoenix#219", "phoenix#220",
+        "phoenix#221", "phoenix#222", "phoenix#223", "phoenix#224", "phoenix#225",
+        "phoenix#226", "phoenix#227", "phoenix#228", "phoenix#229", "phoenix#230",
+        "phoenix#231", "phoenix#232", "phoenix#233", "phoenix#234", "phoenix#235",
+        "phoenix#236"
+      ] }, "weight": 0.35 }
   ]
 }
