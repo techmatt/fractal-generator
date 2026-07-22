@@ -224,11 +224,10 @@ class MorphEmbedder:
             self._mt = load_clip()
         return self._mt
 
-    def embed(self, cx, cy, fw, s: psamp.Seed) -> np.ndarray:
+    def embed(self, cx, cy, fw, s: psamp.Seed, fcache: Path) -> np.ndarray:
         import library_annotate as la
         from colored_clip import embed_clip
         loc = phoenix_canonical_loc(cx, cy, fw, s)
-        fcache = self.scratch / "morph_fields"
         field = la.ensure_field(loc, retain=False, tmp_dir=fcache, cache_root=fcache)
         gray = la.morph_gray_image(field)
         model, tf = self._clip()
@@ -310,11 +309,12 @@ def score_descent(s: psamp.Seed, seed_idx: int, repeat: int, rng_seed: int, *, s
         outcome_rows.append(base)
         if is_q3:
             n_adm += 1
-            emb = embedder.embed(rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"], s)
+            emb = embedder.embed(rew["outcome_cx"], rew["outcome_cy"], rew["outcome_fw"], s,
+                                 dwork / "morph")
             # within-descent distinct-look count (order-independent decomposition variable)
             if not within_embs or float(np.max(np.stack(within_embs) @ emb)) < NEAR_DUP_THRESHOLD:
                 within_embs.append(emb)
-            tile = scratch / "feats" / f"{oid}.jpg"
+            tile = dwork / "feats" / f"{oid}.jpg"
             feat = phoenix_outcome_feature(scorer, rew["outcome_cx"], rew["outcome_cy"],
                                            rew["outcome_fw"], s, tile)
             admitted.append((dict(base, mix_source="phoenix_grid", canon_pgood=p_good,
@@ -401,8 +401,35 @@ def run(args):
     looks = DistinctLookTally(p_looks, threshold=NEAR_DUP_THRESHOLD)   # run-global, resumable
     feats: dict[str, np.ndarray] = {}
     if p_feats.exists():
-        z = np.load(p_feats, allow_pickle=False)
-        feats = {kk: z[kk] for kk in z.files}
+        # MUST context-close: a bare `np.load` keeps the .npz OPEN for the process lifetime
+        # (NpzFile is lazy), which on Windows locks the file so the first _save_feats os.replace
+        # onto it fails with WinError 5. Copy each array out, then close.
+        with np.load(p_feats, allow_pickle=False) as z:
+            feats = {kk: z[kk].copy() for kk in z.files}
+
+    # Resume resilience: re-embed any admitted ledger row whose 1280-D feature was lost to an
+    # interrupted _save_feats (a killed/failed session), so outcome_feats stays consistent with
+    # the ledger. A no-op on a clean store.
+    if p_ledger.exists() and feats is not None:
+        led0 = [json.loads(l) for l in open(p_ledger, encoding="utf-8") if l.strip()]
+        missing = [r for r in led0 if r["id"] not in feats]
+        if missing:
+            print(f"backfill: {len(missing)} admitted rows missing features — re-embedding", flush=True)
+            for r in missing:
+                sd = psamp.Seed(c=complex(r["phoenix_c_re"], r["phoenix_c_im"]),
+                                p=complex(r["phoenix_p_re"], r["phoenix_p_im"]),
+                                z_m1=complex(r["phoenix_zm1_re"], r["phoenix_zm1_im"]),
+                                branch=r.get("branch", "cardioid"), theta=r.get("theta", 0.0),
+                                offset=r.get("offset", 0.0))
+                try:
+                    feats[r["id"]] = phoenix_outcome_feature(
+                        scorer, r["outcome_cx"], r["outcome_cy"], r["outcome_fw"], sd,
+                        scratch / "backfill" / f"{r['id']}.jpg")
+                except Exception as e:
+                    print(f"  backfill {r['id']} failed (skipped): {type(e).__name__}: {str(e)[:100]}",
+                          flush=True)
+            _save_feats(p_feats, feats)
+            shutil.rmtree(scratch / "backfill", ignore_errors=True)
 
     # feats file handles (append)
     f_records = open(p_records, "a", encoding="utf-8")
@@ -429,6 +456,7 @@ def run(args):
                     stopped = "budget"
                     break
             rng_seed = args.seed + seed_idx * 1000 + repeat
+            dwork = scratch / f"s{seed_idx:04d}_r{repeat}"
             try:
                 rec, orows, adm = score_descent(
                     s, seed_idx, repeat, rng_seed, scorer=scorer, embedder=embedder,
@@ -437,6 +465,8 @@ def run(args):
                 totals["walk_errors"] += 1
                 print(f"  ENGINE FAILURE s{seed_idx} r{repeat}: {type(e).__name__}: {str(e)[:200]}",
                       flush=True)
+                if not args.keep_scratch:
+                    shutil.rmtree(dwork, ignore_errors=True)   # never leak a failed descent's scratch
                 if isinstance(e, KeyboardInterrupt):
                     stopped = "interrupt"; break
                 continue
@@ -458,6 +488,12 @@ def run(args):
             looks.save()
             _save_feats(p_feats, feats)
 
+            # Purge this descent's render scratch immediately — a grid is hundreds of descents,
+            # and each descent's reframe/guard-field intermediates are ~0.4 GB. Purging per
+            # descent (not per run like production_seeder) bounds live scratch to one descent.
+            if not args.keep_scratch:
+                shutil.rmtree(dwork, ignore_errors=True)
+
             durations.append(rec["active_seconds"])
             totals["descents"] += 1
             totals["walks"] += rec["n_walks"]
@@ -478,30 +514,42 @@ def run(args):
     looks.save()
     _save_feats(p_feats, feats)
 
-    wall = time.time() - t0
-    min_spent = wall / 60.0
-    n_distinct = looks.count("phoenix")
-    price = round(min_spent / n_distinct, 3) if n_distinct else None
+    session_wall = time.time() - t0
+    # CUMULATIVE totals from the durable store (correct across resume sessions — session wall
+    # would undercount a resumed run). active-minutes = Σ per-descent active_seconds; the
+    # distinct-look count + price come from the ledger's authoritative `distinct` flags.
+    all_recs = [json.loads(l) for l in open(p_records, encoding="utf-8") if l.strip()]
+    all_led = [json.loads(l) for l in open(p_ledger, encoding="utf-8") if l.strip()]
+    cum_active_min = sum(r.get("active_seconds", 0.0) for r in all_recs) / 60.0
+    n_distinct = sum(1 for r in all_led if r.get("distinct"))
+    cum_totals = {"descents": len(all_recs),
+                  "walks": sum(int(r.get("n_walks", 0)) for r in all_recs),
+                  "admissions": len(all_led),
+                  "seeds_with_descents": len({r["seed_idx"] for r in all_recs}),
+                  "session_descents": totals["descents"], "walk_errors": totals["walk_errors"]}
+    price = round(cum_active_min / n_distinct, 3) if n_distinct else None
     summary = {
         "run": run_name, "smoke": args.smoke, "stopped": stopped,
-        "wallclock_s": round(wall, 1), "active_minutes": round(min_spent, 2),
+        "session_wallclock_s": round(session_wall, 1), "active_minutes": round(cum_active_min, 2),
         "config": {"n_seeds": len(seeds), "k": k, "walks_per_descent": n_walks,
                    "depth": [DEPTH_MIN, DEPTH_MAX], "t_good": t_good, "budget_min": budget_min,
                    "scorer": SCORER_PATH, "scorer_version": SCORER_VERSION,
                    "near_dup_threshold": NEAR_DUP_THRESHOLD, "rng_seed": args.seed},
-        "totals": totals,
+        "totals": cum_totals,
         "distinct_looks_phoenix": n_distinct,
-        "realized_min_per_look_phoenix": price,   # active-min / distinct look (measure/scheduler prior)
+        "realized_min_per_look_phoenix": price,   # cumulative active-min / distinct look (measure/scheduler prior)
         "stratification_plan": plan,
         "outputs": {"seeds": str(p_seeds), "descent_records": str(p_records),
                     "all_outcomes": str(p_all), "outcome_ledger": str(p_ledger),
                     "outcome_feats": str(p_feats), "distinct_looks": str(p_looks)},
     }
     _atomic_write(run_dir / "summary.json", json.dumps(summary, indent=2))
-    print("\n=== GRID SUMMARY ===")
-    print(f"  {totals['descents']} descents / {totals['walks']} walks -> {totals['admissions']} "
-          f"admissions, {n_distinct} distinct looks (cos {NEAR_DUP_THRESHOLD})")
-    print(f"  realized min/look (phoenix): {price}  | wallclock {wall/60:.1f}m ({stopped})")
+    print("\n=== GRID SUMMARY (cumulative) ===")
+    print(f"  {cum_totals['descents']} descents / {cum_totals['walks']} walks -> "
+          f"{cum_totals['admissions']} admissions, {n_distinct} distinct looks "
+          f"(cos {NEAR_DUP_THRESHOLD}); {cum_totals['seeds_with_descents']} seeds")
+    print(f"  realized min/look (phoenix): {price}  | this session {session_wall/60:.1f}m "
+          f"(+{cum_totals['session_descents']} descents), stopped={stopped}")
     print(f"  durable -> {run_dir}")
     if not args.keep_scratch and stopped == "complete":
         _purge(scratch)
@@ -514,7 +562,14 @@ def _save_feats(path: Path, feats: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / (path.stem + "_tmp.npz")
     np.savez_compressed(tmp, **feats)
-    os.replace(tmp, path)
+    for attempt in range(6):                       # absorb transient Windows locks (AV/indexer)
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.5)
 
 
 def _purge(scratch: Path):

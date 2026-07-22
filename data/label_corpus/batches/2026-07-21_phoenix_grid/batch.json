@@ -1,0 +1,67 @@
+{
+  "created": "2026-07-21",
+  "labeler": null,
+  "generator_version": "phoenix_grid",
+  "source_run": "data\\discovery\\phoenix_grid\\grid",
+  "schema_extension": "render block adds fractal_type + (c_re/c_im, p_re/p_im, zm1_re/zm1_im) \u2014 the FULL phoenix (c,p,z_-1) identity; provenance adds theta/offset/z_class",
+  "sampling_metaparameters": {
+    "grid": {
+      "n_seeds": 140,
+      "k": 4,
+      "walks_per_descent": 5,
+      "depth": [
+        4,
+        14
+      ],
+      "t_good": 0.18,
+      "scorer_version": "v7"
+    },
+    "stratification": {
+      "bands": [
+        "HIGH",
+        "Q3",
+        "SUB",
+        "REJECT"
+      ],
+      "high_cut": 0.3,
+      "across_seeds": "round-robin over seed_idx within band",
+      "availability": {
+        "HIGH": 377,
+        "Q3": 153,
+        "SUB": 67,
+        "REJECT": 37
+      },
+      "allocation": {
+        "HIGH": 243,
+        "Q3": 153,
+        "SUB": 67,
+        "REJECT": 37
+      },
+      "realized": {
+        "HIGH": 243,
+        "Q3": 153,
+        "SUB": 67,
+        "REJECT": 37
+      },
+      "n_seeds_in_batch": 91
+    },
+    "palette_pool": "data/palettes/score3_colormaps.json (seeded per image_id)",
+    "dedup": "identity-aware coarse-viewport (distinct (c,p,z_-1) never collide)"
+  },
+  "present_gates": null,
+  "render_defaults": {
+    "width": 1280,
+    "height": 720,
+    "ss": 4,
+    "filter": "lanczos3",
+    "interior_mode": "black",
+    "maxiter": "auto_maxiter(fw)",
+    "composition": "center",
+    "jpg_quality": 90
+  },
+  "render_recipe": {
+    "path": "render-one --palette --colormaps",
+    "palette_source": "data/palettes/score3_colormaps.json",
+    "jpg_quality": 90
+  }
+}

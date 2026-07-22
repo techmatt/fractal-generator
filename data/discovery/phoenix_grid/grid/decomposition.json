@@ -1,0 +1,61 @@
+{
+  "run": "data\\discovery\\phoenix_grid\\grid",
+  "n_records": 361,
+  "n_seeds": 91,
+  "decomposition": {
+    "distinct_looks_within": {
+      "a_seeds": 90,
+      "N": 360.0,
+      "n0": 4.0,
+      "grand_mean": 1.3722222222222222,
+      "MSB": 12.641822721598,
+      "MSW": 0.34444444444444444,
+      "var_between_raw": 3.074344569288389,
+      "var_between": 3.074344569288389,
+      "var_within": 0.34444444444444444,
+      "icc": 0.8992495754897843,
+      "n_boot": 2000,
+      "icc_ci95": [
+        0.8491207817573764,
+        0.9337133986132121
+      ],
+      "var_between_ci95": [
+        2.32552798585102,
+        3.715
+      ],
+      "var_within_ci95": [
+        0.2212962962962963,
+        0.5018518518518519
+      ],
+      "frac_between_negative": 0.0,
+      "verdict_provisional": "between-seed dominates"
+    },
+    "max_p_good": {
+      "a_seeds": 90,
+      "N": 360.0,
+      "n0": 4.0,
+      "grand_mean": 0.2602673089545634,
+      "MSB": 0.4159524449258249,
+      "MSW": 0.003765332612868992,
+      "var_between_raw": 0.10304677807823898,
+      "var_between": 0.10304677807823898,
+      "var_within": 0.003765332612868992,
+      "icc": 0.9647480740853626,
+      "n_boot": 2000,
+      "icc_ci95": [
+        0.9189382607040374,
+        0.9896115131920091
+      ],
+      "var_between_ci95": [
+        0.07252248162837946,
+        0.1275316054297528
+      ],
+      "var_within_ci95": [
+        0.0010771257148617435,
+        0.008175345356449357
+      ],
+      "frac_between_negative": 0.0,
+      "verdict_provisional": "between-seed dominates"
+    }
+  }
+}

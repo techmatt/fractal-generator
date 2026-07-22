@@ -204,11 +204,12 @@ def main(argv=None):
               "§5.1, `prompts/phoenix_phase_b.md`.\n")
     md.append("## Run\n")
     cfg = summ["config"]
+    resumed = tot.get("session_descents", tot["descents"]) < tot["descents"]
     md.append(f"- Grid: **{n_seeds_done} seeds x up to {cfg['k']} descents** "
               f"({cfg['walks_per_descent']} walks/descent), depth {cfg['depth']}, "
               f"t_good=**{cfg['t_good']}** (provisional), scorer **{cfg['scorer_version']}**. "
-              f"Stopped: `{summ['stopped']}` after {summ['active_minutes']:.0f} active min "
-              f"(cap {cfg['budget_min']}).")
+              f"Stopped: `{summ['stopped']}` — **{summ['active_minutes']:.0f} cumulative active min** "
+              f"(4-hour active-time cap){', run resumed once after a scratch-disk fix' if resumed else ''}.")
     md.append(f"- Descents scored: **{tot['descents']}** / {tot['walks']} walks → "
               f"**{tot['admissions']} admissions** (keep-every-q3), "
               f"**{summ['distinct_looks_phoenix']} distinct looks** (morph embed, cos "

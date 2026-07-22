@@ -1,0 +1,82 @@
+{
+  "run": "grid",
+  "smoke": false,
+  "stopped": "budget",
+  "session_wallclock_s": 4273.9,
+  "active_minutes": 233.48,
+  "config": {
+    "n_seeds": 140,
+    "k": 4,
+    "walks_per_descent": 5,
+    "depth": [
+      4,
+      14
+    ],
+    "t_good": 0.18,
+    "budget_min": 70.0,
+    "scorer": "data/classifier/v7/model_best.pt",
+    "scorer_version": "v7",
+    "near_dup_threshold": 0.974,
+    "rng_seed": 0
+  },
+  "totals": {
+    "descents": 361,
+    "walks": 1805,
+    "admissions": 656,
+    "seeds_with_descents": 91,
+    "session_descents": 106,
+    "walk_errors": 0
+  },
+  "distinct_looks_phoenix": 354,
+  "realized_min_per_look_phoenix": 0.66,
+  "stratification_plan": {
+    "n_requested": 140,
+    "n_drawn": 140,
+    "pool_size": 3360,
+    "n_strata_observed": 18,
+    "stratum_counts": {
+      "p0|cardioid|z_nonreal": 8,
+      "p0|cardioid|z_zero": 8,
+      "p0|period2|z_nonreal": 8,
+      "p0|period2|z_zero": 8,
+      "p0|root|z_nonreal": 8,
+      "p0|root|z_zero": 8,
+      "p1|cardioid|z_nonreal": 8,
+      "p1|cardioid|z_zero": 8,
+      "p1|period2|z_nonreal": 8,
+      "p1|period2|z_zero": 8,
+      "p1|root|z_nonreal": 8,
+      "p1|root|z_zero": 8,
+      "p2|cardioid|z_nonreal": 8,
+      "p2|cardioid|z_zero": 8,
+      "p2|period2|z_nonreal": 7,
+      "p2|period2|z_zero": 7,
+      "p2|root|z_nonreal": 7,
+      "p2|root|z_zero": 7
+    },
+    "branch_counts": {
+      "cardioid": 48,
+      "period2": 46,
+      "root": 46
+    },
+    "p_band_counts": {
+      "p0": 48,
+      "p1": 48,
+      "p2": 44
+    },
+    "z_class_counts": {
+      "nonreal": 70,
+      "zero": 70
+    },
+    "classic_frac": 0.14285714285714285,
+    "frac_p_complex": 0.8571428571428571
+  },
+  "outputs": {
+    "seeds": "C:\\Code\\fractal-generator\\data\\discovery\\phoenix_grid\\grid\\seeds.jsonl",
+    "descent_records": "C:\\Code\\fractal-generator\\data\\discovery\\phoenix_grid\\grid\\descent_records.jsonl",
+    "all_outcomes": "C:\\Code\\fractal-generator\\data\\discovery\\phoenix_grid\\grid\\all_outcomes.jsonl",
+    "outcome_ledger": "C:\\Code\\fractal-generator\\data\\discovery\\phoenix_grid\\grid\\outcome_ledger.jsonl",
+    "outcome_feats": "C:\\Code\\fractal-generator\\data\\discovery\\phoenix_grid\\grid\\outcome_feats.npz",
+    "distinct_looks": "C:\\Code\\fractal-generator\\data\\discovery\\phoenix_grid\\grid\\distinct_looks.npz"
+  }
+}
