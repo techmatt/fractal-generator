@@ -28,6 +28,18 @@ percentile 1.0 and coverage 1.0) are broken by absolute head score, so a genuine
 strong singleton beats a weak one. Every pick logs the niche it filled and its nearest
 already-selected neighbour (the "displacement" it caused).
 
+CAVEAT — cross-head score incommensurability. `score` is compared directly only in the
+tie-break, and the niche-percentile normalisation only bites when a niche holds >1 entry.
+With one colorize per location (the norm at library scale) EVERY niche is a singleton, so
+niche_pct ≡ 1.0 and coverage ≡ 1.0 for the first pick of each cell — greedy_select then
+degenerates to top-N-by-absolute-`score`. When the pool mixes entries scored by DIFFERENT
+heads (e.g. the wallpaper head's `p_ge3` for smooth vs the mining head's for strange
+styles), those absolute scores are on incommensurable scales, and the smaller-scaled head
+can be shut out entirely (this is exactly how 82 release-eligible strange tiles lost every
+slot to smooth). If you need guaranteed cross-head representation, pre-partition by head and
+select a quota from each, or pass a within-head-normalised `score` — this selector treats
+`score` as a single comparable quality axis and does NOT reconcile heads itself.
+
 Pure Python + math; embeddings arrive as plain float lists so this is unit-testable.
 """
 from __future__ import annotations

@@ -311,6 +311,10 @@ class EmissionDiversity:
         self.target_gated = args.target_gated or (3 * self.release_n)
         self.max_attempts = int(args.max_attempts)
         self.time_budget_s = float(args.time_budget_min) * 60.0
+        # cover-all: colorize every admitted location exactly once, then stop. Explicit
+        # one-pass semantics — bypasses the surplus-building target/attempt/time cutoffs
+        # (which invite the round-robin double-dip when hand-encoded as huge --target-gated).
+        self.cover_all = bool(getattr(args, "cover_all", False))
         self.seed = int(args.seed)
         for d in (self.out, self.renders):
             d.mkdir(parents=True, exist_ok=True)
@@ -321,23 +325,64 @@ class EmissionDiversity:
         self.ranker_mode = "unavailable"
 
     # ---- intake ---------------------------------------------------------- #
+    @staticmethod
+    def _loc_key(r) -> tuple:
+        """The location identity of a ledger row (what the id is supposed to name)."""
+        return (str(r.get("outcome_cx")), str(r.get("outcome_cy")), str(r.get("outcome_fw")),
+                str(r.get("julia_c_re")), str(r.get("julia_c_im")))
+
     def _load_all_admitted(self) -> list:
-        """Admitted rows across every ledger, each tagged with its source; dedup by id."""
-        seen, rows = set(), []
+        """Admitted rows across every ledger, each tagged with its source; dedup by id.
+
+        A duplicate id whose row resolves to the SAME location is a legitimate cross-ledger
+        overlap and is dropped (first-ledger wins). A duplicate id whose row resolves to a
+        DIFFERENT location is a run-scoped-id COLLISION — `st_<fam>_<arm>_<seq>` ids are
+        reused across independent campaigns for distinct wallpapers, so a silent dedup would
+        drop a genuinely distinct location. That case RAISES: disambiguate the colliding
+        ledgers with an id prefix (see `stage_first_release.py`'s `c1__` scheme) before
+        unioning them."""
+        seen: dict = {}
+        rows = []
         for lg in self.ledgers:
             try:
                 label = str(lg.relative_to(ROOT))
             except ValueError:
                 label = str(lg)                  # ledger outside the repo (e.g. a test tmp dir)
             for r in D.load_admitted(lg):
-                if r["id"] in seen:
+                rid = r["id"]
+                loc = self._loc_key(r)
+                if rid in seen:
+                    if seen[rid][0] != loc:
+                        raise SystemExit(
+                            f"[intake] run-scoped id COLLISION: id {rid!r} names different "
+                            f"locations across ledgers ({seen[rid][1]} @ {seen[rid][0]} vs "
+                            f"{label} @ {loc}). A union-by-id would silently drop a distinct "
+                            f"wallpaper — prefix the colliding ledger's ids (cf. "
+                            f"stage_first_release.py c1__) before unioning.")
                     continue
-                seen.add(r["id"])
+                seen[rid] = (loc, label)
                 r["_source_ledger"] = label
                 rows.append(r)
         return rows
 
     def intake(self):
+        """Admit locations, then either REUSE a pre-staged snapshot or embed+cluster fresh.
+
+        Snapshot-reuse contract (the `if self.intake_path.exists() and self.embs_path.exists()`
+        branch): a run resumes/starts against a snapshot pinned at first intake, laid down as
+        two sibling files under `self.out`:
+
+          * `intake.json` — `{cluster_tags: {id: "<family>#<k>"}, fields: {id: [bin, json]},
+                              n_admitted: int}`. `cluster_tags` is the AUTHORITATIVE membership
+                              set: only its ids are colorized (a still-growing frontier ledger's
+                              newer admits are deferred, counted, and logged — rerun fresh to
+                              fold them in). `fields` maps each id to its cached 640×360 ss2
+                              smooth field (bin + json) so no re-render is needed.
+          * `morph_embs.npz` — `descriptor._save_embs` format ({ids, emb}); the morph-CLIP
+                               embeddings keyed by the same ids, loaded via `D.load_embs`.
+
+        `stage_first_release.py` writes exactly these two files to pre-union committed intake
+        passes without re-embedding; the fresh branch below writes the identical shapes."""
         rows = self._load_all_admitted()
         if not rows:
             srcs = ", ".join(str(l) for l in self.ledgers)
@@ -380,9 +425,13 @@ class EmissionDiversity:
         The ranker ORDERS the colorize queue (order, don't filter — see pick_location); it
         never gates admission or steers discovery (scorer.py HARD SCOPE). With --intake-floor
         set, locations below that ranker percentile are dropped from the queue (opt-in)."""
-        from tools.ranker.score_locations import LocationRanker, rank_percentiles
+        from tools.ranker.score_locations import LocationRanker, rank_percentiles, DEFAULT_FEATURES
         try:
-            lr = LocationRanker()
+            # Also feed the run's OWN persisted feature cache: on a resume it covers every
+            # location embedded last pass, so scoring is a pure cache hit instead of
+            # re-embedding all ~1.4k tiles. (Output-identical — features are deterministic;
+            # missing/first-run cache is silently skipped by _load_cache.)
+            lr = LocationRanker(feature_caches=(DEFAULT_FEATURES, self.ranker_feats_path))
             self.ranker_score = lr.score_rows(self.rows, self.ranker_tiles,
                                               persist_npz=self.ranker_feats_path)
             self.ranker_pct = rank_percentiles(self.ranker_score)
@@ -533,24 +582,35 @@ class EmissionDiversity:
               f"mining={self.mining_release_floor} (gate {heads.mining_gate}) · "
               f"target={self.target_gated} release-eligible · palette-ranker={ranker.mode} · "
               f"loc-ranker={self.ranker_mode}", flush=True)
+        if self.cover_all:
+            print(f"[colorize] --cover-all: one colorize per location over "
+                  f"{len(self.rows)} admitted locations (target/attempt/time cutoffs bypassed)",
+                  flush=True)
         t0 = time.time()
         exhausted: set = set()
         while True:
             n_rel = len(self.release_eligible())
-            if n_rel >= self.target_gated:
-                print(f"[colorize] reached target: {n_rel} release-eligible ≥ "
-                      f"{self.target_gated}", flush=True)
-                break
-            if self.pool.n_attempts() >= self.max_attempts:
-                print(f"[colorize] hit max attempts {self.max_attempts} "
-                      f"(release-eligible={n_rel})", flush=True)
-                break
-            if time.time() - t0 > self.time_budget_s:
-                print(f"[colorize] hit time budget (release-eligible={n_rel})", flush=True)
-                break
+            if not self.cover_all:
+                if n_rel >= self.target_gated:
+                    print(f"[colorize] reached target: {n_rel} release-eligible ≥ "
+                          f"{self.target_gated}", flush=True)
+                    break
+                if self.pool.n_attempts() >= self.max_attempts:
+                    print(f"[colorize] hit max attempts {self.max_attempts} "
+                          f"(release-eligible={n_rel})", flush=True)
+                    break
+                if time.time() - t0 > self.time_budget_s:
+                    print(f"[colorize] hit time budget (release-eligible={n_rel})", flush=True)
+                    break
             row = self.pick_location(exhausted)
             if row is None:
                 print(f"[colorize] all locations exhausted (release-eligible={n_rel})", flush=True)
+                break
+            # cover-all stops the instant pick_location wraps to a 2nd pass: it returns
+            # fewest-attempts-first, so an already-attempted row means every location has one.
+            if self.cover_all and self.pool.attempts_per_location().get(row["id"], 0) >= 1:
+                print(f"[colorize] --cover-all: every location colorized once — stopping "
+                      f"before a 2nd pass (release-eligible={n_rel})", flush=True)
                 break
             rec = self.colorize(dt, cm, ranker, heads, row)
             if rec is None:
@@ -598,7 +658,14 @@ class EmissionDiversity:
         """Select ≤ N release candidates from the RELEASE-ELIGIBLE subset of the gated pool
         (per-head floor). Pool-admitted-but-sub-floor wallpapers stay inventory and are never
         selected. If fewer than N clear the floors, ship fewer — never dip below the floor to
-        fill the count (short-fill is reported honestly)."""
+        fill the count (short-fill is reported honestly).
+
+        NB cross-head mixing: `score` here is each row's `p_ge3` from ITS OWN head (wallpaper
+        for smooth, mining for strange). Under singleton niches (one colorize/location)
+        `greedy_select` tie-breaks on absolute score, which compares those two heads on
+        incommensurable scales and can shut out the smaller-scaled head — see the caveat in
+        `selection.py`. Partition by head + quota if guaranteed strange representation is
+        needed."""
         eligible = self.release_eligible()
         entries = [{
             "id": r["id"], "type": r["type"], "cluster": r["morph_cluster"],
@@ -673,6 +740,9 @@ def main():
     ap.add_argument("--release-n", type=int, default=12)
     ap.add_argument("--target-gated", type=int, default=0,
                     help="0 → 3×release-n RELEASE-ELIGIBLE rows (post-floor surplus)")
+    ap.add_argument("--cover-all", action="store_true",
+                    help="colorize every admitted location exactly once, then stop (explicit "
+                         "one-pass; bypasses --target-gated/--max-attempts/--time-budget-min)")
     ap.add_argument("--floor", type=float, default=DEFAULT_FLOOR,
                     help="wallpaper-head POOL floor for smooth (permissive; below the 0.90 gate)")
     ap.add_argument("--mining-floor", type=float, default=DEFAULT_MINING_FLOOR,

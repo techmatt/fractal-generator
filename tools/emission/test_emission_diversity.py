@@ -325,6 +325,26 @@ def test_multi_ledger_intake_dedup_and_source_tag(tmp_path):
     assert src["shared"].endswith("a.jsonl") and src["only_b"].endswith("b.jsonl")
 
 
+def test_intake_raises_on_run_scoped_id_collision(tmp_path):
+    """Same id, DIFFERENT location across ledgers = run-scoped-id collision: RAISE, don't
+    silently drop a distinct wallpaper (union-by-id would). Same id + same location dedups."""
+    def _at(id, cx):
+        r = _row(id, "v7")
+        r["outcome_cx"] = cx
+        return r
+    l1 = tmp_path / "a.jsonl"
+    l2 = tmp_path / "b.jsonl"
+    l1.write_text(json.dumps(_at("st_x", -0.5)) + "\n", encoding="utf-8")
+    l2.write_text(json.dumps(_at("st_x", 0.9)) + "\n", encoding="utf-8")   # SAME id, other coord
+    eng = B.EmissionDiversity(_args(tmp_path, ledger=[str(l1), str(l2)]))
+    with pytest.raises(SystemExit, match="COLLISION"):
+        eng._load_all_admitted()
+    # same id + identical location is NOT a collision (legitimate cross-ledger overlap)
+    l2.write_text(json.dumps(_at("st_x", -0.5)) + "\n", encoding="utf-8")
+    eng2 = B.EmissionDiversity(_args(tmp_path, ledger=[str(l1), str(l2)]))
+    assert [r["id"] for r in eng2._load_all_admitted()] == ["st_x"]
+
+
 def test_deficit_rebuild_from_pool_log(tmp_path):
     """The build_axes resume path: replaying the pool log reproduces fill+attempt counts."""
     cells = C.build_feasible_cells([("mandelbrot", "m#0")], ["k16:1"], ["smooth", "tia"])
