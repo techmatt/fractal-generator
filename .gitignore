@@ -157,6 +157,12 @@ __pycache__/
 /data/discovery/**/harvest_log.jsonl
 /data/discovery/**/prio_terms.jsonl
 /data/discovery/**/saturation.jsonl
+# Regenerable per-run overlays with no durable consumer: the deficit-scheduler decision
+# trace, the within-run morph-embedding/dedup matrix, and the julia-hook seed-injection log
+# (kin to node_embs/morph_mem above — rebuildable from the ledger + generator, never source).
+/data/discovery/**/scheduler_trace.jsonl
+/data/discovery/**/distinct_looks.npz
+/data/discovery/**/julia_hooks.jsonl
 
 # Phase-1 prospect location LIBRARY (tools/wallpaper/prospect_orchestrator.py). The
 # durable records + the consolidated embeddings matrix are load-bearing and
