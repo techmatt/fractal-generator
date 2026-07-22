@@ -637,6 +637,18 @@ class EmissionDiversity:
             r = e["_rec"]
             loc = D.location_of(self.by_id[r["location_id"]])
             png = self.release_dir / f"{r['id']}.png"
+            # Per-file resume: selection is deterministic from the durable pool, so a relaunch
+            # picks the same N — reuse any complete PNG already on disk (a reaper kill mid-pass
+            # then only re-renders the missing tiles, never restarts all N). Validate the file
+            # is a whole PNG so a truncated mid-write victim is re-rendered, not reused.
+            if png.exists():
+                try:
+                    with Image.open(png) as _im:
+                        _im.verify()
+                    out_paths.append((r["id"], png))
+                    continue
+                except Exception:              # noqa: BLE001  truncated/corrupt → re-render
+                    png.unlink(missing_ok=True)
             try:
                 render_wallpaper(dt, cm, loc, r["render_style"], r["palette"], png,
                                  REL_W, REL_H, REL_SS, REL_FILT)
