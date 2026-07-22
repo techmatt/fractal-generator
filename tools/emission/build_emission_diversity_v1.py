@@ -57,7 +57,16 @@ except Exception:
     pass
 
 # --- geometry -------------------------------------------------------------- #
-POOL_W, POOL_H, POOL_SS, POOL_FILT = 1280, 720, 2, "lanczos3"     # head-scoring / pool render
+# Pool render res = the SMALLEST res that faithfully feeds every render consumer. Both quality
+# heads deploy Transform(train=False) = 384×224 bicubic stretch, the pref pick scores on the
+# cached 640×360 field, and realized-stats is a resolution-robust histogram — so the pool render
+# only has to survive the 384×224 downsample. The scores-match guard (docs/findings/
+# pool-render-res-960.md) pinned 960×540 ss2: the mining head is res-robust everywhere (median
+# |Δ|=0.007 vs the old 1280×720 ss2) and the wallpaper head — the strict 0.90 gate, trained on
+# 1280-sourced crops, hence res-sensitive — matches at 960 ss2 (median |Δ|=0.027, spearman 0.933,
+# 0 release-floor flips) but NOT at 640 ss2 (max |Δ|=0.30, 5 flips). 960 ss2 is 0.56× the pixels
+# of the old 1280×720 ss2 leftover corpus-crop default → ~1.8× faster, floors unchanged.
+POOL_W, POOL_H, POOL_SS, POOL_FILT = 960, 540, 2, "lanczos3"      # head-scoring / pool render
 REL_W, REL_H, REL_SS, REL_FILT = 2560, 1440, 4, "lanczos3"        # release full-res (wallpaper canon)
 JPG_Q = 95
 
