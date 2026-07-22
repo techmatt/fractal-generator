@@ -63,3 +63,30 @@ deficit_gain = d_hue·sig_hue + w_c·d_chroma·sig_chroma + w_s·sig_spread
 `795565→commons_Julia` green 0.00→0.53, chroma 0.18→0.72), and quality held (a tia row's p_ge3 rose
 0.098→0.578). Early-run green is the strongest (empty-tracker pull); the full-library mean self-limits
 toward the target as the deficit saturates.
+
+## Full-library result (out/recolor_release, 960×540 ss2 pool render)
+
+1387 colorized, **725 gated (52.3% pass — UP from first_release's 47.6%**; the head gates
+reward the added green/chroma), 112 release-eligible, 50 released (0 short-fill, 0 errors).
+Palette variety measurably up vs the prior pool:
+
+| metric | full pool | gated pool | release-50 |
+|---|---|---|---|
+| mean green | 0.085 → **0.272** (3.2×) | 0.102 → 0.309 | 0.117 → 0.220 |
+| green-present frac | 0.13 → **0.47** | 0.15 → 0.51 | 0.18 → 0.40 |
+| mean chroma | 0.326 → 0.435 | 0.339 → 0.467 | 0.337 → 0.390 |
+| high-chroma frac (mc>0.4) | 0.30 → **0.54** | 0.34 → 0.63 | 0.32 → 0.44 |
+| rainbow frac (≥6 hue bins) | 0.15 → **0.39** | 0.17 → 0.36 | 0.18 → 0.40 |
+
+`special:spectral` FLAVOR share is ~unchanged (0.045→0.048) — flavor allocation is measure-driven
+and untouched; the rainbow rise comes from the deficit pick choosing more spread-y palettes WITHIN
+each flavor, not from more spectral-flavor routing. Green likewise rises via within-flavor picks.
+
+**Selection (committed fixes):** heads never mixed (disjoint within-head passes), split honest
+25 smooth / 25 strange (realized strange-frac 0.50, no dip), coverage **non-inert** — cov.gain<1
+on 48/50 picks (median 0.115) via the morph-CLIP kernel (vs first_release's uniform 1.0). Release-50:
+50/50 distinct morph clusters, all 9 families, mean pairwise morph-dist 0.165.
+
+**Timings (960×540 ss2):** colorize 3.35 h wall (8.7 s/loc incl. warmup; steady 7.6), release
+render 6.2 min for 50 (judge 1024×576 ss2). Two-point per-stage split: fixed pref-pick+score ~5.7 s,
+pixel-scaling render ~4.1 s (was ~7.3 s at 1280 ss2). See `pool-render-res-960.md`.
