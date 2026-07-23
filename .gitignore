@@ -98,6 +98,12 @@ __pycache__/
 # batch.json + images.jsonl + scores.json, gitignore the rebuildable crops.
 !/data/wallpaper_corpus/
 /data/wallpaper_corpus/batches/*/crops/
+# q4 window label store (tools/studies/q4_stage1_labelset.py; schema
+# data/q4_window_corpus/README.md) — same policy: commit windows.jsonl + meta.json +
+# README + scores.json, gitignore the crops (rebuildable: re-dump the field then
+# colorize+crop via the capture stage).
+!/data/q4_window_corpus/
+/data/q4_window_corpus/batches/*/crops/
 # disposable per-batch working data (previews, guided-descend pools, intermediate
 # scores) — rebuildable from the committed metadata + generator, never committed.
 /data/label_corpus/batches/*/_work/

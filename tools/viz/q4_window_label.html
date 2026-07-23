@@ -1,0 +1,251 @@
+<!doctype html><html><head><meta charset="utf-8"><title>q4 window label — accept / reject / filter-leak</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#0e0f13;color:#ccc;margin:0;padding:0}
+header{position:sticky;top:0;background:#12141a;border-bottom:1px solid #23252e;padding:10px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;z-index:5}
+h1{font-size:15px;margin:0;color:#eee}
+.batch{color:#7a9;font-size:12px}
+.spacer{flex:1}
+button{font:inherit;background:#1c1f29;color:#ccc;border:1px solid #2c2f3a;border-radius:5px;padding:5px 10px;cursor:pointer}
+button:hover{background:#262a36}
+.counts{color:#888;font-size:12px}
+.counts b{color:#cdd}
+.rej{color:#e06a6a}.acc{color:#5ec07a}.leak{color:#c79a3a}
+main{display:flex;gap:18px;padding:18px;align-items:flex-start}
+#stage{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:10px}
+#stage img{width:100%;height:auto;max-height:82vh;object-fit:contain;border:1px solid #23252e;border-radius:6px;background:#000;image-rendering:auto;cursor:zoom-in}
+.meta{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;color:#777;font-size:11px}
+.meta .cap{border:1px solid #23252e;border-radius:4px;padding:1px 7px}
+.cur-score{font-size:12px}
+.score-btns{display:flex;gap:14px;margin-top:2px}
+.score-btns button{font-size:15px;padding:8px 22px}
+.sbr{border-color:#5a2c2c}.sba{border-color:#2c5a3a}.sbl{border-color:#5a4a2c;font-size:12px;padding:8px 14px}
+aside{width:340px;flex:none;max-height:82vh;overflow:auto;border:1px solid #1c1f29;border-radius:6px;padding:6px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.cell{position:relative;border:2px solid transparent;border-radius:3px;cursor:pointer;aspect-ratio:16/9;background:#000;overflow:hidden}
+.cell img{width:100%;height:100%;object-fit:cover;display:block}
+.cell.cur{border-color:#6a8fd0}
+.cell .tag{position:absolute;right:1px;bottom:0;font-size:10px;padding:0 3px;border-radius:2px;background:rgba(0,0,0,.6)}
+.cell.reject .tag{color:#e06a6a}.cell.accept .tag{color:#5ec07a}.cell.filter_leak .tag{color:#c79a3a}
+.cell.reject{border-color:#5a2c2c}.cell.accept{border-color:#2c5a3a}.cell.filter_leak{border-color:#5a4a2c}
+.cell.mbstart{box-shadow:-3px 0 0 0 #3a3f4d}
+.hint{color:#777;font-size:11px;max-width:620px;text-align:center}
+#loader{padding:30px;max-width:680px}
+input[type=file]{font:inherit}
+code{color:#9bb}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out;flex-direction:column;gap:10px}
+#lightbox img{max-width:96vw;max-height:88vh;border:1px solid #333}
+#lightbox .lbcap{color:#aaa;font-size:12px;text-align:center;max-width:90vw}
+</style></head><body>
+<header>
+  <h1>q4 window label</h1>
+  <span class="batch" id="batch-label"></span>
+  <span class="counts" id="counts"></span>
+  <span class="spacer"></span>
+  <button id="next-unscored">next unlabeled (u)</button>
+  <button id="export">export scores.json</button>
+  <label class="cap" style="cursor:pointer;color:#ccc">load scores<input id="load-scores" type="file" accept=".json" hidden></label>
+</header>
+
+<div id="loader">
+  <p>Loading <code id="images-url"></code> …</p>
+  <p class="hint" id="loader-msg"></p>
+  <p>If it didn't load (opened via <code>file://</code> with fetch blocked), pick the batch's <code>windows.jsonl</code> manually:</p>
+  <input id="load-images" type="file" accept=".jsonl,.json">
+</div>
+
+<main id="app" style="display:none">
+  <div id="stage">
+    <img id="cur-img" alt="">
+    <div class="meta">
+      <span class="cap" id="cap-loc"></span>
+      <span class="cap" id="cap-mb"></span>
+      <span class="cap" id="cap-scale"></span>
+      <span class="cap" id="cap-band"></span>
+      <span class="cap" id="cap-score"></span>
+      <span class="cap" id="cap-feat"></span>
+      <span class="cur-score" id="cur-score"></span>
+    </div>
+    <div class="score-btns">
+      <button class="sbr" data-k="reject">reject · r</button>
+      <button class="sba" data-k="accept">accept · a</button>
+      <button class="sbl" data-k="filter_leak">filter-leak · f</button>
+    </div>
+    <div class="hint">worth <b>stage-2's time?</b> — err toward <b>accept</b> (high-recall gate; stage-2 filters) · <b>a</b> accept / <b>r</b> reject are the fast paths · <b>f</b> filter-leak = "dumb pre-filter should have dropped this (dead/noisy/barren)" — the rare exception, NOT a quality call · <b>←</b>/<b>→</b> move · <b>u</b> next unlabeled · click to zoom</div>
+  </div>
+  <aside><div class="grid" id="overview"></div></aside>
+</main>
+<div id="lightbox"><img id="lbimg" alt=""><div class="lbcap" id="lbcap"></div></div>
+
+<script>
+// ?batch=<dir> overrides the default (a dir under data/q4_window_corpus/batches/).
+const BATCH_ID=new URLSearchParams(location.search).get('batch')||'2026-07-23_q4_stage1_windows';
+const ROOT='../../';                 // tools/viz/ -> repo root
+const BATCH_DIR='data/q4_window_corpus/batches/'+BATCH_ID;
+const IMAGES_URL=ROOT+BATCH_DIR+'/windows.jsonl';
+const LS_KEY='q4_window_label::'+BATCH_ID;   // localStorage per-batch
+// three-way class stored as a string: "accept" | "reject" | "filter_leak".
+const CLASSES=['accept','reject','filter_leak'];
+const SHUFFLE_SEED=0xC0FFEE;
+let ROWS=[];
+let scores=loadScores();             // { window_id: "accept"|"reject"|"filter_leak" }
+let cur=0;
+
+function keyOf(r){ return r.window_id; }
+function imgSrc(r){ return ROOT+BATCH_DIR+'/crops/'+r.window_id+'.jpg'; }
+function loadScores(){ try{return JSON.parse(localStorage.getItem(LS_KEY))||{}}catch{return {}} }
+function saveScores(){ localStorage.setItem(LS_KEY,JSON.stringify(scores)); }
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function strHash(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+
+// Anti-anchoring: DO NOT order by composite score (that would anchor the accept/reject
+// judgment on the very score the re-fit must learn to correct). Group by minibrot,
+// shuffle windows within each minibrot deterministically.
+function mbKey(r){ return r.minibrot_id; }
+function buildOrder(rows){
+  const groups=new Map();
+  for(const r of rows){ const k=mbKey(r); if(!groups.has(k))groups.set(k,[]); groups.get(k).push(r); }
+  const out=[];
+  for(const [k,grp] of groups){
+    grp.sort((a,b)=>(a.window_id<b.window_id)?-1:(a.window_id>b.window_id?1:0));
+    const rnd=mulberry32(SHUFFLE_SEED ^ strHash(k));
+    for(let i=grp.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[grp[i],grp[j]]=[grp[j],grp[i]];}
+    grp.forEach((r,idx)=>{ r.__mbstart=(idx===0); out.push(r); });
+  }
+  return out;
+}
+
+function parseJsonl(text){
+  const rows=[];
+  for(const line of text.split(/\r?\n/)){ const t=line.trim(); if(!t)continue; try{rows.push(JSON.parse(t));}catch(e){} }
+  return rows;
+}
+
+function init(rows){
+  if(!rows.length){ document.getElementById('loader-msg').textContent='windows.jsonl has no rows'; return; }
+  // seed from any in-row labels (resume across machines): label.klass string
+  for(const r of rows){ const k=r.label&&r.label.klass; if(k&&scores[r.window_id]==null&&CLASSES.includes(k)) scores[r.window_id]=k; }
+  ROWS=buildOrder(rows);
+  document.getElementById('loader').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('batch-label').textContent=BATCH_ID;
+  buildOverview();
+  const u=ROWS.findIndex(r=>!scores[keyOf(r)]);
+  cur=u<0?0:u; show();
+}
+
+function buildOverview(){
+  const ov=document.getElementById('overview');
+  ov.innerHTML='';
+  ROWS.forEach((r,i)=>{
+    const d=document.createElement('div');
+    d.className='cell'+(r.__mbstart?' mbstart':''); d.dataset.i=i;
+    d.innerHTML=`<img loading="lazy" src="${imgSrc(r)}" title="${keyOf(r)}"><span class="tag"></span>`;
+    d.onclick=()=>{cur=i;show();};
+    ov.appendChild(d);
+  });
+}
+
+const TAG={accept:'✓',reject:'✗',filter_leak:'⚠'};
+function refreshCell(i){
+  const c=document.getElementById('overview').children[i]; if(!c)return;
+  const r=ROWS[i], s=scores[keyOf(r)];
+  c.className='cell'+(r.__mbstart?' mbstart':'')+(s?(' '+s):'')+(i===cur?' cur':'');
+  c.querySelector('.tag').textContent=s?TAG[s]:'';
+}
+function refreshCounts(){
+  let na=0,nr=0,nl=0;
+  for(const r of ROWS){const s=scores[keyOf(r)]; if(s==='accept')na++;else if(s==='reject')nr++;else if(s==='filter_leak')nl++;}
+  document.getElementById('counts').innerHTML=
+    `<b>${na+nr+nl}/${ROWS.length}</b> labeled &nbsp; `+
+    `<span class="acc">${na}·accept</span> / <span class="rej">${nr}·reject</span> / <span class="leak">${nl}·leak</span>`;
+}
+
+function show(){
+  const r=ROWS[cur], rd=r.render||{}, w=r.window||{}, ft=r.features||{};
+  document.getElementById('cur-img').src=imgSrc(r);
+  document.getElementById('cur-img').alt=keyOf(r);
+  document.getElementById('cap-loc').textContent=`${cur+1}/${ROWS.length} · ${r.window_id}`;
+  document.getElementById('cap-mb').textContent=`${r.minibrot_id} · p${r.period}`;
+  document.getElementById('cap-scale').textContent=`scale ${r.scale} · rect ${(+w.u).toFixed(2)},${(+w.v).toFixed(2)} ${(+w.w).toFixed(2)}×${(+w.h).toFixed(2)}`;
+  document.getElementById('cap-band').textContent=(r.band!=null)?('band '+r.band):'';
+  // composite score shown for reference ONLY — presentation is NOT ordered by it.
+  document.getElementById('cap-score').textContent=(r.score_composite!=null)?('score '+(+r.score_composite).toFixed(3)):'';
+  document.getElementById('cap-feat').textContent=
+    `int ${(+ft.interior_frac).toFixed(2)} mid ${(+ft.mid_detail_frac).toFixed(2)} flat ${(+ft.flat_frac).toFixed(2)} busy ${(+ft.busy_frac).toFixed(3)}`;
+  if(lbOpen)syncLightbox();
+  const s=scores[keyOf(r)];
+  const sc=document.getElementById('cur-score');
+  const SCLS={accept:'acc',reject:'rej',filter_leak:'leak'};
+  sc.textContent=s?('label: '+s):'unlabeled';
+  sc.className='cur-score'+(s?(' '+SCLS[s]):'');
+  [...document.getElementById('overview').children].forEach((c,i)=>refreshCell(i));
+  document.getElementById('overview').children[cur]?.scrollIntoView({block:'nearest'});
+  refreshCounts();
+}
+
+function setKlass(k){
+  scores[keyOf(ROWS[cur])]=k; saveScores();
+  refreshCell(cur); refreshCounts();
+  if(cur<ROWS.length-1){cur++;show();} else {show();}
+}
+function move(d){ cur=(cur+d+ROWS.length)%ROWS.length; show(); }
+function nextUnscored(){ for(let k=1;k<=ROWS.length;k++){const i=(cur+k)%ROWS.length; if(!scores[keyOf(ROWS[i])]){cur=i;show();return;}} }
+
+let lbOpen=false;
+function syncLightbox(){
+  const r=ROWS[cur], s=scores[keyOf(r)];
+  document.getElementById('lbimg').src=imgSrc(r);
+  document.getElementById('lbcap').textContent=
+    `${cur+1}/${ROWS.length} · ${r.window_id} · ${r.minibrot_id} p${r.period} · scale ${r.scale} · `+
+    (s||'unlabeled');
+}
+function openLightbox(){ lbOpen=true; syncLightbox(); document.getElementById('lightbox').style.display='flex'; }
+function closeLightbox(){ lbOpen=false; document.getElementById('lightbox').style.display='none'; }
+document.getElementById('cur-img').onclick=openLightbox;
+document.getElementById('lightbox').onclick=closeLightbox;
+
+document.querySelectorAll('.score-btns button').forEach(b=>b.onclick=()=>setKlass(b.dataset.k));
+window.addEventListener('keydown',e=>{
+  if(document.getElementById('app').style.display==='none')return;
+  if(e.key==='Escape'){ if(lbOpen)closeLightbox(); return; }
+  if(e.key==='a'||e.key==='A'){setKlass('accept');e.preventDefault();}
+  else if(e.key==='r'||e.key==='R'){setKlass('reject');e.preventDefault();}
+  else if(e.key==='f'||e.key==='F'){setKlass('filter_leak');e.preventDefault();}
+  else if(e.key==='ArrowRight')move(1);
+  else if(e.key==='ArrowLeft')move(-1);
+  else if(e.key==='u'||e.key==='U')nextUnscored();
+});
+document.getElementById('next-unscored').onclick=nextUnscored;
+
+document.getElementById('export').onclick=()=>{
+  const out={};
+  Object.keys(scores).sort().forEach(k=>{ if(scores[k]) out[k]=scores[k]; });
+  const blob=new Blob([JSON.stringify(out,null,0)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='scores.json'; a.click();
+  URL.revokeObjectURL(a.href);
+};
+document.getElementById('load-scores').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ scores=JSON.parse(r.result); saveScores();
+    [...document.getElementById('overview').children].forEach((c,i)=>refreshCell(i)); show();
+  }catch(err){alert('bad scores.json: '+err);} };
+  r.readAsText(f);
+};
+document.getElementById('load-images').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ try{init(parseJsonl(r.result));}catch(err){document.getElementById('loader-msg').textContent='parse error: '+err;} };
+  r.readAsText(f);
+};
+
+document.getElementById('images-url').textContent=IMAGES_URL;
+fetch(IMAGES_URL).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.text();})
+  .then(t=>init(parseJsonl(t)))
+  .catch(err=>{document.getElementById('loader-msg').textContent='auto-load failed ('+err.message+') — use the picker below.';});
+</script>
+</body></html>

@@ -1,0 +1,49 @@
+{
+  "batch_id": "2026-07-23_q4_stage1_windows",
+  "created": "2026-07-23",
+  "generator": "tools\\studies\\q4_stage1_labelset.py",
+  "purpose": "q4 stage-1 three-way labels: accept ('worth stage-2 time', high-recall) / reject ('clean but not q4-worthy') / filter_leak (prefilter feedback \u2014 EXCLUDED from the accept-vs-reject fit, reported as a leak-rate diagnostic)",
+  "label_classes": [
+    "accept",
+    "reject",
+    "filter_leak"
+  ],
+  "n_windows": 300,
+  "n_minibrots": 30,
+  "render": {
+    "width": 2176,
+    "height": 1224,
+    "aspect": "16:9",
+    "palette": "twilight_shifted"
+  },
+  "sweep": {
+    "scales": [
+      0.06,
+      0.09,
+      0.14
+    ],
+    "stride_frac": 0.3,
+    "nms_iou": 0.35
+  },
+  "prefilter": "obvious rejects only: interior_frac>0.85 | (flat>0.92 & occ<0.06) | busy>0.15",
+  "stratify": {
+    "by": "score_A composite",
+    "n_bands": 6,
+    "target_n": 300,
+    "seed": 0
+  },
+  "feature_keys": [
+    "interior_frac",
+    "deep_frac",
+    "detail_in_deep",
+    "flat_frac",
+    "mid_detail_frac",
+    "high_struct_frac",
+    "busy_frac",
+    "occupancy",
+    "distributed_interior",
+    "mean_struct"
+  ],
+  "caveat": "windows are crops of ONE medium render -> small-window freq stats are SCALE-BIASED; true-scale per-window re-render is a stage-2 refinement.",
+  "separate_store": "NOT the v7 location corpus (data/label_corpus). Distribution-bound; canonical reader = tools/corpus/q4_window_reader.py."
+}
