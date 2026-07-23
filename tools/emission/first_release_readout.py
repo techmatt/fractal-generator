@@ -82,11 +82,23 @@ def release_floor(style: str) -> float:
 # --------------------------------------------------------------------------- #
 # Target measure — cell-normalized marginals (what the DeficitModel drives).
 # --------------------------------------------------------------------------- #
-def target_marginals(cluster_tags: dict, by_id_family: dict, flavors, styles):
+def target_marginals(cluster_tags: dict, by_id_family: dict, flavors, styles,
+                     source_tags: dict | None = None):
     """The measure's target fraction per cell, aggregated to type / flavor / style marginals.
-    Uses the full feasible support (no attempt-cap eviction) — the nominal order book."""
+    Uses the full feasible support (no attempt-cap eviction) — the nominal order book.
+
+    `source_tags` (location_id -> durable ledger tag, from the snapshot) resolves any
+    source-tag measure override to concrete clusters so the readout reflects the SAME weighting
+    the emission drove. Absent it, a source-tag override shows unresolved (no-op) and we say so
+    loudly rather than silently under-report the up-weighted region."""
     cfg = json.loads(MEASURE.read_text(encoding="utf-8")) if MEASURE.exists() else {}
     tm = C.TargetMeasure.from_config(cfg)
+    if source_tags:
+        tm.resolve_source_tags(source_tags, cluster_tags)
+    elif any("source_tag" in ov.get("match", {}) for ov in tm.weight_overrides):
+        print("[readout] NOTE: snapshot carries no source_tags — source-tag overrides shown "
+              "UNRESOLVED (no-op). Re-run stage_first_release to persist tags for faithful "
+              "target marginals.", flush=True)
     observed = sorted({(by_id_family[i], cluster_tags[i]) for i in cluster_tags})
     feasible = C.build_feasible_cells(observed, flavors, styles)
     w = np.array([tm.weight(c) for c in feasible], dtype=np.float64)
@@ -255,7 +267,7 @@ def main():
     selected, _log = SEL.greedy_select(entries, args.release_n)
     rel_rows = [e["_rec"] for e in selected]
 
-    tgt = target_marginals(tags, by_id_family, flavors, STYLES)
+    tgt = target_marginals(tags, by_id_family, flavors, STYLES, intake.get("source_tags"))
     real_g = realized_marginals(gated)
     real_r = realized_marginals(rel_rows)
 

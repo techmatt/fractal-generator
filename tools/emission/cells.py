@@ -18,11 +18,22 @@ per-region weight overrides keyed on any subset of the axes (e.g. "cells whose
 palette_flavor is in {k16:5, k16:6}: weight 2.0"). A cell that repeatedly fails to
 fill (attempt cap reached with zero fills) leaves the support and is logged.
 
+An override may also key on a durable `source_tag` (the ledger-carried intake source,
+e.g. `classic_phoenix`) INSTEAD of an unstable `morph_cluster` id. `source_tag` is not a
+cell axis, so a consumer that has the intake's (location -> source_tag, location -> cluster)
+maps calls `resolve_source_tags` once to rewrite each such override into the concrete
+`morph_cluster` set those tagged locations currently occupy — re-derived every intake, so
+config never references cluster ids that a re-cluster silently invalidates. A consumer that
+does NOT resolve (the discovery-side per-type projection) sees the `source_tag` key as a
+non-cell axis that never matches, so the override is a no-op there — exactly as a
+cluster-id override on clusters that projection never observes was.
+
 Everything here is pure Python + stdlib so the deficit logic is unit-testable without
 loading a model or rendering a frame.
 """
 from __future__ import annotations
 
+import copy
 import math
 from collections import Counter
 from dataclasses import dataclass, field
@@ -51,13 +62,18 @@ class TargetMeasure:
         "softmax_temp": 0.35,                   # colorizer choice temperature (range-normalized)
         "weight_overrides": [                   # optional per-region multipliers
           {"match": {"palette_flavor": ["k16:5", "k16:6"]}, "weight": 2.0},
-          {"match": {"fractal_type": ["mandelbrot"]},        "weight": 1.5}
+          {"match": {"fractal_type": ["mandelbrot"]},        "weight": 1.5},
+          {"match": {"source_tag": ["classic_phoenix"]},     "weight": 1.9}
         ]
       }
 
     A cell's base target weight = 1.0 × ∏ (override.weight for every override whose
     `match` the cell satisfies). An override matches a cell iff, for every axis it
     names, the cell's value on that axis is in the override's listed values.
+
+    `source_tag` is a durable, non-cell key (see `resolve_source_tags`): a consumer with the
+    intake maps resolves it to concrete morph clusters before scoring; an unresolved consumer
+    treats it as a never-matching axis (the override is a no-op there).
     """
     mode: str = "uniform"
     attempt_cap: int = DEFAULT_ATTEMPT_CAP
@@ -71,11 +87,14 @@ class TargetMeasure:
             mode=cfg.get("mode", "uniform"),
             attempt_cap=int(cfg.get("attempt_cap", DEFAULT_ATTEMPT_CAP)),
             softmax_temp=float(cfg.get("softmax_temp", 0.35)),
-            weight_overrides=list(cfg.get("weight_overrides", [])),
+            # deep-copy: resolve_source_tags mutates override match dicts in place, which must
+            # never reach back into the caller's cfg or a sibling TargetMeasure built from it.
+            weight_overrides=copy.deepcopy(list(cfg.get("weight_overrides", []))),
         )
 
-    def _axis_index(self, axis: str) -> int:
-        return AXES.index(axis)
+    def _axis_index(self, axis: str) -> int | None:
+        """Cell-axis position, or None for a non-cell axis (e.g. an UNRESOLVED `source_tag`)."""
+        return AXES.index(axis) if axis in AXES else None
 
     def weight(self, cell: Cell) -> float:
         w = 1.0
@@ -83,12 +102,53 @@ class TargetMeasure:
             match = ov.get("match", {})
             ok = True
             for axis, vals in match.items():
-                if cell[self._axis_index(axis)] not in vals:
+                idx = self._axis_index(axis)
+                # a non-cell axis (unresolved source_tag) can't be matched against a bare cell,
+                # so the override simply does not apply here (no-op) — never a crash.
+                if idx is None or cell[idx] not in vals:
                     ok = False
                     break
             if ok:
                 w *= float(ov.get("weight", 1.0))
         return w
+
+    def resolve_source_tags(self, loc_source_tags: dict, loc_clusters: dict) -> list:
+        """Rewrite every `source_tag` override into a concrete `morph_cluster` override, using
+        THIS intake's live maps `location_id -> source_tag` and `location_id -> morph_cluster`.
+
+        A source-tag override names a location set DURABLY (by the tag its ledger row carries),
+        then re-derives which morph clusters those locations occupy at intake time — so the
+        config never references cluster ids, which are unstable across re-clustering. Mutates
+        `weight_overrides` in place: a match's `source_tag` entry becomes a `morph_cluster`
+        entry (intersected with an existing `morph_cluster` entry if the override names both).
+        Idempotent — a second call finds no `source_tag` keys. Returns per-resolved-override
+        diagnostics (`source_tags`, `n_locations`, `resolved_clusters`, `impure_clusters`)."""
+        members: dict = {}
+        for i, c in loc_clusters.items():
+            members.setdefault(c, []).append(i)
+        diags = []
+        for ov in self.weight_overrides:
+            match = ov.get("match", {})
+            if "source_tag" not in match:
+                continue
+            tags = set(match.pop("source_tag"))
+            tagged = {i for i, t in loc_source_tags.items() if t in tags}
+            clusters = {loc_clusters[i] for i in tagged if i in loc_clusters}
+            if "morph_cluster" in match:
+                clusters &= set(match["morph_cluster"])
+            resolved_locs = {i for i in tagged if loc_clusters.get(i) in clusters}
+            # purity: a resolved cluster that ALSO holds an untagged location means the override
+            # up-weights that non-source-tag member too (the caller's equivalence gate forbids it).
+            impure = sorted(c for c in clusters
+                            if any(i not in tagged for i in members.get(c, [])))
+            match["morph_cluster"] = sorted(clusters)
+            diags.append({
+                "source_tags": sorted(tags),
+                "n_locations": len(resolved_locs),
+                "resolved_clusters": sorted(clusters),
+                "impure_clusters": impure,
+            })
+        return diags
 
 
 # --------------------------------------------------------------------------- #

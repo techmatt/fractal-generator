@@ -7,8 +7,9 @@ do not re-intake." The current-decoded library is the union of the two committed
 passes:
 
   * library_intake_2 (out/emission/library_intake_2) — 819 admitted / 745 clusters, adds
-    phoenix; ids + cluster tags are kept VERBATIM so the measure's phoenix#196..236 override
-    stays valid (campaign1 has no phoenix).
+    phoenix; ids + cluster tags are kept VERBATIM (campaign1 has no phoenix). The measure's
+    classic-phoenix split knob now keys on the durable source_tag, not these cluster ids, so
+    verbatim preservation is a snapshot-integrity nicety rather than an override requirement.
   * campaign1        (out/emission/campaign1)        — 568 admitted / 523 clusters.
 
 The two passes clustered SEPARATELY and their run-scoped ids COLLIDE: 60 `st_<fam>_<arm>_<seq>`
@@ -168,10 +169,14 @@ def main():
     c1_new = {merged_tags[C1_PREFIX + r] for r in c1_tags}
     collide = i2_vals & c1_new
     assert not collide, f"campaign1/intake2 tag collision: {list(collide)[:5]}"
-    # phoenix measure address preserved verbatim.
+    # classic-phoenix clusters preserved verbatim. The measure now keys the classic split knob
+    # on the durable source_tag (mix_source=='classic_phoenix'), not these ids, so this is no
+    # longer required for override validity — but it stays as a snapshot-integrity guard that
+    # library_intake_2's classic clusters survived the union (the equivalence gate that the
+    # classic-tagged set == this cluster set is checked at emission).
     have_phx = set(merged_tags.values())
     missing_phx = [t for t in MEASURE_PHOENIX if t not in have_phx]
-    assert not missing_phx, f"measure phoenix clusters missing: {missing_phx[:5]}"
+    assert not missing_phx, f"classic-phoenix clusters missing from snapshot: {missing_phx[:5]}"
     # embedding dim consistent.
     dims = {e.shape[0] for e in embs.values()}
     assert len(dims) == 1, f"inconsistent emb dims: {dims}"
@@ -207,10 +212,18 @@ def main():
                     "stale row leaked past load_admitted"
                 break
 
+    # per-location durable source tag (ledger-carried) so source-tag measure overrides resolve
+    # from the snapshot alone — the classic-phoenix split knob keys on this, not cluster ids.
+    def _src_tag(rid):
+        row = i2_rows[rid] if rid in i2_tags else c1_rows[rid[len(C1_PREFIX):]]
+        return row.get("mix_source") or row.get("_source_tag")
+    source_tags = {rid: _src_tag(rid) for rid in merged_tags}
+
     # ---- write snapshot ----------------------------------------------------- #
     D._save_embs(embs, OUT / "morph_embs.npz")
     (OUT / "intake.json").write_text(json.dumps(
-        {"cluster_tags": merged_tags, "fields": fields, "n_admitted": n},
+        {"cluster_tags": merged_tags, "fields": fields, "n_admitted": n,
+         "source_tags": source_tags},
         indent=0), encoding="utf-8")
 
     fam_counts = Counter(t.rsplit("#", 1)[0] for t in merged_tags.values())

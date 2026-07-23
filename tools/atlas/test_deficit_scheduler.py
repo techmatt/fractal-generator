@@ -62,6 +62,20 @@ def test_projection_type_override_skews():
     assert abs(mg["mandelbrot"] - 1.0 / 7.0) < 1e-9
 
 
+def test_projection_ignores_unresolved_source_tag_override():
+    # The discovery-side projection does NOT resolve source-tag overrides (it has no intake
+    # loc->tag map), so a source_tag override must be a NO-OP here — never crash, never skew
+    # per-type marginals. This is the gate that the classic-phoenix source-tag rewrite leaves
+    # the deficit scheduler's per-type marginals unaffected.
+    obs = [(p, f"{p}#0") for p in PARTS]
+    base = D.project_type_marginals(C.TargetMeasure.from_config({"mode": "uniform"}), obs, PARTS)
+    tm = C.TargetMeasure.from_config({"weight_overrides": [
+        {"match": {"source_tag": ["classic_phoenix"]}, "weight": 1.9}]})
+    got = D.project_type_marginals(tm, obs, PARTS)      # must not raise
+    for p in PARTS:
+        assert abs(got[p] - base[p]) < 1e-12
+
+
 def test_projection_flavor_style_cancel():
     # an override on a FREE axis (palette_flavor) multiplies the same cell subset for every
     # type, so it must NOT change the per-type marginal (cancels under normalization).

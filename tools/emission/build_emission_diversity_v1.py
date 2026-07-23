@@ -373,6 +373,13 @@ class EmissionDiversity:
 
     # ---- intake ---------------------------------------------------------- #
     @staticmethod
+    def _source_tag_of(row) -> str | None:
+        """Durable intake source tag carried on the ledger row. The classic-phoenix supply
+        stamps `mix_source`; older intake tooling used `_source_tag`. None when untagged (a
+        row that no source-tag override can name)."""
+        return row.get("mix_source") or row.get("_source_tag")
+
+    @staticmethod
     def _loc_key(r) -> tuple:
         """The location identity of a ledger row (what the id is supposed to name)."""
         return (str(r.get("outcome_cx")), str(r.get("outcome_cy")), str(r.get("outcome_fw")),
@@ -456,7 +463,11 @@ class EmissionDiversity:
             tags = D.assign_morph_clusters(rows, embs)
             self.intake_path.write_text(json.dumps(
                 {"cluster_tags": tags, "fields": {k: list(v) for k, v in fields.items()},
-                 "n_admitted": len(rows)}), encoding="utf-8")
+                 "n_admitted": len(rows),
+                 # durable per-location source tag so source-tag overrides resolve from the
+                 # snapshot alone (the first_release readout reads artifacts, not ledgers).
+                 "source_tags": {r["id"]: self._source_tag_of(r) for r in rows}}),
+                encoding="utf-8")
             print(f"[intake] {len(set(tags.values()))} morph clusters "
                   f"across {len(set(r['family'] for r in rows))} types", flush=True)
         self.rows = rows
@@ -508,6 +519,22 @@ class EmissionDiversity:
         if Path(self.args.target_measure).exists():
             cfg = json.loads(Path(self.args.target_measure).read_text(encoding="utf-8"))
         self.target = C.TargetMeasure.from_config(cfg)
+        # Resolve any durable source-tag override (e.g. classic_phoenix) into the concrete
+        # morph clusters those tagged locations occupy in THIS intake — config names the
+        # location set by its ledger source tag, never by unstable cluster ids.
+        loc_src = {i: self._source_tag_of(self.by_id[i]) for i in self.by_id}
+        for d in self.target.resolve_source_tags(loc_src, self.cluster_tags):
+            if d["n_locations"] == 0:
+                raise SystemExit(
+                    f"[axes] source_tag override {d['source_tags']} resolved to ZERO "
+                    f"locations — the measure references a source tag absent from this intake")
+            if d["impure_clusters"]:
+                print(f"[axes] WARNING source_tag {d['source_tags']}: "
+                      f"{len(d['impure_clusters'])} resolved cluster(s) also hold untagged "
+                      f"locations (override up-weights those too): {d['impure_clusters'][:5]}",
+                      flush=True)
+            print(f"[axes] source_tag {d['source_tags']} → {d['n_locations']} locations, "
+                  f"{len(d['resolved_clusters'])} morph clusters", flush=True)
         feasible = C.build_feasible_cells(observed, self.flavors, self.styles)
         self.model = C.DeficitModel(feasible, self.target)
         # rebuild deficit counts from the DURABLE pool log (resume safety).

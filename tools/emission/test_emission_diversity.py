@@ -44,6 +44,72 @@ def test_target_measure_overrides():
     assert tm.weight(("multibrot3", "x#0", "k16:1", "smooth")) == 1.0
 
 
+def test_source_tag_override_resolves_to_clusters():
+    # source_tag names a location set durably; resolve rewrites it to the morph clusters those
+    # locations currently occupy, and up-weights exactly those cells.
+    tm = C.TargetMeasure.from_config({
+        "weight_overrides": [
+            {"match": {"fractal_type": ["phoenix"]}, "weight": 0.21},
+            {"match": {"source_tag": ["classic_phoenix"]}, "weight": 1.9},
+        ],
+    })
+    # 2 classic locations (in one cluster) + 1 varied location (another cluster).
+    loc_src = {"a": "classic_phoenix", "b": "classic_phoenix", "c": "phoenix_grid"}
+    loc_cl = {"a": "phoenix#7", "b": "phoenix#7", "c": "phoenix#3"}
+    diag = tm.resolve_source_tags(loc_src, loc_cl)
+    assert len(diag) == 1
+    assert diag[0]["n_locations"] == 2 and diag[0]["resolved_clusters"] == ["phoenix#7"]
+    assert diag[0]["impure_clusters"] == []                      # cluster #7 is all-classic
+    # no source_tag key survives (rewritten to morph_cluster); idempotent second call.
+    assert all("source_tag" not in ov.get("match", {}) for ov in tm.weight_overrides)
+    assert tm.resolve_source_tags(loc_src, loc_cl) == []
+    # classic cell carries BOTH the type budget knob and the split knob; varied only the budget.
+    assert tm.weight(("phoenix", "phoenix#7", "k16:1", "smooth")) == pytest.approx(0.21 * 1.9)
+    assert tm.weight(("phoenix", "phoenix#3", "k16:1", "smooth")) == pytest.approx(0.21)
+
+
+def test_source_tag_override_survives_cluster_id_permutation():
+    # The whole point of keying on source_tag: a re-cluster that RENAMES cluster ids must not
+    # change which locations the override up-weights. Resolve against a permuted loc->cluster
+    # map and confirm the SAME locations (by source tag) still get the multiplier.
+    cfg = {"weight_overrides": [{"match": {"source_tag": ["classic_phoenix"]}, "weight": 1.9}]}
+    loc_src = {"a": "classic_phoenix", "b": "classic_phoenix", "c": "phoenix_grid"}
+    base_cl = {"a": "phoenix#196", "b": "phoenix#197", "c": "phoenix#3"}
+    perm_cl = {"a": "phoenix#42", "b": "phoenix#99", "c": "phoenix#201"}   # ids permuted
+    w_base = C.TargetMeasure.from_config(cfg)
+    w_base.resolve_source_tags(loc_src, base_cl)
+    w_perm = C.TargetMeasure.from_config(cfg)
+    w_perm.resolve_source_tags(loc_src, perm_cl)
+    # tagged locations keep the multiplier under BOTH clusterings; the untagged one never gets it.
+    assert w_base.weight(("phoenix", "phoenix#196", "k", "smooth")) == pytest.approx(1.9)
+    assert w_base.weight(("phoenix", "phoenix#197", "k", "smooth")) == pytest.approx(1.9)
+    assert w_base.weight(("phoenix", "phoenix#3", "k", "smooth")) == pytest.approx(1.0)
+    assert w_perm.weight(("phoenix", "phoenix#42", "k", "smooth")) == pytest.approx(1.9)
+    assert w_perm.weight(("phoenix", "phoenix#99", "k", "smooth")) == pytest.approx(1.9)
+    assert w_perm.weight(("phoenix", "phoenix#201", "k", "smooth")) == pytest.approx(1.0)
+    # config carries NO cluster id — the override text is identical across both intakes.
+    assert cfg["weight_overrides"][0]["match"] == {"source_tag": ["classic_phoenix"]}
+
+
+def test_source_tag_unresolved_is_noop_not_crash():
+    # A consumer that never resolves (the discovery-side projection) must see a source_tag
+    # override as a never-matching no-op, NOT an axis-index crash.
+    tm = C.TargetMeasure.from_config(
+        {"weight_overrides": [{"match": {"source_tag": ["classic_phoenix"]}, "weight": 1.9}]})
+    assert tm.weight(("phoenix", "phoenix#196", "k16:1", "smooth")) == pytest.approx(1.0)
+
+
+def test_source_tag_impure_cluster_flagged():
+    # A resolved cluster that also holds an untagged location is reported impure (the override
+    # would up-weight that member too) — the caller's equivalence gate is what forbids it.
+    tm = C.TargetMeasure.from_config(
+        {"weight_overrides": [{"match": {"source_tag": ["classic_phoenix"]}, "weight": 1.9}]})
+    loc_src = {"a": "classic_phoenix", "b": "phoenix_grid"}
+    loc_cl = {"a": "phoenix#7", "b": "phoenix#7"}                # mixed cluster
+    diag = tm.resolve_source_tags(loc_src, loc_cl)
+    assert diag[0]["impure_clusters"] == ["phoenix#7"] and diag[0]["n_locations"] == 1
+
+
 def test_feasible_cells_and_deficit_sign():
     tm = C.TargetMeasure.from_config({})
     observed = [("mandelbrot", "m#0"), ("multibrot3", "x#0")]
