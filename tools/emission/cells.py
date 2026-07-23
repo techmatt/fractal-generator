@@ -96,19 +96,23 @@ class TargetMeasure:
         """Cell-axis position, or None for a non-cell axis (e.g. an UNRESOLVED `source_tag`)."""
         return AXES.index(axis) if axis in AXES else None
 
+    def _matches(self, match: dict, cell: Cell) -> bool:
+        """True iff, for every axis `match` names, the cell's value is in that axis's set. A
+        non-cell axis (an unresolved `source_tag`) can never match a bare cell → False (no-op)."""
+        for axis, vals in match.items():
+            idx = self._axis_index(axis)
+            if idx is None or cell[idx] not in vals:
+                return False
+        return True
+
     def weight(self, cell: Cell) -> float:
         w = 1.0
         for ov in self.weight_overrides:
-            match = ov.get("match", {})
-            ok = True
-            for axis, vals in match.items():
-                idx = self._axis_index(axis)
-                # a non-cell axis (unresolved source_tag) can't be matched against a bare cell,
-                # so the override simply does not apply here (no-op) — never a crash.
-                if idx is None or cell[idx] not in vals:
-                    ok = False
-                    break
-            if ok:
+            # an unsolved target_share override (no numeric `weight`) is a no-op here — it needs
+            # solve_target_shares (which needs the feasible set) to become a concrete multiplier;
+            # until then `.get("weight", 1.0)` folds it to 1.0. On the discovery-side projection
+            # (which never solves) a source-tag target_share stays a no-op, exactly as intended.
+            if self._matches(ov.get("match", {}), cell):
                 w *= float(ov.get("weight", 1.0))
         return w
 
@@ -148,6 +152,75 @@ class TargetMeasure:
                 "resolved_clusters": sorted(clusters),
                 "impure_clusters": impure,
             })
+        return diags
+
+    def _base_weight(self, cell: Cell, skip_ov: dict) -> float:
+        """Cell weight from every override EXCEPT `skip_ov` that already carries a numeric
+        `weight` — i.e. all fixed-weight overrides plus any target-share override solved earlier
+        in the same pass. Unsolved target-share overrides (no `weight` key) are excluded, so a
+        share is always sized against the fixed-weight measure it stacks on."""
+        w = 1.0
+        for ov in self.weight_overrides:
+            if ov is skip_ov or "weight" not in ov:
+                continue
+            if self._matches(ov.get("match", {}), cell):
+                w *= float(ov["weight"])
+        return w
+
+    def solve_target_shares(self, feasible_cells: Iterable[Cell]) -> list:
+        """Convert each `target_share` override into a solved `weight` multiplier so its matched
+        cell set holds EXACTLY that share of the total measure over `feasible_cells`.
+
+        Solved AFTER all fixed-weight overrides: a cell's BASE weight (used to size the share) is
+        the product of every override that already carries a numeric `weight` — the fixed-weight
+        overrides plus any target-share override solved earlier in this pass (`_base_weight`). The
+        share is therefore ABSOLUTE and DECOUPLED from any type-budget knob that also multiplies
+        the matched set: moving that knob scales the base symmetrically, and the re-solved
+        multiplier restores the exact share. It is likewise DENOMINATOR-INVARIANT — enlarging the
+        intake grows the non-matched mass, and the multiplier grows to compensate.
+
+        With base masses A = Σ_{c∈M} base(c) over the matched cells M and B = Σ_{c∉M} base(c) over
+        the rest, the multiplier λ making λA/(λA+B) = s is λ = sB / (A(1−s)). Mutates each solved
+        override in place (`target_share` → `weight`) so `weight()` and every downstream consumer
+        see a plain weight override; idempotent (a second call finds no `target_share` keys).
+
+        Must run AFTER `resolve_source_tags`. A source-tag target_share whose tag never resolved
+        (the discovery-side projection, which does not resolve) matches no feasible cell (A=0) and
+        is LEFT UNTOUCHED — a no-op, exactly as the pre-solve state. Returns per-override
+        diagnostics (`target_share`, `matched_cells`, `solved_multiplier`, `realized_share`)."""
+        feasible = list(feasible_cells)
+        diags = []
+        for ov in self.weight_overrides:
+            if "target_share" not in ov:
+                continue
+            s = float(ov["target_share"])
+            if not (0.0 < s < 1.0):
+                raise ValueError(f"target_share must be in (0,1), got {s}")
+            match = ov.get("match", {})
+            A = B = 0.0
+            nM = 0
+            for c in feasible:
+                base = self._base_weight(c, skip_ov=ov)
+                if self._matches(match, c):
+                    A += base
+                    nM += 1
+                else:
+                    B += base
+            if A <= 0.0:
+                # matched set empty over feasible cells (e.g. an unresolved source_tag): leave the
+                # override a no-op — its `target_share` stays and `weight()` folds it to 1.0.
+                diags.append({"target_share": s, "matched_cells": 0, "solved_multiplier": None,
+                              "realized_share": 0.0, "unsolved_reason": "empty matched set"})
+                continue
+            if B <= 0.0:
+                raise ValueError(
+                    f"target_share {s}: matched set is the ENTIRE measure (B=0); no multiplier "
+                    f"can make it less than 100%")
+            lam = s * B / (A * (1.0 - s))
+            del ov["target_share"]
+            ov["weight"] = lam
+            diags.append({"target_share": s, "matched_cells": nM, "solved_multiplier": lam,
+                          "realized_share": (lam * A) / (lam * A + B)})
         return diags
 
 

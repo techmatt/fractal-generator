@@ -536,6 +536,19 @@ class EmissionDiversity:
             print(f"[axes] source_tag {d['source_tags']} → {d['n_locations']} locations, "
                   f"{len(d['resolved_clusters'])} morph clusters", flush=True)
         feasible = C.build_feasible_cells(observed, self.flavors, self.styles)
+        # Solve any target_share override into an absolute multiplier over the feasible support —
+        # AFTER source-tag resolution (so a source-tag share keys on concrete clusters) and AFTER
+        # all fixed-weight overrides (the share is decoupled from the type-budget knobs it stacks
+        # on). Denominator-invariant: the multiplier is re-solved every intake against the live
+        # feasible mass, so a growing library never dilutes the share (a fixed weight would).
+        for d in self.target.solve_target_shares(feasible):
+            if d["solved_multiplier"] is None:
+                raise SystemExit(
+                    f"[axes] target_share {d['target_share']} matched ZERO feasible cells — the "
+                    f"share references a region absent from this intake (unresolved source tag?)")
+            print(f"[axes] target_share {d['target_share']:.4f} → ×{d['solved_multiplier']:.4f} "
+                  f"over {d['matched_cells']} cells (realized share "
+                  f"{d['realized_share']:.4%} of the measure)", flush=True)
         self.model = C.DeficitModel(feasible, self.target)
         # rebuild deficit counts from the DURABLE pool log (resume safety).
         for r in self.pool.rows:

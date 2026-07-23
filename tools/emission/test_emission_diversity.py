@@ -110,6 +110,105 @@ def test_source_tag_impure_cluster_flagged():
     assert diag[0]["impure_clusters"] == ["phoenix#7"] and diag[0]["n_locations"] == 1
 
 
+def _share_of(tm, feasible, match_pred):
+    """Realized fraction of the total measure held by cells satisfying `match_pred`."""
+    w = {c: tm.weight(c) for c in feasible}
+    tot = sum(w.values())
+    return sum(v for c, v in w.items() if match_pred(c)) / tot
+
+
+def test_target_share_solves_to_exact_share():
+    # A source-tag share stacked on a phoenix budget knob solves to EXACTLY the requested share.
+    cfg = {"weight_overrides": [
+        {"match": {"fractal_type": ["phoenix"]}, "weight": 0.21},
+        {"match": {"source_tag": ["classic_phoenix"]}, "target_share": 0.02},
+    ]}
+    tm = C.TargetMeasure.from_config(cfg)
+    # 2 classic phoenix clusters + 3 varied phoenix + 4 other-type clusters.
+    loc_src = {f"cl{i}": "classic_phoenix" for i in range(2)}
+    loc_src.update({f"vg{i}": "phoenix_grid" for i in range(3)})
+    loc_src.update({f"mb{i}": "steered" for i in range(4)})
+    loc_cl = {**{f"cl{i}": f"phoenix#{100+i}" for i in range(2)},
+              **{f"vg{i}": f"phoenix#{i}" for i in range(3)},
+              **{f"mb{i}": f"mandelbrot#{i}" for i in range(4)}}
+    tm.resolve_source_tags(loc_src, loc_cl)
+    obs = sorted({(("phoenix" if c.startswith("phoenix") else "mandelbrot"), c)
+                  for c in loc_cl.values()})
+    feasible = C.build_feasible_cells(obs, ["k16:1", "k16:2"], ["smooth", "tia"])
+    classic_cl = {"phoenix#100", "phoenix#101"}
+    diag = tm.solve_target_shares(feasible)
+    assert len(diag) == 1 and diag[0]["matched_cells"] == len(classic_cl) * 2 * 2
+    assert diag[0]["realized_share"] == pytest.approx(0.02)
+    # measured directly through weight() over the feasible support
+    assert _share_of(tm, feasible, lambda c: c[1] in classic_cl) == pytest.approx(0.02)
+    # target_share key is consumed (rewritten to a plain weight); idempotent re-solve is a no-op.
+    ov = next(o for o in tm.weight_overrides if o["match"].get("morph_cluster"))
+    assert "target_share" not in ov and "weight" in ov
+    assert tm.solve_target_shares(feasible) == []
+
+
+def test_target_share_denominator_invariant():
+    # Enlarging the intake with fake NON-classic locations must NOT move the classic share.
+    cfg = {"weight_overrides": [
+        {"match": {"fractal_type": ["phoenix"]}, "weight": 0.21},
+        {"match": {"source_tag": ["classic_phoenix"]}, "target_share": 0.02},
+    ]}
+    classic_cl = {"phoenix#100", "phoenix#101"}
+
+    def build(n_extra):
+        tm = C.TargetMeasure.from_config(cfg)
+        loc_src = {"cl0": "classic_phoenix", "cl1": "classic_phoenix", "vg0": "phoenix_grid"}
+        loc_cl = {"cl0": "phoenix#100", "cl1": "phoenix#101", "vg0": "phoenix#0"}
+        for i in range(n_extra):                       # synthetic non-classic bulk
+            loc_src[f"x{i}"] = "steered"
+            loc_cl[f"x{i}"] = f"mandelbrot#{i}"
+        tm.resolve_source_tags(loc_src, loc_cl)
+        obs = sorted({(("phoenix" if c.startswith("phoenix") else "mandelbrot"), c)
+                      for c in loc_cl.values()})
+        feasible = C.build_feasible_cells(obs, ["k16:1"], ["smooth"])
+        tm.solve_target_shares(feasible)
+        return _share_of(tm, feasible, lambda c: c[1] in classic_cl)
+
+    small, large = build(3), build(300)
+    assert small == pytest.approx(0.02) and large == pytest.approx(0.02)
+
+
+def test_target_share_decoupled_from_budget_knob():
+    # Moving the phoenix BUDGET multiplier re-solves classic back to EXACTLY its share, and the
+    # solved multiplier changes with the budget (proof the share is absolute, not stacked-fixed).
+    def build(budget):
+        cfg = {"weight_overrides": [
+            {"match": {"fractal_type": ["phoenix"]}, "weight": budget},
+            {"match": {"source_tag": ["classic_phoenix"]}, "target_share": 0.02},
+        ]}
+        tm = C.TargetMeasure.from_config(cfg)
+        loc_src = {"cl0": "classic_phoenix", "vg0": "phoenix_grid", "mb0": "steered"}
+        loc_cl = {"cl0": "phoenix#100", "vg0": "phoenix#0", "mb0": "mandelbrot#0"}
+        tm.resolve_source_tags(loc_src, loc_cl)
+        obs = sorted({(("phoenix" if c.startswith("phoenix") else "mandelbrot"), c)
+                      for c in loc_cl.values()})
+        feasible = C.build_feasible_cells(obs, ["k16:1"], ["smooth"])
+        diag = tm.solve_target_shares(feasible)
+        share = _share_of(tm, feasible, lambda c: c[1] == "phoenix#100")
+        return share, diag[0]["solved_multiplier"]
+
+    s1, m1 = build(0.21)
+    s2, m2 = build(1.5)
+    assert s1 == pytest.approx(0.02) and s2 == pytest.approx(0.02)   # share unchanged
+    assert m1 != pytest.approx(m2)                                   # multiplier adapted
+
+
+def test_target_share_unresolved_is_noop():
+    # The discovery-side projection never resolves source_tags; an unsolved source-tag
+    # target_share must match no feasible cell (A=0) and stay a no-op, never a crash or a bogus λ.
+    tm = C.TargetMeasure.from_config(
+        {"weight_overrides": [{"match": {"source_tag": ["classic_phoenix"]}, "target_share": 0.02}]})
+    feasible = C.build_feasible_cells([("phoenix", "phoenix#100")], ["k16:1"], ["smooth"])
+    diag = tm.solve_target_shares(feasible)                          # no resolve first
+    assert diag[0]["solved_multiplier"] is None and diag[0]["matched_cells"] == 0
+    assert tm.weight(("phoenix", "phoenix#100", "k16:1", "smooth")) == pytest.approx(1.0)
+
+
 def test_feasible_cells_and_deficit_sign():
     tm = C.TargetMeasure.from_config({})
     observed = [("mandelbrot", "m#0"), ("multibrot3", "x#0")]

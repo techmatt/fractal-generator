@@ -101,6 +101,9 @@ def target_marginals(cluster_tags: dict, by_id_family: dict, flavors, styles,
               "target marginals.", flush=True)
     observed = sorted({(by_id_family[i], cluster_tags[i]) for i in cluster_tags})
     feasible = C.build_feasible_cells(observed, flavors, styles)
+    # Solve any target_share override the SAME way the emission drove it (post source-tag resolve),
+    # so the target column reflects the absolute-share measure, not the unsolved no-op weighting.
+    tm.solve_target_shares(feasible)
     w = np.array([tm.weight(c) for c in feasible], dtype=np.float64)
     tot = w.sum()
     tfrac = w / tot if tot > 0 else w
