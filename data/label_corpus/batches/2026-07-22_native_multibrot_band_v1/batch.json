@@ -1,0 +1,230 @@
+{
+ "created": "2026-07-22",
+ "labeler": null,
+ "generator_version": "native_multibrot_band_v1",
+ "source_run": "v7 campaign ledgers (campaign1/2 breadth+dive) admissions + campaign2 harvest canon-rejects; mb4 sub-cut filled from gather/multibrot4 harvest RE-SCORED under v7",
+ "purpose": "Calibrate native multibrot mb3/mb4/mb5 t_good (uncalibrated 0.50). Labels-input ONLY; threshold analysis comes later.",
+ "schema_extension": "render block adds fractal_type (multibrot3/4/5) + c_re/c_im (null for native) so the crop rebuilds as the right family (jm-band precedent).",
+ "score_axis": {
+  "scorer_version": "v7",
+  "t_good_measured": 0.5,
+  "bands": [
+   "0.00-0.20",
+   "0.20-0.35",
+   "0.35-0.50",
+   "0.50-0.65",
+   "0.65-1.00"
+  ],
+  "per_band_target": 20,
+  "band_score": "p_good for admissions; canon_pgood for campaign2 harvest rejects; v7-rescored p_good for gather/multibrot4 fills"
+ },
+ "band": {
+  "families": [
+   "multibrot3",
+   "multibrot4",
+   "multibrot5"
+  ],
+  "per_family_selected": {
+   "multibrot3": 100,
+   "multibrot4": 100,
+   "multibrot5": 100
+  },
+  "n_rows": 300,
+  "realized": {
+   "multibrot3": {
+    "0": {
+     "requested": 20,
+     "available": 253,
+     "picked": 20
+    },
+    "1": {
+     "requested": 20,
+     "available": 175,
+     "picked": 20
+    },
+    "2": {
+     "requested": 20,
+     "available": 106,
+     "picked": 20
+    },
+    "3": {
+     "requested": 20,
+     "available": 106,
+     "picked": 20
+    },
+    "4": {
+     "requested": 20,
+     "available": 127,
+     "picked": 20
+    }
+   },
+   "multibrot4": {
+    "0": {
+     "requested": 20,
+     "available": 483,
+     "picked": 20
+    },
+    "1": {
+     "requested": 20,
+     "available": 69,
+     "picked": 20
+    },
+    "2": {
+     "requested": 20,
+     "available": 19,
+     "picked": 19
+    },
+    "3": {
+     "requested": 20,
+     "available": 18,
+     "picked": 18
+    },
+    "4": {
+     "requested": 20,
+     "available": 140,
+     "picked": 20
+    }
+   },
+   "multibrot5": {
+    "0": {
+     "requested": 20,
+     "available": 231,
+     "picked": 20
+    },
+    "1": {
+     "requested": 20,
+     "available": 243,
+     "picked": 20
+    },
+    "2": {
+     "requested": 20,
+     "available": 162,
+     "picked": 20
+    },
+    "3": {
+     "requested": 20,
+     "available": 143,
+     "picked": 20
+    },
+    "4": {
+     "requested": 20,
+     "available": 146,
+     "picked": 20
+    }
+   }
+  },
+  "filled_from_adjacent": {
+   "multibrot3": {
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3": 0,
+    "4": 0
+   },
+   "multibrot4": {
+    "0": 0,
+    "1": 1,
+    "2": 0,
+    "3": 0,
+    "4": 2
+   },
+   "multibrot5": {
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3": 0,
+    "4": 0
+   }
+  },
+  "band_source_breakdown": {
+   "multibrot3": {
+    "0.00-0.20": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.20-0.35": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.35-0.50": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.50-0.65": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.65-1.00": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    }
+   },
+   "multibrot4": {
+    "0.00-0.20": {
+     "campaign_v7": 0,
+     "gather_v6_rescored_v7": 20
+    },
+    "0.20-0.35": {
+     "campaign_v7": 1,
+     "gather_v6_rescored_v7": 20
+    },
+    "0.35-0.50": {
+     "campaign_v7": 4,
+     "gather_v6_rescored_v7": 15
+    },
+    "0.50-0.65": {
+     "campaign_v7": 5,
+     "gather_v6_rescored_v7": 13
+    },
+    "0.65-1.00": {
+     "campaign_v7": 21,
+     "gather_v6_rescored_v7": 1
+    }
+   },
+   "multibrot5": {
+    "0.00-0.20": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.20-0.35": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.35-0.50": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.50-0.65": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    },
+    "0.65-1.00": {
+     "campaign_v7": 20,
+     "gather_v6_rescored_v7": 0
+    }
+   }
+  }
+ },
+ "mb4_note": "gather_v6_rescored_v7 rows are LABEL-BATCH material only (source=gather_v6_rescored_v7, scorer=v7). They are NOT ledger admissions and must never enter a generation/pool path.",
+ "render_defaults": {
+  "width": 640,
+  "height": 360,
+  "ss": 2,
+  "maxiter": "auto_maxiter(fw)",
+  "filter": "lanczos3",
+  "composition": "center",
+  "interior_mode": "black",
+  "palette": "twilight_shifted",
+  "jpg_quality": 90
+ },
+ "render_recipe": {
+  "path": "render-one --family <fractal_type> --palette twilight_shifted",
+  "colormaps": "data/palettes/clean_colormaps.json (render-one default)",
+  "note": "byte-identical to the reframe/prescreen scored presentation."
+ },
+ "sidecar_registration_deferred": {
+  "reason": "registering an empty sidecar in label_store.SIDECAR_LABELS makes assert_sidecars_joined raise for the whole corpus (joined[bid]==0). Add the line below AFTER labels are exported.",
+  "add_to_SIDECAR_LABELS": "\"2026-07-22_native_multibrot_band_v1\": \"native_multibrot_band_v1.json\",",
+  "sidecar_path": "labels/native_multibrot_band_v1.json"
+ }
+}
