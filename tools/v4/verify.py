@@ -12,12 +12,17 @@ from __future__ import annotations
 
 import json
 import random
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
+# aug_cache JPGs live under ARTIFACTS_ROOT now; manifest paths stay repo-relative.
+sys.path.insert(0, str(ROOT / "tools" / "corpus"))
+from artifacts import resolve as resolve_artifact  # noqa: E402
+
 CACHE_MANIFEST = ROOT / "data" / "v4" / "cache_manifest.jsonl"
 ROSTER = ROOT / "data" / "v4" / "aug_roster.json"
 OUT = ROOT / "out" / "v4"
@@ -40,7 +45,7 @@ def integrity(rows):
     print(f"  manifest rows : {len(rows)}  (expected {EXPECTED})")
     missing, empty, size = [], [], 0
     for r in rows:
-        p = ROOT / r["path"]
+        p = resolve_artifact(r["path"])
         if not p.exists():
             missing.append(r["path"])
         else:
@@ -112,7 +117,7 @@ def coherence(rows):
                 key = (pal, sc, sh, aa)
                 if key not in slots:
                     continue
-                im = Image.open(ROOT / slots[key]).convert("RGB").resize((cw, ch), Image.BICUBIC)
+                im = Image.open(resolve_artifact(slots[key])).convert("RGB").resize((cw, ch), Image.BICUBIC)
                 canvas.paste(im, (pad + ci * (cw + pad), pad + ri * (ch + pad)))
         mp = OUT / f"coherence_L{lab}_loc{loc}.png"
         canvas.save(mp)

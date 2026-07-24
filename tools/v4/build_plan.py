@@ -24,9 +24,16 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# aug_cache is relocated out of the tree: the manifest "path" stays repo-relative
+# (portable + parity-stable), but the plan "out" the Rust batch writes to must be
+# the resolved real location so a rebuild never re-materializes the cache in-tree.
+sys.path.insert(0, str(ROOT / "tools" / "corpus"))
+from artifacts import resolve as resolve_artifact  # noqa: E402
+
 MANIFEST = ROOT / "data" / "v4" / "manifest.jsonl"
 ROSTER = ROOT / "data" / "v4" / "aug_roster.json"
 CACHE_DIR = ROOT / "data" / "v4" / "aug_cache"
@@ -96,10 +103,11 @@ def main() -> None:
             # across machines/model versions; the Rust batch runs from repo root.
             out = (loc_dir / fname).relative_to(ROOT).as_posix()
             # plan row (Rust render executor) — cx/cy/fw are f64-exact strings.
+            # "out" is the RESOLVED absolute path (relocated out of the tree).
             plan_f.write(json.dumps({
                 "cx": fmt_f64(cx), "cy": fmt_f64(cy), "fw": fmt_f64(fw_slot),
                 "palette": pal, "ss": ss, "filter": filt,
-                "out": out,
+                "out": resolve_artifact(out).as_posix(),
             }) + "\n")
             # cache manifest row (training-side provenance)
             cm_f.write(json.dumps({

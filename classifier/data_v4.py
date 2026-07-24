@@ -21,7 +21,9 @@ the AA-invariance spot-check.
 from __future__ import annotations
 
 import json
+import os
 import random
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +33,11 @@ from PIL import Image
 from torch.utils.data import Dataset, WeightedRandomSampler
 
 ROOT = Path(__file__).resolve().parent.parent
+# Regenerable aug_cache JPGs were relocated out of the working tree; the manifest
+# still stores repo-relative paths, so route them through the shared resolver.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools", "corpus"))
+from artifacts import resolve as resolve_artifact  # noqa: E402
+
 DEFAULT_CACHE = ROOT / "data" / "v4" / "cache_manifest.jsonl"
 
 # Deploy-canonical axis selection (neutral palette / ss4 / canonical scale / center).
@@ -110,7 +117,7 @@ def load_locations(cache_path: Path = DEFAULT_CACHE,
                 and loc.group_id == int(r["group_id"]) and loc.biased == bool(r["biased"]), \
                 f"loc {lid}: inconsistent per-location metadata in cache"
         loc.renders.append(Render(
-            path=ROOT / r["path"], palette=r["palette"],
+            path=resolve_artifact(r["path"]), palette=r["palette"],
             palette_family=r["palette_family"], scale=float(r["scale"]),
             shift_id=r["shift_id"], aa_level=r["aa_level"],
         ))

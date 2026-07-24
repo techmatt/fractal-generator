@@ -1,0 +1,42 @@
+#!/bin/sh
+# Large-blob recurrence guard.
+#
+# After the storage restructure moved the regenerable file-count bombs out of the
+# working tree, this hook stops the "oops committed 300 MB" class from recurring:
+# it refuses any staged blob larger than the limit. This is the recurrence guard
+# the audit called for (repo history already carries ~358 MB of dead binary weight
+# from exactly this failure mode).
+#
+# Portable to the Git-for-Windows sh environment (POSIX; uses only git plumbing).
+# Limit is overridable per-commit:  FRACTAL_BLOB_LIMIT=<bytes> git commit ...
+# Bypass entirely (use sparingly):  git commit --no-verify
+#
+# Install: copy to .git/hooks/pre-commit (chmod +x). Tracked source of truth lives
+# here at tools/hooks/pre-commit so it is reviewable and re-installable.
+
+LIMIT=${FRACTAL_BLOB_LIMIT:-1048576}   # 1 MiB
+
+offenders=$(
+  git diff --cached --name-only --diff-filter=ACM | while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    # size of the STAGED (index) blob, in bytes; skip if unresolvable
+    size=$(git cat-file -s ":$path" 2>/dev/null) || continue
+    if [ "$size" -gt "$LIMIT" ]; then
+      printf '%s\t%s\n' "$size" "$path"
+    fi
+  done
+)
+
+if [ -n "$offenders" ]; then
+  echo "pre-commit: refusing to commit blob(s) larger than ${LIMIT} bytes." >&2
+  echo "  (regenerable bulk belongs under ARTIFACTS_ROOT, not in git; see" >&2
+  echo "   tools/corpus/artifacts.py and docs/findings/storage_restructure.md)" >&2
+  echo "$offenders" | while IFS='	' read -r size path; do
+    printf '  %10s bytes  %s\n' "$size" "$path" >&2
+  done
+  echo "  Override for this commit: FRACTAL_BLOB_LIMIT=<bytes> git commit …" >&2
+  echo "  Bypass all hooks:         git commit --no-verify" >&2
+  exit 1
+fi
+
+exit 0

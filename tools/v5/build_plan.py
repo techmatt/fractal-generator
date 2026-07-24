@@ -24,9 +24,15 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# Relocated aug_cache: manifest "path" stays repo-relative; plan "out" resolves
+# to the real (out-of-tree) location the Rust batch writes to. See tools/corpus/artifacts.py.
+sys.path.insert(0, str(ROOT / "tools" / "corpus"))
+from artifacts import resolve as resolve_artifact  # noqa: E402
+
 MANIFEST = ROOT / "data" / "v5" / "manifest.jsonl"
 ROSTER = ROOT / "data" / "v4" / "aug_roster.json"
 V4_CACHE_MANIFEST = ROOT / "data" / "v4" / "cache_manifest.jsonl"
@@ -77,7 +83,8 @@ def emit_location(loc_id, r, palettes, fam_of, angle_of, plan_rows, cm_rows,
         if is_julia:
             plan_rows.append({
                 "cx": fmt_f64(cx), "cy": fmt_f64(cy), "fw": fmt_f64(fw_slot),
-                "palette": pal, "ss": ss, "filter": filt, "out": out,
+                "palette": pal, "ss": ss, "filter": filt,
+                "out": resolve_artifact(out).as_posix(),
                 # Julia coupling consumed by v4-render-batch (viewport = z-plane).
                 "fractal_type": "julia", "c_re": c_re, "c_im": c_im,
             })
