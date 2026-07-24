@@ -67,20 +67,20 @@ ASPECT = "16:9"
 # twilight_shifted purple-on-black ramp crushed the mid-tone filigree to invisible
 # noise ("30 useless" was a palette artifact — docs/findings/fair_rerender_richness.md);
 # labeling under it teaches garbage. This is the Rust built-in `default` (Ultra Fractal)
-# palette that made the fair montage pop — one consistent vivid palette per crop for
-# comparable judgments. Its stops aren't in score3_colormaps.json, so they're injected
-# into the PaletteLibrary at capture time (UF_DEFAULT_STOPS, from src/palette.rs).
+# palette — the SAME vivid, iteration-CYCLED banding that made the fair montage pop.
+#
+# Capture renders via the Rust `render` path (NOT the field⊗colormap recolor): the UF
+# default's classic banded look is the palette CYCLED with smooth-iteration, whereas
+# colormap.py percentile-stretches the whole field into ONE palette pass (flat,
+# washed-out gradient — a different coloring entirely). So the fields are re-rendered
+# full-frame in `default` and the windows cropped from those, exactly reproducing the
+# montage tiles Matt approved (prompt's sanctioned "else re-render the 30 vivid" branch).
 PALETTE = "default"
 
-# Ultra-Fractal exterior gradient, byte-for-byte from src/palette.rs::ultra_fractal
-# (cyclic, no mirror). sRGB8 stops: deep-blue -> blue -> near-white -> orange -> near-black.
-UF_DEFAULT_STOPS = [
-    [0.0,    [0, 7, 100]],
-    [0.16,   [32, 107, 203]],
-    [0.42,   [237, 255, 255]],
-    [0.6425, [255, 170, 0]],
-    [0.8575, [0, 2, 0]],
-]
+# Full-frame capture render: 2x the field grid (same 16:9 frame / fw / center — window
+# rects are frame-normalized, so any resolution maps) at ss2, for crisp label crops.
+CAP_W, CAP_H, CAP_SS = 2 * W, 2 * H, 2
+FRAMES = OUT / "frames"          # disposable full-frame captures (out/ tree)
 
 # --- sweep -----------------------------------------------------------------
 # 3 scales spanning Matt's hand-drawn box widths (0.057..0.099 frame-normalized),
@@ -388,19 +388,26 @@ def load_selected():
 # --------------------------------------------------------------------------- #
 # Stage 5 — capture: colorize each field once, crop windows -> label store    #
 # --------------------------------------------------------------------------- #
+def render_full_frame(mb, out_png):
+    """Render one minibrot full-frame in the vivid UF `default` palette via the Rust
+    engine — the exact banded coloring of the approved fair montage (bare `render`,
+    --palette default). Window crops come from this, NOT from a colormap.py recolor."""
+    cmd = [str(EXE), "--center-re", mb["cx"], "--center-im", mb["cy"],
+           "--frame-width", mb["fw"], "--maxiter", str(mb["maxiter"]),
+           "--width", str(CAP_W), "--height", str(CAP_H),
+           "--supersample", str(CAP_SS), "--palette", PALETTE,
+           "--output", str(out_png)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not out_png.exists():
+        raise RuntimeError(f"render {mb['id']} failed: {r.stderr[-400:]}")
+
+
 def stage_capture():
     from PIL import Image
-    from tools.colormap import (PaletteLibrary, CandidateConfig, LocationRef,
-                                 load_field, render_candidate)
 
     selected = load_selected()
-    lib = PaletteLibrary()
-    # Inject the UF `default` vivid palette — not present in score3_colormaps.json.
-    # cycle=cyclic (matches the Rust built-in's cyclic interpolation, no mirror);
-    # palette_type() falls back to this and returns 'cyclic'.
-    lib.colormaps[PALETTE] = dict(name=PALETTE, stops=UF_DEFAULT_STOPS,
-                                  cycle="cyclic", mirror_needed=False)
     CROPS.mkdir(parents=True, exist_ok=True)
+    FRAMES.mkdir(parents=True, exist_ok=True)
 
     by_mb = {}
     for r in selected:
@@ -410,15 +417,10 @@ def stage_capture():
     t0 = time.time()
     n_crop = 0
     for k, (mbid, wins) in enumerate(by_mb.items()):
-        fd = load_field(FIELDS / f"{mbid}.bin")
-        cfg = CandidateConfig(
-            palette=PALETTE,
-            location=LocationRef(kind="mandelbrot", cx=mbs[mbid]["cx"], cy=mbs[mbid]["cy"],
-                                 fw=mbs[mbid]["fw"], maxiter=mbs[mbid]["maxiter"]),
-            eval_width=W, eval_height=H, filter="box",
-        )
-        rgb = render_candidate(fd, cfg, lib)          # (H, W, 3) uint8, ONE colored render
-        full = Image.fromarray(rgb, "RGB")
+        frame_png = FRAMES / f"{mbid}.png"
+        ts = time.time()
+        render_full_frame(mbs[mbid], frame_png)        # ONE vivid Rust render per minibrot
+        full = Image.open(frame_png).convert("RGB")
         fw_px, fh_px = full.size
         for r in wins:
             u, v, ww, hh = (r["window"][x] for x in ("u", "v", "w", "h"))
@@ -427,7 +429,8 @@ def stage_capture():
             crop = full.crop((x0, y0, x1, y1))
             crop.save(CROPS / f"{r['window_id']}.jpg", quality=90)
             n_crop += 1
-        print(f"  [{k+1}/{len(by_mb)}] {mbid}: {len(wins)} crops", flush=True)
+        print(f"  [{k+1}/{len(by_mb)}] {mbid}: {len(wins)} crops "
+              f"({time.time()-ts:.1f}s)", flush=True)
 
     # windows.jsonl — the label-store rows (SEPARATE schema, window-bound)
     with (STORE / "windows.jsonl").open("w") as f:
