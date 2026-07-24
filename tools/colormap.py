@@ -10,6 +10,16 @@ the inference sweep (thousands of recolors per cached field). The correctness
 contract is empirical: at canonical params it reproduces a known-good Rust smooth
 render bit-close (see `colormap_acceptance.py` / `test_colormap.py`).
 
+CAVEAT — this is the *beautiful* coloring, NOT bare `render`/`sheet`. It reproduces
+the Rust `render_modes.rs` **beautiful** path (percentile-stretch → single palette
+pass → a smooth gradient). That is a DIFFERENT coloring from the *location-profile*
+`coloring::shade` used by bare `render`/`sheet`/`render-one`-default, which maps raw
+`smooth_iter × density` cyclically → the banded Ultra-Fractal look. So recoloring a
+`--dump-field` field here CANNOT reproduce that banding (e.g. the UF `default`
+montage look): render full-frame via bare `render`/`sheet` and crop instead. This
+exact mismatch flattened the q4 stage-1 crops — see
+`docs/findings/render_config_report.md`.
+
 Pipeline order — **pinned to the Rust `render_modes.rs` smooth path**, NOT the order
 listed in the build prompt (Step 0 reads the code and pins it):
 

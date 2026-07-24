@@ -22,6 +22,19 @@
 //! smooth path's reconstruction filter), rather than threading through
 //! `shade_and_downsample`.
 //!
+//! ## They also LOOK different at default — this is a coloring, not just a pipeline
+//!
+//! Do not assume "same field + same palette ⇒ same image." At their defaults the two
+//! colorings produce **visibly different** renders: location-profile maps raw
+//! `smooth_iter × density` cyclically (the classic **banded** Ultra-Fractal look — the
+//! bare-`render`/`sheet` default), whereas this path percentile-stretches the field
+//! into a **single** palette pass (a smooth gradient). The Python coloring tail
+//! `tools/colormap.py` is pinned to **this** (beautiful) path — so a `--dump-field`
+//! field recolored in Python reproduces the beautiful look and **cannot** reproduce the
+//! location-profile banding. To get the banded UF `default` look, render full-frame via
+//! bare `render`/`sheet`, not by recoloring a dumped field. Full audit + the density
+//! defaults (0.025 CLI vs 0.004 corpus) in `docs/findings/render_config_report.md`.
+//!
 //! ## Architecture (doc §2)
 //!
 //! ```text

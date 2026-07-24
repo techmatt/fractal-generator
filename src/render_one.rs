@@ -229,12 +229,29 @@ pub fn run_render_one(args: &RenderOneArgs) -> Result<(), String> {
         .map_err(|e| format!("read {}: {e}", args.colormaps))?;
     let library =
         parse_colormaps(&cm_text).map_err(|e| format!("parse {}: {e}", args.colormaps))?;
-    let cm = library
-        .iter()
-        .find(|c| c.name == args.palette)
-        .ok_or_else(|| format!("palette '{}' not found in {}", args.palette, args.colormaps))?;
-    let palette =
-        Palette::from_srgb8_stops_mirrored(cm.name.clone(), &cm.stops, want_reverse, cm.mirror_needed);
+    // Resolve the palette name: colormap library file first (existing behavior —
+    // unchanged for any name present there), then fall back to the Rust built-in
+    // registry (default/cubehelix/viridis). The signature UF `default`
+    // (blue→white→orange→black) lives ONLY in the registry — it is absent from every
+    // colormap-library JSON — so without this fallback `render-one --palette default`
+    // errored while bare `render`/`sheet` accept it. Removing that foot-gun is P1 of
+    // docs/findings/render_config_report.md. Purely additive: former errors become
+    // renders; no name that already resolved changes output.
+    let palette = match library.iter().find(|c| c.name == args.palette) {
+        Some(cm) => Palette::from_srgb8_stops_mirrored(
+            cm.name.clone(),
+            &cm.stops,
+            want_reverse,
+            cm.mirror_needed,
+        ),
+        None => crate::palette::builtin(&args.palette, want_reverse).ok_or_else(|| {
+            format!(
+                "palette '{}' not found in {} or the built-in registry \
+                 (default/cubehelix/viridis)",
+                args.palette, args.colormaps
+            )
+        })?,
+    };
 
     let mut params = color_params();
     params.density *= args.n_cycles; // n_cycles = palette band-repeat multiplier
@@ -686,7 +703,10 @@ pub struct RenderOneArgs {
     pub phoenix_z1: Option<Vec<String>>,
 
     /// Palette name, looked up in `--colormaps` (loaded through the selective-mirror
-    /// path, so cyclic and sequential maps both render seam-free).
+    /// path, so cyclic and sequential maps both render seam-free), falling back to the
+    /// built-in registry (`default`/`cubehelix`/`viridis`) for names absent from the
+    /// library — so `--palette default` (the UF built-in) resolves here as it does on
+    /// bare `render`/`sheet`.
     #[arg(long, default_value = "twilight")]
     pub palette: String,
 
