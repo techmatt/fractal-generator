@@ -84,6 +84,9 @@ const BATCH_ID=new URLSearchParams(location.search).get('batch')||'2026-07-23_q4
 const ROOT='../../';                 // tools/viz/ -> repo root
 const BATCH_DIR='data/q4_window_corpus/batches/'+BATCH_ID;
 const IMAGES_URL=ROOT+BATCH_DIR+'/windows.jsonl';
+// auto_filter_v2 drops: window_ids the coarse filter removed from the label queue.
+const AUTOFILTER_URL=ROOT+BATCH_DIR+'/auto_filter_v2.json';
+let AUTO_DROP=new Set();              // filled before init(); hides these rows
 const LS_KEY='q4_window_label::'+BATCH_ID;   // localStorage per-batch
 // three-way class stored as a string: "accept" | "reject" | "filter_leak".
 const CLASSES=['accept','reject','filter_leak'];
@@ -127,10 +130,15 @@ function init(rows){
   if(!rows.length){ document.getElementById('loader-msg').textContent='windows.jsonl has no rows'; return; }
   // seed from any in-row labels (resume across machines): label.klass string
   for(const r of rows){ const k=r.label&&r.label.klass; if(k&&scores[r.window_id]==null&&CLASSES.includes(k)) scores[r.window_id]=k; }
+  // hide auto_filter_v2 drops — show only survivors (+ already-labeled windows).
+  const nTot=rows.length;
+  rows=rows.filter(r=>!AUTO_DROP.has(r.window_id));
+  const nDrop=nTot-rows.length;
   ROWS=buildOrder(rows);
   document.getElementById('loader').style.display='none';
   document.getElementById('app').style.display='flex';
-  document.getElementById('batch-label').textContent=BATCH_ID;
+  document.getElementById('batch-label').textContent=
+    BATCH_ID+(nDrop?`  ·  ${nDrop} auto-filtered, ${ROWS.length} survivors`:'');
   buildOverview();
   const u=ROWS.findIndex(r=>!scores[keyOf(r)]);
   cur=u<0?0:u; show();
@@ -244,7 +252,11 @@ document.getElementById('load-images').onchange=e=>{
 };
 
 document.getElementById('images-url').textContent=IMAGES_URL;
-fetch(IMAGES_URL).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.text();})
+// load the auto_filter_v2 drop-set first (tolerate absence), THEN the windows.
+fetch(AUTOFILTER_URL).then(r=>r.ok?r.json():null).catch(()=>null)
+  .then(af=>{ if(af&&af.dropped) AUTO_DROP=new Set(Object.keys(af.dropped)); })
+  .then(()=>fetch(IMAGES_URL))
+  .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.text();})
   .then(t=>init(parseJsonl(t)))
   .catch(err=>{document.getElementById('loader-msg').textContent='auto-load failed ('+err.message+') — use the picker below.';});
 </script>
