@@ -49,6 +49,7 @@ STORE_ROOT = ROOT / "data" / "q4_window_corpus" / "batches"
 # The registered q4-window batches (single source of truth). NEW batches append here.
 REGISTERED_BATCHES = [
     "2026-07-23_q4_stage1_windows",
+    "2026-07-23_q4_g_aimed",
 ]
 
 CLASSES = ("accept", "reject", "filter_leak")

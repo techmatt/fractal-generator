@@ -1,0 +1,44 @@
+{
+  "batch_id": "2026-07-23_q4_g_aimed",
+  "created": "2026-07-23",
+  "generator": "tools/studies/q4_stage1_g_batch.py",
+  "purpose": "G-aimed next-to-label pass: linear goodness field (T2_cells) ranks fresh v2-survivor windows. Slugs: uncertain (boundary-teaching) / top_g (precision audit) / control (uniform, confident-and-wrong audit).",
+  "label_classes": [
+    "accept",
+    "reject",
+    "filter_leak"
+  ],
+  "model": {
+    "tier": "T2_cells",
+    "C": 2.0,
+    "source": "q4_stage1_linear_fit"
+  },
+  "n_windows": 112,
+  "n_minibrots": 31,
+  "slugs": {
+    "uncertain": 64,
+    "top_g": 24,
+    "control": 24
+  },
+  "candidate_source": "dense-grid harvest over existing 30 fields (deduped vs the labeled batch) + fresh Newton minibrots",
+  "render": {
+    "width": 2176,
+    "height": 1224,
+    "aspect": "16:9",
+    "palette": "default"
+  },
+  "prefilter": "v2 ceilings applied at construction (interior>=0.10 | flat>=0.88 | speckle_ratio>=0.30) -> all rows are survivors; no auto_filter_v2 needed.",
+  "feature_keys": [
+    "interior_frac",
+    "deep_frac",
+    "detail_in_deep",
+    "flat_frac",
+    "mid_detail_frac",
+    "high_struct_frac",
+    "busy_frac",
+    "occupancy",
+    "distributed_interior",
+    "mean_struct"
+  ],
+  "separate_store": "q4 window store; canonical reader tools/corpus/q4_window_reader.py."
+}
