@@ -224,8 +224,11 @@ def _fit_logit(X, y, C):
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     sc = StandardScaler().fit(X)
+    # random_state pinned: liblinear SHUFFLES data by random_state, so an unset seed
+    # makes weights near the L1 sparsity threshold flicker run-to-run (a feature toggling
+    # on/off). Pin it for reproducible weights — mandatory for a stability comparison.
     clf = LogisticRegression(penalty="l1", solver="liblinear", C=C,
-                             class_weight="balanced", max_iter=2000)
+                             class_weight="balanced", max_iter=2000, random_state=0)
     clf.fit(sc.transform(X), y)
     return sc, clf
 
