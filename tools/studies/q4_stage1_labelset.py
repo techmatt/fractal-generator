@@ -63,7 +63,24 @@ CROPS = STORE / "crops"
 # (0.06 * 2176 = 130). 16:9 (wallpaper aspect); field + crops share this geometry.
 W, H = 2176, 1224
 ASPECT = "16:9"
-PALETTE = "twilight_shifted"
+# Vivid blue->white->orange->near-black. The fair re-render proved the old
+# twilight_shifted purple-on-black ramp crushed the mid-tone filigree to invisible
+# noise ("30 useless" was a palette artifact — docs/findings/fair_rerender_richness.md);
+# labeling under it teaches garbage. This is the Rust built-in `default` (Ultra Fractal)
+# palette that made the fair montage pop — one consistent vivid palette per crop for
+# comparable judgments. Its stops aren't in score3_colormaps.json, so they're injected
+# into the PaletteLibrary at capture time (UF_DEFAULT_STOPS, from src/palette.rs).
+PALETTE = "default"
+
+# Ultra-Fractal exterior gradient, byte-for-byte from src/palette.rs::ultra_fractal
+# (cyclic, no mirror). sRGB8 stops: deep-blue -> blue -> near-white -> orange -> near-black.
+UF_DEFAULT_STOPS = [
+    [0.0,    [0, 7, 100]],
+    [0.16,   [32, 107, 203]],
+    [0.42,   [237, 255, 255]],
+    [0.6425, [255, 170, 0]],
+    [0.8575, [0, 2, 0]],
+]
 
 # --- sweep -----------------------------------------------------------------
 # 3 scales spanning Matt's hand-drawn box widths (0.057..0.099 frame-normalized),
@@ -378,6 +395,11 @@ def stage_capture():
 
     selected = load_selected()
     lib = PaletteLibrary()
+    # Inject the UF `default` vivid palette — not present in score3_colormaps.json.
+    # cycle=cyclic (matches the Rust built-in's cyclic interpolation, no mirror);
+    # palette_type() falls back to this and returns 'cyclic'.
+    lib.colormaps[PALETTE] = dict(name=PALETTE, stops=UF_DEFAULT_STOPS,
+                                  cycle="cyclic", mirror_needed=False)
     CROPS.mkdir(parents=True, exist_ok=True)
 
     by_mb = {}

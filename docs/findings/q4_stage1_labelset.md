@@ -40,8 +40,15 @@ force the mid-band into the labeled set.
    ~300 with **round-robin across minibrots within each band** for spatial/period
    diversity; top up from leftovers to hit the target.
 6. **Capture** — colorize each field **once** with `tools/colormap.py` (field⊗colormap
-   split — no second deep render) and crop the selected windows from that single
-   medium render into `crops/<window_id>.jpg`; write `windows.jsonl`.
+   split — no second deep render) in the **vivid UF `default`** blue→white→orange→near-black
+   palette (one consistent palette per crop) and crop the selected windows from that single
+   medium render into `crops/<window_id>.jpg`; write `windows.jsonl`. The first pass rendered
+   in `twilight_shifted` (purple-on-near-black), which the fair re-render proved crushes the
+   mid-tone filigree to invisible noise — labeling under it reproduces the "30 useless"
+   misjudgment; the vivid re-render (geometry/features/bands unchanged) is the fix
+   (`docs/findings/fair_rerender_richness.md`). The UF stops aren't in `score3_colormaps.json`,
+   so `stage_capture` injects them into the `PaletteLibrary` (`UF_DEFAULT_STOPS`, from
+   `src/palette.rs`).
 
 Each window records: minibrot id · frame-normalized rect · scale · band ·
 `score_composite` · the `compute_metrics` **feature vector** (fitting-ready) · thumbnail.
@@ -100,7 +107,9 @@ v7 union would poison that union. The single canonical reader
   decoration) appear across bands 2–5, confirming the mid-pack spread that makes
   uniform/top sampling inadequate.
 - **Store:** 300 crops, 0 missing / 0 orphan vs `windows.jsonl`; all `label.klass`
-  null. Band-stratified montage `out/q4_stage1/_bands_montage.png`.
+  null. Band-stratified montage `out/q4_stage1/_bands_montage.png`. **Palette:** all 300
+  crops re-rendered in the vivid UF `default` (blue/orange) — filigree now readable
+  (`out/q4_stage1/_vivid_check.png`); the earlier `twilight_shifted` crops are superseded.
 
 ## Launch labeling
 
