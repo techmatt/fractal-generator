@@ -17,7 +17,7 @@ Labels: p1+p2 union (p2 precedence), `filter_leak` excluded. **228** windows (55
 - **Global-only already ranks well** (AUC 0.848) on a *single* surviving scalar, `g_mid` (mid-detail fraction) — the rough heuristic is essentially "how much of the window is mid-scale ornament." A cell-free `g_mid` threshold is a usable labeling aid on its own.
 - **Cell-dispersion earns a modest, real lift** (+0.030 AUC, AP 0.607→0.707). What the cells add is *contrast* structure: `flat_worst`(+) ∧ `detail_worst`(+) ∧ `detail_spread`(−) = a window with **both** a calm anchor cell **and** evenly-distributed detail elsewhere (not one busy spike). `interior_worst`(−) kills any window with a dead cell — the corner-deadness signal.
 - **Laplacian does NOT earn its place** (-0.005 AUC vs T2; `lapvar_*` weights are tiny). 2nd-order curvature adds nothing over the struct_e decomposition. Drop it.
-- **Priors that did NOT hold** (weights contradict the framing hypotheses): (a) `g_occ` carries a *positive* weight (+0.08) — the "down-weight occupancy" prior was a story; more occupancy reads as accept. (b) `flat_edge_minus_center`(+0.37) has the **opposite** sign to the "flat-in-edge = empty corner = bad" prior: a calmer edge with a busier center (subject-centered composition) reads as accept, not reject. (c) `g_speckle`(+1.31) is positive — *within pre-filter survivors* (pure speckle already gated at ratio≥0.30) a higher fine/coarse ratio is fine ornamentation, not noise.
+- **Priors that did NOT hold** (weights contradict the framing hypotheses): (a) `g_occ` carries a *positive* weight (+0.03) — the "down-weight occupancy" prior was a story; more occupancy reads as accept. (b) `flat_edge_minus_center`(+0.37) has the **opposite** sign to the "flat-in-edge = empty corner = bad" prior: a calmer edge with a busier center (subject-centered composition) reads as accept, not reject. (c) `g_speckle`(+1.31) is positive — *within pre-filter survivors* (pure speckle already gated at ratio≥0.30) a higher fine/coarse ratio is fine ornamentation, not noise.
 - **Field visual test passes**: masking the field to pre-filter survivors (the deployed v2 gate) is load-bearing — the *unmasked* linear G extrapolates to huge OOD spikes on the dead-interior blob (the model never trains on interior-heavy windows). Over survivors, G∈[-11,+6] and its position-maxima land on the ornate spiral ring; the rendered maxima crops are exactly the good filigree windows. "Plot G, take maxima" auto-frames correctly.
 
 ## Surviving L1 weights (standardized, sorted by |w|)
@@ -32,32 +32,33 @@ Labels: p1+p2 union (p2 precedence), `filter_leak` excluded. **228** windows (55
 
 | feature | weight |
 |---|---|
-| flat_worst | +1.922 |
+| flat_worst | +1.923 |
 | detail_spread | -1.765 |
 | interior_worst | -1.660 |
 | g_speckle | +1.306 |
 | detail_worst | +1.247 |
-| g_mid | +0.521 |
+| g_mid | +0.572 |
 | speckle_spread | -0.506 |
 | flat_edge_minus_center | +0.371 |
-| g_flat | -0.126 |
-| g_occ | +0.076 |
+| g_flat | -0.121 |
 | speckle_worst | -0.062 |
+| g_occ | +0.031 |
 
-**T3_laplacian** — 10/18 survive:
+**T3_laplacian** — 11/18 survive:
 
 | feature | weight |
 |---|---|
 | detail_spread | -1.522 |
 | g_speckle | +1.136 |
-| g_occ | +0.501 |
 | flat_worst | +0.481 |
 | flat_edge_minus_center | +0.272 |
+| g_occ | +0.271 |
 | speckle_worst | -0.232 |
+| g_flat | -0.227 |
 | lapvar_spread | -0.156 |
 | interior_worst | -0.141 |
 | speckle_spread | -0.097 |
-| g_mid | +0.002 |
+| g_mid | +0.005 |
 
 ## Next-to-label
 
